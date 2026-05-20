@@ -6,10 +6,13 @@
 // generator pinned at build time.
 
 #import <Foundation/Foundation.h>
+#import <os/log.h>
+#include <cstdio>
 
 #import "CpuSmokeBridge.h"
 #import "CpuSmokeBlob.h"
 
+#include <common/log.h>
 #include <common/types.h>
 #include <cpu/arm_factory.h>
 #include <cpu/arm_interface.h>
@@ -28,7 +31,10 @@ namespace {
 
 constexpr std::uint32_t kStackTop = 0x0002'0000u;  // arbitrary, not actually backed
 constexpr std::uint32_t kLrSentinel = 0xCAFE'BABEu;
-constexpr std::uint32_t kCpsrUserMode = 0x10u;  // USER32MODE, T=0, no flags set
+// USER32MODE (0x10) with both IRQ (I, bit 7) and FIQ (F, bit 6) disabled so
+// dyncom's DISPATCH path doesn't bail on an "interrupt pending" check before
+// executing a single instruction.
+constexpr std::uint32_t kCpsrUserMode = 0x10u | 0x80u | 0x40u;
 constexpr std::uint32_t kMaxInstructions = 64u;
 
 arm_emulator_type to_arm_type(EKA2L1SmokeBackend backend) {
@@ -59,6 +65,15 @@ struct PageBackedCore {
     eka2l1::arm::exception_type exception_kind = eka2l1::arm::exception_type_unk;
 
     PageBackedCore() : code_page(eka2l1::ios::smoke::PAGE_SIZE, 0) {
+        // Pre-fill the page with `b .` (0xEAFFFFFE) so dyncom's basic-block
+        // translator, which keeps decoding past our bkpt terminator, hits a
+        // self-branch (DIRECT_BRANCH) instead of a zero word that the
+        // decoder treats as a hard failure and aborts on.
+        constexpr std::uint32_t branch_self = 0xEAFFFFFEu;
+        auto *words = reinterpret_cast<std::uint32_t *>(code_page.data());
+        for (std::size_t i = 0; i < code_page.size() / sizeof(std::uint32_t); ++i) {
+            words[i] = branch_self;
+        }
         std::memcpy(code_page.data(),
                     eka2l1::ios::smoke::CODE_WORDS.data(),
                     eka2l1::ios::smoke::CODE_WORDS.size() * sizeof(std::uint32_t));
@@ -122,6 +137,27 @@ void install_callbacks(eka2l1::arm::core &core, PageBackedCore &page) {
 }  // namespace
 
 @implementation EKA2L1CpuSmokeBridge
+
++ (void)initialize {
+    if (self == [EKA2L1CpuSmokeBridge class]) {
+        // dyncom calls LOG_DEBUG from BKPT_INST, which dereferences the
+        // common::log singleton; without setup_log() it crashes on the
+        // first bkpt. Initialize once per process before any cpu call.
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            // setup_log() creates an EKA2L1.log file in the current working
+            // directory. On iOS the bundle is read-only, so chdir to the
+            // sandbox Documents directory first; spdlog's basic_file_sink
+            // would otherwise throw and abort the process.
+            NSString *docs = NSSearchPathForDirectoriesInDomains(
+                NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+            if (docs) {
+                chdir(docs.fileSystemRepresentation);
+            }
+            eka2l1::log::setup_log(nullptr);
+        });
+    }
+}
 
 + (EKA2L1CpuSmokeResult *)runWithBackend:(EKA2L1SmokeBackend)backend {
     EKA2L1CpuSmokeResult *result = [[EKA2L1CpuSmokeResult alloc] init];
@@ -191,16 +227,24 @@ void install_callbacks(eka2l1::arm::core &core, PageBackedCore &page) {
     result.diff = result.pass ? nil : [diff copy];
 
     // Stage-1 SmokeBridge prints a single line that scripts/build_ios.sh
-    // greps for. Keep the prefix and PASS/FAIL token stable.
+    // greps for. Keep the prefix and PASS/FAIL token stable. Emit through
+    // stderr (captured by simctl --console-pty), os_log (captured by
+    // `simctl spawn log show`), and NSLog (belt-and-braces).
+    const char *resolvedName = (resolved == arm_emulator_type::dyncom) ? "dyncom" : "dynarmic";
+    char marker[256];
     if (result.pass) {
-        NSLog(@"EKA2L1_SMOKE: PASS backend=%s instrs=%u pc=0x%08X",
-              (resolved == arm_emulator_type::dyncom) ? "dyncom" : "dynarmic",
-              result.instructionsExecuted, result.pc);
+        std::snprintf(marker, sizeof(marker),
+                      "EKA2L1_SMOKE: PASS backend=%s instrs=%u pc=0x%08X",
+                      resolvedName, result.instructionsExecuted, result.pc);
     } else {
-        NSLog(@"EKA2L1_SMOKE: FAIL backend=%s diff=%@",
-              (resolved == arm_emulator_type::dyncom) ? "dyncom" : "dynarmic",
-              result.diff);
+        std::snprintf(marker, sizeof(marker),
+                      "EKA2L1_SMOKE: FAIL backend=%s", resolvedName);
     }
+    std::fputs(marker, stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    os_log(OS_LOG_DEFAULT, "%{public}s", marker);
+    NSLog(@"%s", marker);
 
     return result;
 }
