@@ -11,6 +11,9 @@
 #   scripts/build_ios.sh                 # build both device + simulator
 #   scripts/build_ios.sh device          # device only (PLATFORM=OS64)
 #   scripts/build_ios.sh simulator       # simulator only (SIMULATORARM64)
+#   scripts/build_ios.sh smoke           # build sim, install + launch on
+#                                        # the booted iPhone simulator, grep
+#                                        # log for EKA2L1_SMOKE: PASS / FAIL
 #   scripts/build_ios.sh clean           # remove build/ios-* directories
 #
 # Environment variables:
@@ -58,6 +61,58 @@ build_one() {
         build
 }
 
+smoke_test() {
+    local sim_app="build/ios-simulator/src/emu/ios/${CONFIGURATION}-iphonesimulator/EKA2L1.app"
+    local bundle_id="${EKA2L1_IOS_BUNDLE_ID:-com.eka2l1.emulator}"
+    local timeout_s="${EKA2L1_IOS_SMOKE_TIMEOUT:-30}"
+
+    if [ ! -d "${sim_app}" ]; then
+        echo "==> Smoke: simulator .app missing, building first"
+        build_one simulator SIMULATORARM64 iphonesimulator
+    fi
+
+    local booted
+    booted="$(xcrun simctl list devices booted 2>/dev/null \
+        | awk -F '[()]' '/Booted/ { print $2; exit }')"
+    if [ -z "${booted}" ]; then
+        echo "Smoke: no booted iPhone simulator. Boot one in Simulator.app first." >&2
+        exit 3
+    fi
+    echo "==> Smoke: target simulator ${booted}"
+
+    xcrun simctl terminate "${booted}" "${bundle_id}" >/dev/null 2>&1 || true
+    xcrun simctl install "${booted}" "${sim_app}"
+    xcrun simctl launch --terminate-running-process "${booted}" "${bundle_id}" >/dev/null
+
+    local started_at
+    started_at="$(date +%s)"
+    local deadline=$((started_at + timeout_s))
+    local marker=""
+    while [ "$(date +%s)" -lt "${deadline}" ]; do
+        marker="$(xcrun simctl spawn "${booted}" log show --last 5s \
+                    --predicate "process == \"EKA2L1\"" 2>/dev/null \
+                  | grep -E 'EKA2L1_SMOKE: (PASS|FAIL)' \
+                  | tail -1 || true)"
+        if [ -n "${marker}" ]; then
+            break
+        fi
+        sleep 1
+    done
+
+    xcrun simctl terminate "${booted}" "${bundle_id}" >/dev/null 2>&1 || true
+
+    if [ -z "${marker}" ]; then
+        echo "Smoke: timeout after ${timeout_s}s without EKA2L1_SMOKE marker" >&2
+        exit 4
+    fi
+
+    echo "${marker}"
+    if echo "${marker}" | grep -q 'EKA2L1_SMOKE: PASS'; then
+        exit 0
+    fi
+    exit 5
+}
+
 case "${1:-all}" in
     clean)
         rm -rf build/ios-device build/ios-simulator
@@ -69,13 +124,17 @@ case "${1:-all}" in
     simulator)
         build_one simulator SIMULATORARM64 iphonesimulator
         ;;
+    smoke)
+        build_one simulator SIMULATORARM64 iphonesimulator
+        smoke_test
+        ;;
     all|"")
         build_one device OS64 iphoneos
         build_one simulator SIMULATORARM64 iphonesimulator
         ;;
     *)
         echo "Unknown command: ${1}" >&2
-        echo "Usage: $0 [device|simulator|all|clean]" >&2
+        echo "Usage: $0 [device|simulator|smoke|all|clean]" >&2
         exit 2
         ;;
 esac
