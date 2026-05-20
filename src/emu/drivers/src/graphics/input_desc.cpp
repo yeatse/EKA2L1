@@ -17,15 +17,21 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <common/platform.h>
 #include <drivers/graphics/input_desc.h>
-#include <drivers/graphics/backend/ogl/input_desc_ogl.h>
 #include <drivers/graphics/graphics.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/input_desc_ogl.h>
+#endif
 
 namespace eka2l1::drivers {
     std::unique_ptr<input_descriptors> make_input_descriptors(graphics_driver *driver) {
         switch (driver->get_current_api()) {
+#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl:
             return std::make_unique<input_descriptors_ogl>();
+#endif
 
         default:
             break;

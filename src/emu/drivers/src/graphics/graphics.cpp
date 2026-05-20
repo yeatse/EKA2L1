@@ -17,18 +17,22 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <drivers/graphics/backend/ogl/graphics_ogl.h>
-#include <drivers/graphics/graphics.h>
-
 #include <common/log.h>
 #include <common/platform.h>
+#include <drivers/graphics/graphics.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/graphics_ogl.h>
+#endif
 
 namespace eka2l1::drivers {
     graphics_driver_ptr create_graphics_driver(const graphic_api api, const window_system_info &info) {
         switch (api) {
+#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_graphics_driver>(info);
         }
+#endif
 
         default:
             break;

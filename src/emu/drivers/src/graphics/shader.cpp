@@ -18,18 +18,24 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <drivers/graphics/backend/ogl/shader_ogl.h>
+#include <common/platform.h>
 #include <drivers/graphics/graphics.h>
 #include <drivers/graphics/shader.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/shader_ogl.h>
+#endif
 
 #include <cstring>
 
 namespace eka2l1::drivers {
     std::unique_ptr<shader_module> make_shader_module(graphics_driver *driver) {
         switch (driver->get_current_api()) {
+#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_shader_module>();
         }
+#endif
 
         default:
             break;
@@ -40,9 +46,11 @@ namespace eka2l1::drivers {
 
     std::unique_ptr<shader_program> make_shader_program(graphics_driver *driver) {
         switch (driver->get_current_api()) {
+#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_shader_program>();
         }
+#endif
 
         default:
             break;

@@ -53,12 +53,13 @@
 - [x] 修正 `src/emu/CMakeLists.txt` 中 `CMAKE_OSX_DEPLOYMENT_TARGET=10.14 FORCE` 会污染 iOS 的问题，已用 `if (NOT EKA2L1_IOS)` 保护。其他 `if (APPLE)` 分支（drivers 的 AGL、external 中的 cubeb/ffmpeg 等）留给 0.3 / 0.5 在对应任务里处理。
 
 #### 0.3 drivers 模块 iOS 分支
-- [ ] `src/emu/drivers/CMakeLists.txt`：参考 `if (ANDROID)` 分支写法新增 iOS 分支：
-  - 不链 SDL2、不引入 `emu_controller_sdl2`、`vibration_sdl2`、`sdl2_scoping`。
-  - 不引入 X11/Wayland/WGL/AGL 上下文源文件。
-  - 占位：新增空的 `context_eagl_stub.mm`（只声明类型、`make` 返回 nullptr），让 `context.cpp` 工厂在 iOS 下有可链接符号；真正实现放阶段 2。
-  - 振动、传感器、相机走 null 后端。
-- [ ] 确认 `glad` 在 iOS 下被替换/跳过，并不被 drivers 链入；GLES 头改用 `<OpenGLES/ES3/gl.h>`。如果 ogl 后端代码强依赖 glad，先用 `#if !defined(EKA2L1_IOS)` 把 ogl 后端整体从 iOS 链接中剔除（阶段 2 再补回）。
+- [x] `src/emu/drivers/CMakeLists.txt`：把 `if (NOT ANDROID)` 重排为三分支（ANDROID / EKA2L1_IOS / 桌面）：
+  - iOS 不链 SDL2、不引入 `emu_controller_sdl2` / `vibration_sdl2` / `sdl2_scoping` / `emu_window.cpp`，输入窗口留给 0.6 的前端。
+  - 不引入 X11 / Wayland / WGL / AGL 上下文源文件（把 `elseif(APPLE)` 放到 `elseif(EKA2L1_IOS)` 之后，避免 iOS 落入 AGL 分支）。
+  - 没有为 iOS 单独建 EAGL stub 源文件 —— `src/graphics/context.cpp` 已经有 `#else return nullptr` 兜底，phase 2 再补真实的 EAGL 上下文。
+  - 振动、传感器、相机继续走 `vibration_null` / `sensor_null` / `camera_collection` 的通用 null 后端（已经在公共源块里）。
+- [x] glad / ogl 后端在 iOS 下整体剔除：把 ogl 源拆到 `DRIVERS_OGL_SRC` 变量并由 `if (NOT EKA2L1_IOS)` 包住；六个工厂文件（`buffer.cpp` / `graphics.cpp` / `shader.cpp` / `fb.cpp` / `texture.cpp` / `input_desc.cpp`）的 ogl include + case 分支用 `#if !EKA2L1_PLATFORM(IOS)` 包起来；`target_link_libraries` 中 cubeb / ffmpeg / glad 在 iOS 下不再链入（cubeb / ffmpeg 是否最终启用见 0.5）。
+- [x] 附带修复：`src/emu/common/include/common/platform.h` 中 `TARGET_OS_MAC` 会在 iOS 上误命中导致 `EKA2L1_PLATFORM(MACOS)` 被定义、`EKA2L1_PLATFORM(IOS)` 永远拿不到的预存 bug，已改为先判 `TARGET_OS_IPHONE`。
 
 #### 0.4 cpu 模块在 iOS 下的最小可链
 - [ ] 默认不链 dynarmic（即便 ARCH 是 arm64），改为仅链 `dyncom`。改 `src/emu/cpu/CMakeLists.txt`，加 `if (EKA2L1_IOS) ... else()` 包住 dynarmic 块。

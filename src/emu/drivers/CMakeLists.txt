@@ -4,6 +4,30 @@ if (BUILD_WITH_VULKAN)
             src/graphics/backend/vulkan/graphics_vulkan.cpp)
 endif ()
 
+# The OGL graphics backend depends on glad, which is not currently set up for
+# iOS. Task 0.3 excludes the whole ogl subdirectory on iOS; phase 2 will bring
+# back a GLES-compatible variant (likely via a swapped loader or direct
+# <OpenGLES/ES3/gl.h> include).
+if (NOT EKA2L1_IOS)
+    set(DRIVERS_OGL_SRC
+            include/drivers/graphics/backend/ogl/buffer_ogl.h
+            include/drivers/graphics/backend/ogl/common_ogl.h
+            include/drivers/graphics/backend/ogl/fb_ogl.h
+            include/drivers/graphics/backend/ogl/graphics_ogl.h
+            include/drivers/graphics/backend/ogl/input_desc_ogl.h
+            include/drivers/graphics/backend/ogl/shader_ogl.h
+            include/drivers/graphics/backend/ogl/texture_ogl.h
+            src/graphics/backend/ogl/buffer_ogl.cpp
+            src/graphics/backend/ogl/common_ogl.cpp
+            src/graphics/backend/ogl/etcdec.cxx
+            src/graphics/backend/ogl/fb_ogl.cpp
+            src/graphics/backend/ogl/graphics_ogl.cpp
+            src/graphics/backend/ogl/input_desc_ogl.cpp
+            src/graphics/backend/ogl/pvrt-dec.cpp
+            src/graphics/backend/ogl/texture_ogl.cpp
+            src/graphics/backend/ogl/shader_ogl.cpp)
+endif ()
+
 add_library(drivers
         include/drivers/itc.h
         include/drivers/driver.h
@@ -31,13 +55,6 @@ add_library(drivers
         include/drivers/graphics/shader.h
         include/drivers/graphics/texture.h
         include/drivers/graphics/backend/graphics_driver_shared.h
-        include/drivers/graphics/backend/ogl/buffer_ogl.h
-        include/drivers/graphics/backend/ogl/common_ogl.h
-        include/drivers/graphics/backend/ogl/fb_ogl.h
-        include/drivers/graphics/backend/ogl/graphics_ogl.h
-        include/drivers/graphics/backend/ogl/input_desc_ogl.h
-        include/drivers/graphics/backend/ogl/shader_ogl.h
-        include/drivers/graphics/backend/ogl/texture_ogl.h
         include/drivers/input/emu_controller.h
         include/drivers/sensor/sensor.h
         include/drivers/video/backend/ffmpeg/video_player_ffmpeg.h
@@ -69,31 +86,13 @@ add_library(drivers
         src/graphics/shader.cpp
         src/graphics/texture.cpp
         src/graphics/backend/graphics_driver_shared.cpp
-        src/graphics/backend/ogl/buffer_ogl.cpp
-        src/graphics/backend/ogl/common_ogl.cpp
-        src/graphics/backend/ogl/etcdec.cxx
-        src/graphics/backend/ogl/fb_ogl.cpp
-        src/graphics/backend/ogl/graphics_ogl.cpp
-        src/graphics/backend/ogl/input_desc_ogl.cpp
-        src/graphics/backend/ogl/pvrt-dec.cpp
-        src/graphics/backend/ogl/texture_ogl.cpp
-        src/graphics/backend/ogl/shader_ogl.cpp
         src/sensor/backend/null/sensor_null.cpp
         src/sensor/sensor.cpp
         src/video/backend/ffmpeg/video_player_ffmpeg.cpp
         src/video/video.cpp
+        ${DRIVERS_OGL_SRC}
         ${DRIVERS_VULKAN_SRC})
-if (NOT ANDROID)
-    target_sources(drivers PRIVATE
-        include/drivers/input/backend/emu_controller_sdl2.h
-        include/drivers/hwrm/backend/vibration_sdl2.h
-        src/graphics/emu_window.cpp
-        src/input/backend/emu_controller_sdl2.cpp
-        src/input/emu_controller.cpp
-        src/hwrm/backend/vibration_sdl2.cpp
-        src/sdl2_scoping.cpp
-        src/sdl2_scoping.h)
-else()
+if (ANDROID)
     target_sources(drivers PRIVATE
         include/drivers/camera/backend/android/camera_android.h
         include/drivers/camera/backend/android/camera_collection_android.h
@@ -105,6 +104,23 @@ else()
         src/hwrm/backend/vibration_jdk.cpp
         src/sensor/backend/android/sensor_android.cpp
         src/sensor/backend/android/sensor_android.h)
+elseif (EKA2L1_IOS)
+    # iOS uses the null sensor/camera/vibration backends already included in
+    # the unconditional source block. Input/window handling will be provided
+    # by the iOS frontend introduced in task 0.6 (no SDL2, no shared
+    # emu_window.cpp). The graphics context is intentionally left to the
+    # nullptr fallback in src/graphics/context.cpp until task 2 lands a real
+    # CAEAGLLayer-backed implementation.
+else()
+    target_sources(drivers PRIVATE
+        include/drivers/input/backend/emu_controller_sdl2.h
+        include/drivers/hwrm/backend/vibration_sdl2.h
+        src/graphics/emu_window.cpp
+        src/input/backend/emu_controller_sdl2.cpp
+        src/input/emu_controller.cpp
+        src/hwrm/backend/vibration_sdl2.cpp
+        src/sdl2_scoping.cpp
+        src/sdl2_scoping.h)
 endif()
 
 if(WIN32)
@@ -118,6 +134,9 @@ if(WIN32)
     )
 
     target_link_libraries(drivers PRIVATE opengl32.lib Mfuuid.lib Propsys.lib)
+elseif (EKA2L1_IOS)
+    # No GL context backend wired up yet; context::make_gl_context() falls
+    # through to its nullptr branch on iOS until task 2.
 elseif(APPLE)
     target_sources(drivers PRIVATE
         src/graphics/backend/context_agl.h
@@ -160,11 +179,18 @@ target_include_directories(miniBAE_EMU
     PRIVATE include/drivers/audio/backend/minibae ${MINIBAE_INTERNAL_INCLUDE_DIRS})
 target_link_libraries(miniBAE_EMU PRIVATE common)
 
-target_link_libraries(drivers PRIVATE common cubeb ffmpeg glad glm miniBAE_EMU)
-if (NOT ANDROID)
-    target_link_libraries(drivers PRIVATE SDL2)
+target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
+if (EKA2L1_IOS)
+    # glad / SDL2 are not linked on iOS; the ogl backend is excluded entirely
+    # in the source list above and the graphics factories below short-circuit
+    # via EKA2L1_PLATFORM(IOS). cubeb and ffmpeg link is gated by task 0.5.
 else()
+    target_link_libraries(drivers PRIVATE cubeb ffmpeg glad)
+endif()
+if (ANDROID)
     target_link_libraries(drivers PRIVATE android)
+elseif (NOT EKA2L1_IOS)
+    target_link_libraries(drivers PRIVATE SDL2)
 endif()
 
 target_include_directories(drivers PUBLIC include ${MINIBAE_PUBLIC_INCLUDE_DIRS} ${TSF_INCLUDE})
