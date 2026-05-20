@@ -17,3 +17,6 @@ out
 .metadata
 cmake-build-*
 .idea
+# Local agent / harness state, not project source.
+.claude/
+AGENTS.md
