@@ -97,7 +97,10 @@ add_subdirectory(glm)
 # Dynarmic: disable tests
 option(DYNARMIC_TESTS "Enable dynarmic tests" OFF)
 
-if (NOT ARCHITECTURE_ARM32)
+if (NOT ARCHITECTURE_ARM32 AND NOT EKA2L1_IOS)
+    # iOS sandbox prohibits standard JIT mmap. Stage 1 of the iOS port will
+    # introduce the MAP_JIT path; until then dynarmic is omitted from the
+    # build to avoid pulling in code that cannot run.
     add_subdirectory(dynarmic)
 endif()
 
@@ -168,13 +171,20 @@ option (BUILD_TESTS "Build cubeb tests" OFF)
 # Forcefully disable AAudio (we build with API target 21 minimum)
 set (USE_AAUDIO FALSE CACHE INTERNAL "" FORCE)
 
-add_subdirectory(cubeb)
+if (NOT EKA2L1_IOS)
+    # cubeb supports iOS via AudioUnit, but the bundled CMake submodule has
+    # not been verified for the iOS toolchain yet. Stage 3 wires it back in.
+    add_subdirectory(cubeb)
+endif()
 
 
 # FFMPEG
-add_subdirectory(ffmpeg)
-if (APPLE)
-    target_link_libraries(ffmpeg INTERFACE "-framework CoreVideo" "iconv")
+if (NOT EKA2L1_IOS)
+    # ffmpeg's bundled build is not yet cross-compiled for iOS; see task 0.5.
+    add_subdirectory(ffmpeg)
+    if (APPLE)
+        target_link_libraries(ffmpeg INTERFACE "-framework CoreVideo" "iconv")
+    endif()
 endif()
 
 option(CAPSTONE_BUILD_SHARED "Build shared library" OFF)
@@ -227,7 +237,7 @@ set (TSF_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR} CACHE INTERNAL "TSF include path")
 
 # SDL2
 # Can't believe in 2022 the official CMake can't still ship a FindSDL2 with the program...
-if (NOT ANDROID)
+if (NOT ANDROID AND NOT EKA2L1_IOS)
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/sdl2-cmake-scripts")
 
     if(APPLE)
@@ -261,7 +271,11 @@ option (UPNPC_BUILD_TESTS "Build test executables" FALSE)
 option (UPNPC_BUILD_SAMPLE "Build sample executables" FALSE)
 option (UPNPC_NO_INSTALL "Disable installation" TRUE)
 
-add_subdirectory(miniupnp/miniupnpc)
+if (NOT EKA2L1_IOS)
+    # miniupnp's CMake is not yet validated for iOS. Networking is optional;
+    # upnp.cpp ships an EKA2L1_PLATFORM(IOS) no-op until task 0.5 revisits.
+    add_subdirectory(miniupnp/miniupnpc)
+endif()
 
 # libtess2
 

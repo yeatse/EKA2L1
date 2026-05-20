@@ -18,9 +18,12 @@
  */
 
 #include <drivers/audio/audio.h>
-#include <drivers/audio/backend/cubeb/audio_cubeb.h>
 
 #include <common/platform.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/audio/backend/cubeb/audio_cubeb.h>
+#endif
 
 #if EKA2L1_PLATFORM(WIN32)
 #include <drivers/audio/backend/wmf/wmf_loader.h>
@@ -138,9 +141,11 @@ namespace eka2l1::drivers {
     audio_driver_instance make_audio_driver(const audio_driver_backend backend, const std::uint32_t initial_master_vol,
         const player_type preferred_midi_backend) {
         switch (backend) {
+#if !EKA2L1_PLATFORM(IOS)
         case audio_driver_backend::cubeb: {
             return std::make_unique<cubeb_audio_driver>(initial_master_vol, preferred_midi_backend);
         }
+#endif
 
         default:
             break;

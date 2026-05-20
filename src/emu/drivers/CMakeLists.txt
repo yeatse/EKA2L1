@@ -4,6 +4,26 @@ if (BUILD_WITH_VULKAN)
             src/graphics/backend/vulkan/graphics_vulkan.cpp)
 endif ()
 
+# Audio / video / camera backends that rely on external libraries which are
+# not (yet) wired up for the iOS stage-0 build. Task 0.5 lists cubeb and
+# ffmpeg as deferred dependencies; until they have proper iOS builds the
+# backend sources are excluded so the headers are not pulled in.
+if (NOT EKA2L1_IOS)
+    set(DRIVERS_CUBEB_SRC
+            include/drivers/audio/backend/cubeb/audio_cubeb.h
+            include/drivers/audio/backend/cubeb/stream_cubeb.h
+            src/audio/backend/cubeb/audio_cubeb.cpp
+            src/audio/backend/cubeb/stream_cubeb.cpp)
+
+    set(DRIVERS_FFMPEG_SRC
+            include/drivers/audio/backend/ffmpeg/dsp_ffmpeg.h
+            include/drivers/audio/backend/ffmpeg/player_ffmpeg.h
+            include/drivers/video/backend/ffmpeg/video_player_ffmpeg.h
+            src/audio/backend/ffmpeg/dsp_ffmpeg.cpp
+            src/audio/backend/ffmpeg/player_ffmpeg.cpp
+            src/video/backend/ffmpeg/video_player_ffmpeg.cpp)
+endif ()
+
 # The OGL graphics backend depends on glad, which is not currently set up for
 # iOS. Task 0.3 excludes the whole ogl subdirectory on iOS; phase 2 will bring
 # back a GLES-compatible variant (likely via a swapped loader or direct
@@ -35,10 +55,6 @@ add_library(drivers
         include/drivers/audio/dsp.h
         include/drivers/audio/player.h
         include/drivers/audio/stream.h
-        include/drivers/audio/backend/cubeb/audio_cubeb.h
-        include/drivers/audio/backend/cubeb/stream_cubeb.h
-        include/drivers/audio/backend/ffmpeg/dsp_ffmpeg.h
-        include/drivers/audio/backend/ffmpeg/player_ffmpeg.h
         include/drivers/audio/backend/minibae/player_minibae.h
         include/drivers/audio/backend/tinysoundfont/player_tsf.h
         include/drivers/audio/backend/dsp_shared.h
@@ -57,7 +73,6 @@ add_library(drivers
         include/drivers/graphics/backend/graphics_driver_shared.h
         include/drivers/input/emu_controller.h
         include/drivers/sensor/sensor.h
-        include/drivers/video/backend/ffmpeg/video_player_ffmpeg.h
         include/drivers/video/video.h
         src/driver.cpp
         src/itc.cpp
@@ -65,10 +80,6 @@ add_library(drivers
         src/audio/dsp.cpp
         src/audio/player.cpp
         src/audio/stream.cpp
-        src/audio/backend/cubeb/audio_cubeb.cpp
-        src/audio/backend/cubeb/stream_cubeb.cpp
-        src/audio/backend/ffmpeg/dsp_ffmpeg.cpp
-        src/audio/backend/ffmpeg/player_ffmpeg.cpp
         src/audio/backend/minibae/player_minibae.cpp
         src/audio/backend/tinysoundfont/player_tsf.cpp
         src/audio/backend/bae_platimpl.cpp
@@ -88,8 +99,9 @@ add_library(drivers
         src/graphics/backend/graphics_driver_shared.cpp
         src/sensor/backend/null/sensor_null.cpp
         src/sensor/sensor.cpp
-        src/video/backend/ffmpeg/video_player_ffmpeg.cpp
         src/video/video.cpp
+        ${DRIVERS_CUBEB_SRC}
+        ${DRIVERS_FFMPEG_SRC}
         ${DRIVERS_OGL_SRC}
         ${DRIVERS_VULKAN_SRC})
 if (ANDROID)

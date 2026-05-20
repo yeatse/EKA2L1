@@ -17,10 +17,15 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <drivers/audio/backend/ffmpeg/dsp_ffmpeg.h>
+#include <drivers/audio/backend/dsp_shared.h>
 #include <drivers/audio/dsp.h>
 
 #include <common/log.h>
+#include <common/platform.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/audio/backend/ffmpeg/dsp_ffmpeg.h>
+#endif
 
 namespace eka2l1::drivers {
     dsp_stream::dsp_stream()
@@ -84,8 +89,10 @@ namespace eka2l1::drivers {
 
     std::unique_ptr<dsp_stream> new_dsp_out_stream(drivers::audio_driver *aud, const dsp_stream_backend dsp_backend) {
         switch (dsp_backend) {
+#if !EKA2L1_PLATFORM(IOS)
         case dsp_stream_backend_ffmpeg:
             return std::make_unique<dsp_output_stream_ffmpeg>(aud);
+#endif
 
         default:
             break;

@@ -17,11 +17,22 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <drivers/video/backend/ffmpeg/video_player_ffmpeg.h>
 #include <drivers/video/video.h>
+
+#include <common/platform.h>
+
+#if !EKA2L1_PLATFORM(IOS)
+#include <drivers/video/backend/ffmpeg/video_player_ffmpeg.h>
+#endif
 
 namespace eka2l1::drivers {
     video_player_instance new_best_video_player(audio_driver *drv) {
+#if EKA2L1_PLATFORM(IOS)
+        // Stage-0 iOS build has no video backend wired up yet; see task 0.5.
+        (void)drv;
+        return nullptr;
+#else
         return std::make_unique<video_player_ffmpeg>(drv);
+#endif
     }
 }
