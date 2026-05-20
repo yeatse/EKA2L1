@@ -17,13 +17,14 @@
  * You should have received a copy of the GNU General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+#include <common/log.h>
 #include <common/platform.h>
 #include <cpu/arm_factory.h>
 
 #include <cpu/dyncom/arm_dyncom.h>
 
 // Stage-0 iOS port has no JIT backend wired up; only dyncom is available.
-// Stage 1 will gate dynarmic on a runtime JIT-entitlement probe.
+// Stage 4 will gate dynarmic on a runtime MAP_JIT-entitlement probe.
 #define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && !EKA2L1_PLATFORM(IOS))
 
 #if EKA2L1_ARCH(ARM)
@@ -35,8 +36,49 @@
 #include <cpu/12l1r/exclusive_monitor.h>
 
 namespace eka2l1::arm {
+    bool host_can_jit() {
+#if EKA2L1_PLATFORM(IOS)
+        // Stage 1 placeholder: no MAP_JIT probe yet, so no JIT available.
+        return false;
+#elif EKA2L1_ARCH(ARM)
+        // 32-bit ARM hosts use 12l1r rather than dynarmic, treat as JIT-capable.
+        return true;
+#elif EKA2L1_CPU_HAS_DYNARMIC
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    arm_emulator_type resolve_emulator_type(arm_emulator_type requested, const char **out_reason) {
+        const char *reason = nullptr;
+        arm_emulator_type resolved = requested;
+
+#if EKA2L1_PLATFORM(IOS)
+        if (requested == arm_emulator_type::dynarmic || requested == arm_emulator_type::r12l1
+            || requested == arm_emulator_type::unicorn) {
+            reason = "no-jit-on-ios (stage-1 placeholder, no MAP_JIT probe yet)";
+            resolved = arm_emulator_type::dyncom;
+        }
+#else
+        (void)requested;
+#endif
+
+        if (out_reason) {
+            *out_reason = reason;
+        }
+        return resolved;
+    }
+
     core_instance create_core(exclusive_monitor *monitor, arm_emulator_type arm_type) {
-        switch (arm_type) {
+        const char *reason = nullptr;
+        const arm_emulator_type resolved = resolve_emulator_type(arm_type, &reason);
+        if (reason) {
+            LOG_WARN(CPU, "CPU backend request {} downgraded to {} ({})",
+                static_cast<int>(arm_type), static_cast<int>(resolved), reason);
+        }
+
+        switch (resolved) {
         case arm_emulator_type::unicorn:
             return nullptr;
 
