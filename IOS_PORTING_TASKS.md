@@ -43,9 +43,14 @@
 - [x] BUILDING.md 末尾加一段 iOS 构建命令骨架（实际可跑要等 0.6/0.7）。
 
 #### 0.2 emu 子目录分支化
-- [ ] `src/emu/CMakeLists.txt`：把现有 `if (ANDROID) ... else()` 扩展为三分支，新增 `elseif(EKA2L1_IOS) add_subdirectory(ios)`。
-- [ ] 排查 `bridge / common / config / cpu / disasm / dispatch / drivers / gdbstub / j2me / kernel / ldd / loader / mem / package / services / system / utils / vfs` 各 CMakeLists，确认在 iOS 下没有桌面专属依赖（X11、Wayland、WMF、SDL2）被误拉入。
-- [ ] 修正所有 `if (APPLE)` 中默认指代 macOS 的分支，区分 `APPLE AND NOT IOS` 与 `IOS`。重点排查 `context_agl.mm`、osx deployment target 设置、cubeb、ffmpeg。
+- [x] `src/emu/CMakeLists.txt`：把现有 `if (ANDROID) ... else()` 扩展为三分支，新增 `elseif(EKA2L1_IOS) add_subdirectory(ios)`；占位 `src/emu/ios/CMakeLists.txt` 已建（真正前端在 0.6）。
+- [x] 排查 emu 各子目录 CMakeLists 平台分支。结论：
+  - `bridge / config / disasm / dispatch / gdbstub / j2me / kernel / ldd / loader / mem / package / services / system / utils / vfs`：无桌面专属依赖泄漏到 iOS，无需改动。
+  - `common`：`elseif(UNIX AND NOT APPLE)` 正确把 iOS 排除在 watcher_unix 外，落到 `watcher_null`；`if (UNIX OR APPLE)` 给 iOS 加上 PIC + pthread，正确。
+  - `cpu`：含 dynarmic 块需在 iOS 下绕开，归 0.4。
+  - `drivers`：包含 SDL2 / AGL / WGL / X11 等大量平台分支，归 0.3。
+  - `scripting`：iOS 默认关闭，不进 build graph。
+- [x] 修正 `src/emu/CMakeLists.txt` 中 `CMAKE_OSX_DEPLOYMENT_TARGET=10.14 FORCE` 会污染 iOS 的问题，已用 `if (NOT EKA2L1_IOS)` 保护。其他 `if (APPLE)` 分支（drivers 的 AGL、external 中的 cubeb/ffmpeg 等）留给 0.3 / 0.5 在对应任务里处理。
 
 #### 0.3 drivers 模块 iOS 分支
 - [ ] `src/emu/drivers/CMakeLists.txt`：参考 `if (ANDROID)` 分支写法新增 iOS 分支：
