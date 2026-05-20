@@ -2,8 +2,11 @@
 """Generate src/emu/ios/Bridge/CpuSmokeBlob.h from a hand-picked A32 sequence.
 
 The blob is deliberately small and self-contained: pure register arithmetic
-ending in a `udf #0` so dyncom raises `exception_type_undefined_inst` and we
-can stop. No memory accesses outside the code page, no kernel.
+ending in a `bkpt #0` so dyncom raises `exception_type_breakpoint` and we
+can stop from the bridge's exception handler. (`udf #0` would be cleaner
+semantically but dyncom's decoder calls CITRA_IGNORE_EXIT on decode
+failure, which would abort the process before our handler ever runs.)
+No memory accesses outside the code page, no kernel.
 
 Encodings below are written by hand and double-checked against the ARMv7-A
 encoding tables. Each instruction's expected effect is recorded so the test
@@ -27,7 +30,7 @@ PROGRAM: list[tuple[int, str, str]] = [
     (0xE0822003, "add r2, r2, r3",     "r2 = 7"),
     (0xE0820000, "add r0, r2, r0",     "r0 = 10"),
     (0xE1A06100, "mov r6, r0, lsl #2", "r6 = 40"),
-    (0xE7F000F0, "udf #0",             "raises undefined-instruction"),
+    (0xE1200070, "bkpt #0",            "raises breakpoint exception"),
 ]
 
 # Expected register state when dyncom raises the undef exception, with
@@ -73,6 +76,10 @@ def render_header() -> str:
     lines.append(f"    inline constexpr std::uint32_t CODE_BASE_VADDR = 0x{CODE_BASE_VADDR:08X}u;")
     lines.append(f"    inline constexpr std::size_t   PAGE_SIZE       = 0x{PAGE_SIZE:X}u;")
     lines.append("")
+    lines.append("    // Terminator: bkpt #0 (raises exception_type_breakpoint). The")
+    lines.append("    // dyncom handler that fires it captures the post-bkpt PC at")
+    lines.append("    // CODE_BASE_VADDR + (len-1)*4 and then calls core->stop() to halt.")
+    lines.append("")
     lines.append("    // Instructions, little-endian 32-bit words. Source listing:")
     for word, asm, post in PROGRAM:
         lines.append(f"    //   0x{word:08X}  {asm:<24}; {post}")
@@ -82,14 +89,14 @@ def render_header() -> str:
         lines.append(f"        0x{word:08X}u,  // {asm}")
     lines.append("    };")
     lines.append("")
-    lines.append("    // Register snapshot expected the moment dyncom raises the udf.")
+    lines.append("    // Register snapshot expected the moment dyncom raises bkpt.")
     lines.append("    // R13/R14/R15 are filled in by the harness, not pinned here.")
     lines.append("    inline constexpr std::array<std::uint32_t, 13> EXPECTED_R0_R12 = {")
     for value in EXPECTED_REGS:
         lines.append(f"        0x{value:08X}u,")
     lines.append("    };")
     lines.append("")
-    lines.append("    // PC value at the moment of the undef raise:")
+    lines.append("    // PC value at the moment of the bkpt raise:")
     lines.append("    //   CODE_BASE_VADDR + offset-of(udf) = base + (len-1)*4.")
     lines.append("    inline constexpr std::uint32_t EXPECTED_PC ="
                  f" CODE_BASE_VADDR + 0x{(len(PROGRAM) - 1) * 4:X}u;")

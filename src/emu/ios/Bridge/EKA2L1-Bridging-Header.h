@@ -3,3 +3,4 @@
 // less surface area Swift sees, the less churn when the bridge evolves.
 
 #import "StartupBridge.h"
+#import "CpuSmokeBridge.h"

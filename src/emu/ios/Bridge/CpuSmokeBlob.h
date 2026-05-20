@@ -15,6 +15,10 @@ namespace eka2l1::ios::smoke {
     inline constexpr std::uint32_t CODE_BASE_VADDR = 0x00001000u;
     inline constexpr std::size_t   PAGE_SIZE       = 0x1000u;
 
+    // Terminator: bkpt #0 (raises exception_type_breakpoint). The
+    // dyncom handler that fires it captures the post-bkpt PC at
+    // CODE_BASE_VADDR + (len-1)*4 and then calls core->stop() to halt.
+
     // Instructions, little-endian 32-bit words. Source listing:
     //   0xE3A00001  mov r0, #1              ; r0 = 1
     //   0xE3A01002  mov r1, #2              ; r1 = 2
@@ -24,7 +28,7 @@ namespace eka2l1::ios::smoke {
     //   0xE0822003  add r2, r2, r3          ; r2 = 7
     //   0xE0820000  add r0, r2, r0          ; r0 = 10
     //   0xE1A06100  mov r6, r0, lsl #2      ; r6 = 40
-    //   0xE7F000F0  udf #0                  ; raises undefined-instruction
+    //   0xE1200070  bkpt #0                 ; raises breakpoint exception
     inline constexpr std::array<std::uint32_t, 9> CODE_WORDS = {
         0xE3A00001u,  // mov r0, #1
         0xE3A01002u,  // mov r1, #2
@@ -34,10 +38,10 @@ namespace eka2l1::ios::smoke {
         0xE0822003u,  // add r2, r2, r3
         0xE0820000u,  // add r0, r2, r0
         0xE1A06100u,  // mov r6, r0, lsl #2
-        0xE7F000F0u,  // udf #0
+        0xE1200070u,  // bkpt #0
     };
 
-    // Register snapshot expected the moment dyncom raises the udf.
+    // Register snapshot expected the moment dyncom raises bkpt.
     // R13/R14/R15 are filled in by the harness, not pinned here.
     inline constexpr std::array<std::uint32_t, 13> EXPECTED_R0_R12 = {
         0x0000000Au,
@@ -55,7 +59,7 @@ namespace eka2l1::ios::smoke {
         0x00000000u,
     };
 
-    // PC value at the moment of the undef raise:
+    // PC value at the moment of the bkpt raise:
     //   CODE_BASE_VADDR + offset-of(udf) = base + (len-1)*4.
     inline constexpr std::uint32_t EXPECTED_PC = CODE_BASE_VADDR + 0x20u;
 
