@@ -22,9 +22,13 @@
 
 #include <cpu/dyncom/arm_dyncom.h>
 
+// Stage-0 iOS port has no JIT backend wired up; only dyncom is available.
+// Stage 1 will gate dynarmic on a runtime JIT-entitlement probe.
+#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && !EKA2L1_PLATFORM(IOS))
+
 #if EKA2L1_ARCH(ARM)
 #include <cpu/12l1r/arm_12l1r.h>
-#else
+#elif EKA2L1_CPU_HAS_DYNARMIC
 #include <cpu/arm_dynarmic.h>
 #endif
 
@@ -39,7 +43,7 @@ namespace eka2l1::arm {
 #if EKA2L1_ARCH(ARM)
         case arm_emulator_type::r12l1:
             return std::make_unique<r12l1_core>(monitor, 12);
-#else
+#elif EKA2L1_CPU_HAS_DYNARMIC
         case arm_emulator_type::dynarmic:
             return std::make_unique<dynarmic_core>(monitor);
 #endif
@@ -65,7 +69,7 @@ namespace eka2l1::arm {
 #if EKA2L1_ARCH(ARM)
         case arm_emulator_type::r12l1:
             return std::make_unique<r12l1::exclusive_monitor>(core_count);
-#else
+#elif EKA2L1_CPU_HAS_DYNARMIC
         case arm_emulator_type::dynarmic:
             return std::make_unique<dynarmic_exclusive_monitor>(core_count);
 #endif

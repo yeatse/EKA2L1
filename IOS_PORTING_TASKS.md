@@ -62,8 +62,9 @@
 - [x] 附带修复：`src/emu/common/include/common/platform.h` 中 `TARGET_OS_MAC` 会在 iOS 上误命中导致 `EKA2L1_PLATFORM(MACOS)` 被定义、`EKA2L1_PLATFORM(IOS)` 永远拿不到的预存 bug，已改为先判 `TARGET_OS_IPHONE`。
 
 #### 0.4 cpu 模块在 iOS 下的最小可链
-- [ ] 默认不链 dynarmic（即便 ARCH 是 arm64），改为仅链 `dyncom`。改 `src/emu/cpu/CMakeLists.txt`，加 `if (EKA2L1_IOS) ... else()` 包住 dynarmic 块。
-- [ ] `src/emu/cpu/src/arm_factory.cpp` 在 iOS 下默认返回 dyncom 实例，先确保符号能解析；运行正确性放阶段 1。
+- [x] `src/emu/cpu/CMakeLists.txt`：增加 `elseif (EKA2L1_IOS)` 分支，不编译 `src/arm_dynarmic.cpp`、不链 `dynarmic`。
+- [x] `src/emu/cpu/src/arm_factory.cpp`：用 `EKA2L1_CPU_HAS_DYNARMIC` 宏把 dynarmic 的 include 与 case 在 iOS 下整体剔除，避免符号缺失。
+- [x] 默认后端：`arm_utils.cpp` 的 `string_to_arm_emulator_type` fallback 改为 `EKA2L1_DEFAULT_ARM_EMULATOR_TYPE`（iOS / ARM32 → `dyncom`，其他 → `dynarmic`）；`src/emu/system/src/epoc.cpp` 的硬编码 cpu_type 默认值也加了 iOS 的 dyncom 分支，避免运行期挑到无法实例化的 dynarmic 类型。
 
 #### 0.5 第三方依赖审计（仅 iOS 编译层面）
 - [ ] `src/external/CMakeLists.txt` 跟踪：哪些子目录在 iOS 下会失败，先用 `if (NOT EKA2L1_IOS)` 暂时跳过非必需项：SDL2、luajit、ffmpeg、cubeb、miniBAE、miniupnp、libuv。
