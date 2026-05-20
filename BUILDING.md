@@ -46,4 +46,30 @@
 
 ### On Android
 
-- With Android Studio opened, navigate to File/Open and choose the ```source code root/src/android/``` folder. The android project for EKA2L1 should setup and ready. 
+- With Android Studio opened, navigate to File/Open and choose the ```source code root/src/android/``` folder. The android project for EKA2L1 should setup and ready.
+
+### On iOS (work in progress)
+
+The iOS port is being bootstrapped (see `IOS_PORTING_PLAN.md` and `IOS_PORTING_TASKS.md`). At this point only the build skeleton is in place — no UI, no working emulator on device yet.
+
+To attempt a build (Xcode 15+ recommended, on macOS):
+
+```sh
+# Device (arm64)
+cmake -S . -B build/ios \
+    -G Xcode \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
+    -DPLATFORM=OS64 \
+    -DDEPLOYMENT_TARGET=18.0
+
+# Simulator (arm64)
+cmake -S . -B build/iossim \
+    -G Xcode \
+    -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
+    -DPLATFORM=SIMULATORARM64 \
+    -DDEPLOYMENT_TARGET=18.0
+```
+
+On iOS the following options are forced OFF regardless of the command line: `EKA2L1_BUILD_TOOLS`, `EKA2L1_BUILD_TESTS`, `EKA2L1_ENABLE_SCRIPTING_ABILITY`, `EKA2L1_BUILD_VULKAN_BACKEND`, `EKA2L1_BUILD_PATCH`, `EKA2L1_DEPLOY_DMG`, `EKA2L1_ENABLE_DISCORD_RICH_PRESENCE`.
+
+The deployment target defaults to **iOS 18.0** during early porting work to keep the toolchain modern; it will be lowered later once the port stabilizes. 

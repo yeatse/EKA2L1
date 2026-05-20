@@ -5,6 +5,16 @@ project (EKA2L1)
 # Clang 14 is required to compile nicely with C++ 20
 set (CMAKE_CXX_STANDARD 20)
 
+# iOS detection. When building with cmake/ios.toolchain.cmake, CMAKE_SYSTEM_NAME
+# is set to "iOS" before project() runs, so this flag reflects that.
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(EKA2L1_IOS ON)
+else()
+    set(EKA2L1_IOS OFF)
+endif()
+
+set(EKA2L1_IOS_DEPLOYMENT_TARGET "18.0" CACHE STRING "Minimum iOS version to target")
+
 option(EKA2L1_BUILD_TOOLS "Build EKA2L1's tool" ON)
 option(EKA2L1_BUILD_TESTS "Build EKA2L1's tests" ON)
 option(EKA2L1_ENABLE_SCRIPTING_ABILITY "Enable to script with Python or Lua" ON)
@@ -13,6 +23,20 @@ option(EKA2L1_BUILD_VULKAN_BACKEND "Build Vulkan backend" OFF)
 option(EKA2L1_DEPLOY_DMG "Deploy EKA2L1 as .dmg" OFF)
 option(EKA2L1_BUILD_PATCH "Enable building Symbian's DLL patches using Symbian SDK" OFF)
 option(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE "Enable support for Discord Rich Presence" OFF)
+
+# Stage-0 iOS build: force-off options that the iOS port does not yet support.
+# These are silently overridden so a user passing -DEKA2L1_BUILD_TESTS=ON for
+# another platform does not have to special-case iOS in their scripts.
+if (EKA2L1_IOS)
+    set(EKA2L1_BUILD_TOOLS OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_BUILD_TESTS OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_ENABLE_SCRIPTING_ABILITY OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_BUILD_VULKAN_BACKEND OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_BUILD_PATCH OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_DEPLOY_DMG OFF CACHE BOOL "Disabled on iOS" FORCE)
+    set(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE OFF CACHE BOOL "Disabled on iOS" FORCE)
+    message(STATUS "iOS build: tools/tests/scripting/vulkan/patch/dmg/discord forced OFF")
+endif()
 
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set (ROOT ${CMAKE_CURRENT_SOURCE_DIR})
