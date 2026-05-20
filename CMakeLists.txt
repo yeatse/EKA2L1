@@ -36,13 +36,6 @@ if (EKA2L1_IOS)
     set(EKA2L1_DEPLOY_DMG OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE OFF CACHE BOOL "Disabled on iOS" FORCE)
     message(STATUS "iOS build: tools/tests/scripting/vulkan/patch/dmg/discord forced OFF")
-
-    # spdlog 1.13 + fmt 10.x trips on fmt's consteval basic_format_string
-    # constructor under the newer Xcode clang (see logger-inl.h /
-    # pattern_formatter-inl.h). Downgrade fmt back to constexpr to make the
-    # whole graph compile until either submodule is bumped. Restrict to the
-    # C-family languages so swiftc does not see a bare -DFMT_USE_CONSTEVAL.
-    add_compile_definitions($<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:FMT_USE_CONSTEVAL=0>)
 endif()
 
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
