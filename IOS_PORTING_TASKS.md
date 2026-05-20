@@ -79,11 +79,12 @@
   - **桌面控制器**：SDL2 跳过，`emu_controller_sdl2` 与 `vibration_sdl2` 在 iOS 完全不可用，0.6 的 iOS 前端需要自行提供输入与振动通路。
 
 #### 0.6 iOS 子工程骨架
-- [ ] 新建 `src/emu/ios/CMakeLists.txt`，产出一个 iOS bundle target（`MACOSX_BUNDLE` + `XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER`）。
-- [ ] `src/emu/ios/App/`：最小 SwiftUI App（或 UIKit AppDelegate + 一个空 UIViewController）。可暂用 Swift；与 C++ 的桥放后续阶段。
-- [ ] `src/emu/ios/Resources/Info.plist`：BundleId、display name、最低 iOS 版本、`UILaunchScreen`、`UIRequiredDeviceCapabilities = arm64`。
-- [ ] `src/emu/ios/Resources/EKA2L1.entitlements`：先放空白，预留 `com.apple.security.cs.allow-jit`、`com.apple.developer.kernel.increased-memory-limit`（实际开关放阶段 1）。
-- [ ] App target 链接顶层聚合静态库（common/cpu/kernel/services/...），先不调用任何符号，仅验证链接图完整。
+- [x] `src/emu/ios/CMakeLists.txt`：替换占位，新建 `MACOSX_BUNDLE` 可执行 `EKA2L1`，配置 `XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER`、`TARGETED_DEVICE_FAMILY=1,2`、`IPHONEOS_DEPLOYMENT_TARGET=${EKA2L1_IOS_DEPLOYMENT_TARGET}`、未签名（`CODE_SIGNING_ALLOWED=NO`）、`SWIFT_OBJC_BRIDGING_HEADER` 指向 Bridge 目录。
+- [x] `src/emu/ios/App/`：`EKA2L1App.swift`（`@main` SwiftUI 入口）+ `ContentView.swift`（显示版本字符串的占位 view）。
+- [x] `src/emu/ios/Bridge/`：`StartupBridge.{h,mm}` + `EKA2L1-Bridging-Header.h`。`StartupBridge.mm` 调用 `<common/version.h>` 里的 `GIT_BRANCH` / `GIT_COMMIT_HASH`，作用是确保 `common` 静态库被链接进 bundle 而不是被链接器丢弃，同时给 SwiftUI 显示一个真实可见的字符串。
+- [x] `src/emu/ios/Resources/Info.plist`：BundleId、display name `EKA2L1`、`LSRequiresIPhoneOS`、`UILaunchScreen`、`UIRequiredDeviceCapabilities=arm64`、`UISupportedInterfaceOrientations`、`UIFileSharingEnabled`+`LSSupportsOpeningDocumentsInPlace`（为后续 ROM 导入预留）。
+- [x] `src/emu/ios/Resources/EKA2L1.entitlements`：先空，注释里预留 `com.apple.security.cs.allow-jit` / `com.apple.developer.kernel.increased-memory-limit`，stage 1 引入 JIT 时放开。
+- [x] App 链接 `common / cpu / drivers / epoc / epockern / epocpkg / epocservs / sqlite3 / yaml-cpp`，参考 Android `native-lib` 的链接清单，验证链接图完整即可，stage 0 不调用 emu 逻辑。
 
 #### 0.7 验证脚本
 - [ ] 新增 `scripts/build_ios.sh`：固定参数生成 Xcode 工程 + 跑 `xcodebuild` for `iphoneos` 与 `iphonesimulator` 两个 sdk。
