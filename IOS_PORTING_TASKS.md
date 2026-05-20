@@ -11,7 +11,7 @@
 
 | 阶段 | 目标 | 状态 |
 |------|------|------|
-| 0 | 工程骨架可在 iOS arm64 上构建出空壳 | ⬜ |
+| 0 | 工程骨架可在 iOS arm64 上构建出空壳 | 🟡（代码完成，待真实 `xcodebuild` 验证） |
 | 1 | CPU 解释器跑通 + dynarmic JIT 可选启用 | ⬜ |
 | 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧 | ⬜ |
 | 3 | 音频 / 输入 / 振动 / 文件导入完整体验 | ⬜ |
@@ -87,8 +87,12 @@
 - [x] App 链接 `common / cpu / drivers / epoc / epockern / epocpkg / epocservs / sqlite3 / yaml-cpp`，参考 Android `native-lib` 的链接清单，验证链接图完整即可，stage 0 不调用 emu 逻辑。
 
 #### 0.7 验证脚本
-- [ ] 新增 `scripts/build_ios.sh`：固定参数生成 Xcode 工程 + 跑 `xcodebuild` for `iphoneos` 与 `iphonesimulator` 两个 sdk。
-- [ ] 跑一次完整流程，记录耗时与产物路径，更新本文档"验收标准"的勾选状态。
+- [x] 新增 `scripts/build_ios.sh`：默认两次构建（`OS64` + `SIMULATORARM64`），支持 `device` / `simulator` / `all` / `clean` 子命令；环境变量 `EKA2L1_IOS_DEPLOYMENT_TARGET` / `EKA2L1_IOS_CONFIGURATION` / `EKA2L1_IOS_SCHEME` 可覆盖；强制 `CODE_SIGNING_ALLOWED=NO`。
+- [ ] **完整构建尚未实跑**。当前 working tree 中 `src/external/` 下所有子模块都是空的（spdlog / fmt / capstone / glad-是 vendored 例外 / yaml-cpp / glm / freetype / 等等），需先：
+  ```sh
+  git submodule update --init --recursive
+  ```
+  之后再运行 `scripts/build_ios.sh device` 与 `scripts/build_ios.sh simulator`，把首次出错点记入本文档"已知风险"。这一步本身不算 0 阶段强依赖（属于环境准备），但**验收标准里的最终勾选**要等真实编译走通才能打满。
 
 ### 阶段 0 已知风险
 - 部分 emu 模块可能在 iOS 上**直接编译失败**（例如 `services/` 里假设有 `gettimeofday`、`pthread_setname_np` 签名差异、Mach 与 Linux 不同的命名等）。出现时**就地最小修复**，不要顺手重构；标记 `// TODO(ios)` 注释，集中在阶段 1 前夕复盘。
@@ -157,3 +161,4 @@ sideload / TrollStore / 越狱三套签名打包流程文档化；GitHub Actions
 | 日期 | 改动 |
 |------|------|
 | 2026-05-20 | 初版：拆完阶段 0，其余阶段仅列目标 |
+| 2026-05-20 | 阶段 0 全部子任务（0.1–0.7）落地：iOS toolchain、emu 分支化、drivers / cpu 移除桌面/JIT 依赖、外部库审计、SwiftUI 骨架、构建脚本。等待 submodule init 后跑实际构建确认。 |
