@@ -36,12 +36,17 @@ build_one() {
     local build_dir="build/ios-${label}"
 
     echo "==> Configuring ${label} (PLATFORM=${platform}, sdk=${sdk})"
+    # CMake 4.x dropped compatibility with cmake_minimum_required < 3.5, and
+    # several bundled submodules (glm, ext-boost, ...) still declare older
+    # minimums. Pin a policy floor for the whole graph until those submodules
+    # are bumped upstream.
     cmake -S . -B "${build_dir}" \
         -G Xcode \
         -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
         -DPLATFORM="${platform}" \
         -DDEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
-        -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}"
+        -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     echo "==> Building ${label}"
     xcodebuild \

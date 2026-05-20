@@ -13,6 +13,11 @@
 #
 # Or with PLATFORM=SIMULATORARM64 for the simulator.
 
+# Swift is not a language in the top-level project() declaration, so enable
+# it here before declaring the bundle target. The Xcode generator + leetal
+# ios.toolchain understand Swift natively.
+enable_language(Swift)
+
 set(EKA2L1_IOS_APP EKA2L1)
 set(EKA2L1_IOS_BUNDLE_ID "com.eka2l1.emulator" CACHE STRING "iOS bundle identifier")
 
@@ -58,6 +63,14 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"
     XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
     XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
+    # Xcode 26's swift driver rejects the bare -stdlib=libc++ that CMake's
+    # Xcode generator otherwise pushes into OTHER_SWIFT_FLAGS for mixed
+    # Swift/C++ targets. Explicitly reset OTHER_SWIFT_FLAGS to the inherited
+    # defaults so the unsupported flag is not appended. Swift only talks to
+    # the Obj-C++ bridge through plain Obj-C, so C++ interop on the Swift
+    # side stays disabled.
+    XCODE_ATTRIBUTE_SWIFT_OBJC_INTEROP_MODE "objc"
+    XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "$(inherited)"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${EKA2L1_IOS_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
     # Stage-0 builds are unsigned. Developers can flip these via -D overrides

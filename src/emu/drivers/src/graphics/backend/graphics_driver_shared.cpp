@@ -25,7 +25,9 @@
 #include <drivers/graphics/buffer.h>
 #include <drivers/graphics/shader.h>
 
+#if !EKA2L1_PLATFORM(IOS)
 #include <glad/glad.h>
+#endif
 
 namespace eka2l1::drivers {
     static void translate_bpp_to_format(const int bpp, texture_format &internal_format, texture_format &format,

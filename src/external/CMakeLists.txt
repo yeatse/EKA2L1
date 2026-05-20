@@ -361,6 +361,17 @@ add_definitions(-DFT_CONFIG_OPTION_SUBPIXEL_RENDERING)
 set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
 set(FT_ENABLE_ERROR_STRINGS ON CACHE BOOL "" FORCE)
 
+if (EKA2L1_IOS)
+    # freetype's CMake autoprobe would otherwise pick up Homebrew's macOS
+    # libpng / zlib / bzip2 / brotli, which link as macOS dylibs and fail
+    # the iOS link step. The Symbian content we render through freetype
+    # does not need these compression backends.
+    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
+    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
+endif()
+
 add_subdirectory(freetype)
 
 set (capstone_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/capstone/include" PARENT_SCOPE)

@@ -25,9 +25,9 @@
 #include <cpu/arm_utils.h>
 
 #if EKA2L1_PLATFORM(IOS) || EKA2L1_ARCH(ARM)
-#define EKA2L1_DEFAULT_ARM_EMULATOR_TYPE ::eka2l1::arm::arm_emulator_type::dyncom
+#define EKA2L1_DEFAULT_ARM_EMULATOR_TYPE arm_emulator_type::dyncom
 #else
-#define EKA2L1_DEFAULT_ARM_EMULATOR_TYPE ::eka2l1::arm::arm_emulator_type::dynarmic
+#define EKA2L1_DEFAULT_ARM_EMULATOR_TYPE arm_emulator_type::dynarmic
 #endif
 
 namespace eka2l1::arm {

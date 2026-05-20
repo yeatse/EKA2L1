@@ -36,6 +36,13 @@
 #include <unistd.h>
 #endif
 
+#if EKA2L1_PLATFORM(DARWIN)
+// macOS and iOS use 64-bit off_t natively; there is no separate stat64 type
+// in their SDKs. Alias to the regular stat so the shared POSIX path below
+// keeps compiling without per-call branching.
+#define stat64 stat
+#endif
+
 #if EKA2L1_PLATFORM(POSIX)
 #include <dirent.h>
 #endif
