@@ -157,6 +157,7 @@ elseif (EKA2L1_IOS)
         src/graphics/backend/context_eagl.mm
         include/drivers/graphics/backend/emu_window_ios.h
         src/graphics/backend/emu_window_ios.mm
+        src/ui/input_dialog_ios.cpp
     )
 elseif(APPLE)
     target_sources(drivers PRIVATE

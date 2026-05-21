@@ -114,6 +114,11 @@ if (ANDROID)
         src/android/storage.cpp
         src/android/jniutils.cpp
         )
+elseif (EKA2L1_IOS)
+    target_sources(common PRIVATE
+        src/ios/applauncher.mm
+        )
+    target_link_libraries(common PRIVATE "-framework UIKit" "-framework Foundation")
 endif()
 
 target_include_directories(common PUBLIC include)

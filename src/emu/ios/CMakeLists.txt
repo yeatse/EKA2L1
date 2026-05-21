@@ -33,6 +33,8 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBlob.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.mm"
+    "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.h"
+    "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
     "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"

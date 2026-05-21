@@ -230,11 +230,13 @@
 - [x] `CMakeLists.txt` 把 `emu_window_ios.{h,mm}` 一并塞进 iOS 分支的 drivers target；simulator 构建通过。
 
 #### 2.4 iOS 端 emulator state 对象
-- 新建 `src/emu/ios/Bridge/IosEmulator.{h,mm}`：iOS 版 `eka2l1::ios::emulator`，结构对标 `src/emu/android/app/src/main/cpp/include/android/state.h` 里的 `eka2l1::android::emulator`，但删掉 sensor / camera / vibration / audio_driver（阶段 3 再补）。
-  - 字段：`std::unique_ptr<system> symsys` / `graphics_driver` / `launcher`（参考 android launcher 但做减法）/ `emu_window_ios window` / `config::app_settings`。
-  - 提供 `start(documents_root)` / `mount_rom(path)` / `rescan_apps()` / `launch_app(uid)` / `submit_pointer_event(...)` / `pause()` / `resume()` / `shutdown()`。
-  - 后台一条独立 emu 线程跑 `symsys->loop()` 等价的调度循环；UI 线程只投递事件、查询状态。
-- 暴露 Obj-C facade `EKA2L1Emulator`（singleton），供 SwiftUI 调用。Bridging-Header 加入。
+- [x] 新建 `src/emu/ios/Bridge/IosEmulator.{h,mm}`：Obj-C facade `EKA2L1Emulator` (singleton) + 私有 C++ `eka2l1::ios::emulator` struct，字段 `unique_ptr<system> symsys` / `unique_ptr<config::app_settings>` / `unique_ptr<drivers::emu_window_ios>` / `drivers::graphics_driver_ptr` / `config::state conf`。无 audio / sensor / camera / vibration 字段（阶段 3）。
+- [x] facade API：`+shared` 单例、`-startWithDocumentsPath:`、`-shutdown`、`-availableRoms`、`-mountRomNamed:`、`-rescanApps`、`-launchAppWithUID:`、`-installSisAtPath:`、`-attachLayer:pixelSize:scale:`、`-pause` / `-resume`、`-submitPointerEventAtX:y:phase:pointerId:`。`EKA2L1AppEntry` 类用于跨边界传 `(uid, name)`。
+- [x] `startWithDocumentsPath:` 建 `<Documents>/{roms,data,sis,data/drives/{c,d,e,z},data/compat}` 目录，`chdir(<Documents>/data)` 之后初始化 `log::setup_log`、deserialize config、把 `conf.storage` 指向 sandbox data 目录，再构造 `eka2l1::system`（audio_ / graphics_ 都置 nullptr）。
+- [x] `availableRoms` 扫 `<Documents>/roms` 一级子目录返回名字数组；`mountRomNamed:` / `rescanApps` / `launchAppWithUID:` / `installSisAtPath:` / `submitPointerEventAtX:...` 当前是占位 stub，留待 2.6 / 2.8 / 2.9 真实接入。
+- [x] `attachLayer:pixelSize:scale:` 转发到 `emu_window_ios::surface_changed`，把 layer 指针推到 `window_system_info::render_surface`；graphics_driver 实例化与 emu 线程在 2.9 接入。
+- [x] Bridging-Header 加入 `IosEmulator.h`；CMake 把 `IosEmulator.{h,mm}` 编进 iOS bundle。
+- [x] 链接闭环修复：①新增 `src/emu/common/src/ios/applauncher.mm`，`eka2l1::common::launch_browser` 走 `UIApplication openURL`（host_launch.o 一直引用该符号，桌面有 Qt 版、Android 有 JNI 版，iOS 之前缺）；②新增 `src/emu/drivers/src/ui/input_dialog_ios.cpp`，`drivers::ui::open_input_view` / `close_input_view` / `show_yes_no_dialog` 暂作 no-op，让 dispatch 层的 ehui_* 链接通过（真实弹窗推迟到阶段 3）。simulator build 通过。
 
 #### 2.5 ROM / 数据布局
 - 选定 sandbox 内的目录结构（写入 `IOS_PORTING_PLAN.md` 对应章节，本任务只确定即可）：

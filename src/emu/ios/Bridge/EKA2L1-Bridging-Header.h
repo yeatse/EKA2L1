@@ -4,3 +4,4 @@
 
 #import "StartupBridge.h"
 #import "CpuSmokeBridge.h"
+#import "IosEmulator.h"
