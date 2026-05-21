@@ -278,11 +278,21 @@
 - 手工验收步骤记录在本阶段末尾（截屏 + 日志）。
 
 #### 2.11 文档与遗留项
-- 本文件阶段 2 末尾追加"阶段 2 修复清单"，逐条记录踩坑修复（沿用 0.7 / 1.x 体例）。
-- 阶段 2 落地后回看：如果 applist 渲染、SIS 安装、pointer 路径出现需要重构的设计问题，把"重构动作"明确推到阶段 3，**不要在阶段 2 内做**。
+- [x] 阶段 2 修复清单已就位（见下文 10 条），沿用 0.7 / 1.x 体例。
+- [x] 重构动作明确推到阶段 3：①真正的 ROM 安装流程（替代 symlink + 期望 desktop 预装 device）；②launcher::draw 等价的 iOS 复合渲染（背景 / letterbox / 缩放 / 旋转）；③SVG/MIF 图标解码 + icon UI；④UIDocumentPicker SIS 导入；⑤UIAlertController 真实输入对话框；⑥cubeb iOS 后端 + Core Haptics 振动；⑦多指 / 长按 / 屏幕键盘。
+- [x] 变更日志补一条 2026-05-22 收尾。
 
 ### 阶段 2 修复清单（按出现顺序）
-> 进入实现阶段后逐条登记。
+1. **`GL_BGR` / `GL_BGRA` / `GL_LINE_SMOOTH` / `GL_MULTISAMPLE` / `GL_SAMPLE_ALPHA_TO_ONE` / `GL_TEXTURE_1D` / `GL_TEXTURE_BINDING_1D` / `GL_TEXTURE_BORDER_COLOR` / `GL_SAMPLER_1D` / `GL_GEOMETRY_SHADER`**：GLES3 头文件不存在。集中在 `ios_gl_loader.h` 里给等价或占位常量，让 ogl backend 的 enum 表能编通；运行期那些功能不会被打开（feature gate 已隔离）。
+2. **`glClearDepth` / `glDepthRange` / `glDrawBuffer` / `glPolygonMode` / `glDrawElementsBaseVertex` / `glTex(Sub)?Image1D` / `glCompressedTex(Sub)?Image1D`**：GLES3 缺失。`ios_gl_loader.h` 内 inline shim：`f`-后缀别名 / `glDrawBuffers(1, …)` / no-op / 丢 baseVertex / 1D 全空实现。Symbian 内容不会真的踩 1D 纹理；线框 / draw-buffer / depth-range 已不再用。
+3. **glad 接口直通**：把 `glad_glGetError` / `glad_glLineWidth` 在 iOS 下 `#define` 到 GLES 入口；`gladLoadGL` / `gladLoadGLES2Loader` / `glad_set_post_callback` / `GLADloadproc` 全部 no-op，因为 iOS 上 OpenGLES.framework 是直接链接的。
+4. **iOS 12+ GLES deprecation**：`ios_gl_loader.h` 顶端 `#define GLES_SILENCE_DEPRECATION` 抑制告警噪音。
+5. **`gl_context_eagl::attach_layer` 在 SwiftUI 主线程被构造会拿不到 EAGLContext 所有权**：把 `create_graphics_driver` 推到 graphics_thread，layer 指针通过 condition_variable 跨线程递交，保证 context / FBO / present 都在同一条线程上。
+6. **`drivers::ui::open_input_view` / `close_input_view` / `show_yes_no_dialog` 链接缺失**：dispatch 层的 `ehui_*` 引用这三个符号，Android/Qt 各自实现。新增 `drivers/src/ui/input_dialog_ios.cpp` 暂作 no-op，真实 UIAlertController 留给阶段 3。
+7. **`common::launch_browser` 链接缺失**：`host_launch.o` 引用，Android 走 JNI，Qt 走 `QDesktopServices`。iOS 新增 `common/src/ios/applauncher.mm` 走 `[UIApplication openURL:options:completionHandler:]`。
+8. **smoke 自动回归丢失**：阶段 2 把 ContentView 从 "默认跑 smoke" 改成 "默认进 ROM 列表"，导致 `scripts/build_ios.sh smoke` 30s timeout。改在 `EKA2L1App.init()` 里 background dispatch 一次 `EKA2L1CpuSmokeBridge` 并 NSLog `EKA2L1_SMOKE: ...` 标记，UI 流程保持新的 stage-2 三屏。
+9. **`drive_number` 命名空间**：阶段 0 写的 `eka2l1::drive_number::drive_d` 在 iOS path 触发 "no type named 'drive_number' in namespace 'eka2l1'"。`drive_number` / `drive_z` 等都是顶层枚举，去掉冗余的 `eka2l1::` 限定即可。
+10. **`present_status` 类型**：第一版写成 `std::atomic<int>` 想跨线程，但 `graphics_command_builder::present(int*)` 要的是裸 `int*`。还原为 `int` 字段，依赖窗口服务回调串行化保护。
 
 ### 阶段 2 已知风险
 - **OpenGL ES on iOS 已 deprecated 但仍可用**：iOS 12+ 至今 SDK 仍带 OpenGLES.framework，但 Apple 偶尔在新 SDK 提高警告等级。验收期内（iOS 18 / Xcode 26 序列）确认 OK；长期方向是 MoltenVK / Metal，留给后续阶段。一旦 SDK 真的拿掉 OpenGLES，本阶段产物会一起失效，但这是已知交换。
@@ -338,3 +348,4 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-20 | 阶段 1 拆解：缩窄为"dyncom 解释器跑通裸 ARM 片段"，dynarmic / MAP_JIT / entitlement 与发布通道合并到新的阶段 4。子任务 1.1–1.7 落地：smoke blob 设计、SmokeBridge、cpu iOS 真实可链、SwiftUI 展示、factory 回落语义、`build_ios.sh smoke` 验证、文档与遗留项。 |
 | 2026-05-21 | 阶段 1 完成：simulator 上 `scripts/build_ios.sh smoke` exit 0，`EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。期间踩了 5 个坑（详见阶段 1 修复清单）。dynarmic 请求按预期回落 dyncom，UI 显示 fallback reason。 |
 | 2026-05-21 | 阶段 2 拆解：目标聚焦"ROM 加载 → applist → 出一帧 + 单指交互"，音频/振动/导入 UI 全部推迟到阶段 3。子任务 2.1–2.11 落地：ogl 后端 iOS 化、EAGL 上下文、iOS emu_window、IosEmulator state、Documents 布局、applist 扫描、SwiftUI 三屏、触控、生命周期、`seed_ios_simulator_documents.sh`、文档收口。验证素材选定 `roms/N95 8GB (S60v3 - FP1)` + `roms/snakes-n95_n6trsohu.sis`。 |
+| 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |
