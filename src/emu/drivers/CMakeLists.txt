@@ -149,12 +149,14 @@ if(WIN32)
 
     target_link_libraries(drivers PRIVATE opengl32.lib Mfuuid.lib Propsys.lib)
 elseif (EKA2L1_IOS)
-    # EAGL-backed GLES3 context (task 2.2). The frontend hands a CAEAGLLayer
-    # in via window_system_info::render_surface; this backend owns the FBO
-    # and the colour / depth-stencil renderbuffers bound to the layer.
+    # EAGL-backed GLES3 context (task 2.2) plus emu_window_ios (task 2.3).
+    # The frontend's EAGLView hands a CAEAGLLayer in via emu_window_ios, which
+    # surfaces it on window_system_info::render_surface for the context.
     target_sources(drivers PRIVATE
         src/graphics/backend/context_eagl.h
         src/graphics/backend/context_eagl.mm
+        include/drivers/graphics/backend/emu_window_ios.h
+        src/graphics/backend/emu_window_ios.mm
     )
 elseif(APPLE)
     target_sources(drivers PRIVATE

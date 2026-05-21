@@ -223,11 +223,11 @@
 - [x] `CMakeLists.txt` iOS 分支编译 `context_eagl.{h,mm}`，并链 `QuartzCore` / `Foundation` / `UIKit`（除原本就有的 OpenGLES.framework）。simulator 构建通过。
 
 #### 2.3 iOS emu_window
-- 新建 `src/emu/drivers/include/drivers/graphics/backend/emu_window_ios.h` + `src/emu/drivers/src/graphics/backend/emu_window_ios.mm`，对标 `emu_window_android`：
-  - 持有 layer 指针、当前 logical size / scale、orientation。
-  - 暴露 setter 给 iOS 前端在 UIView 的 `layoutSubviews` / `viewDidLayoutSubviews` 中调用，更新 framebuffer size 与 `pointer_event` 坐标系。
-  - 不复用 `drivers::emu_window`（SDL2 桌面那套），iOS 直接继承 `drivers::emu_window` 抽象的最小子集即可。
-- `src/emu/drivers/CMakeLists.txt` 在 `elseif (EKA2L1_IOS)` 分支里把 `emu_window_ios` 的源文件加进 drivers target（与 ogl 一起）。
+- [x] 新建 `src/emu/drivers/include/drivers/graphics/backend/emu_window_ios.h` + `src/emu/drivers/src/graphics/backend/emu_window_ios.mm`：继承 `drivers::emu_window`，全部纯虚的桌面/触屏 API 给出 no-op 实现（cursor / fullscreen / poll_events / change_title 等）。
+- [x] `surface_changed(void *layer, int w, int h, float scale)`：iOS 前端在 EAGLView 的 `layoutSubviews` 中调用，更新 layer 指针 + framebuffer 像素尺寸 + scale，再触发 `surface_change_hook` 与 `resize_hook`，把新 surface 透到 EAGL context（任务 2.7 接入）。
+- [x] `get_window_system_info()` 返回 `window_system_type::iOS` + render_surface（CAEAGLLayer 指针）+ surface_width/height + render_surface_scale，供 EAGL context 初始化使用。
+- [x] `window_size()` 用 fb_size/scale 换算 logical points，`window_fb_size()` 返回像素尺寸；mouse 路径返回 0（pointer 事件走 `IosEmulator::submit_pointer_event`，任务 2.8）。
+- [x] `CMakeLists.txt` 把 `emu_window_ios.{h,mm}` 一并塞进 iOS 分支的 drivers target；simulator 构建通过。
 
 #### 2.4 iOS 端 emulator state 对象
 - 新建 `src/emu/ios/Bridge/IosEmulator.{h,mm}`：iOS 版 `eka2l1::ios::emulator`，结构对标 `src/emu/android/app/src/main/cpp/include/android/state.h` 里的 `eka2l1::android::emulator`，但删掉 sensor / camera / vibration / audio_driver（阶段 3 再补）。
