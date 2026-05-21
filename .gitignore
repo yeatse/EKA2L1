@@ -10,7 +10,9 @@ src/emu/lazarus/drives/*
 src/emu/lazarus/*.dll
 src/emu/common/include/common/configure.h
 src/emu/common/include/common/version.h
-docs
+docs/*
+# Track iOS stage-2 simulator verification screenshots even though docs/ is ignored.
+!docs/screenshots/
 CMakeSettings.json
 .vscode
 out
