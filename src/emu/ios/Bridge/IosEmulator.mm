@@ -13,6 +13,8 @@
 #include <thread>
 #include <vector>
 
+#include <sys/stat.h>
+
 #include <common/cvt.h>
 #include <common/fileutils.h>
 #include <common/log.h>
@@ -102,6 +104,17 @@ namespace eka2l1::ios {
 
     // Build the sandbox layout up front so later steps can rely on it.
     NSFileManager *fm = NSFileManager.defaultManager;
+    // Drive letters mirror Symbian's uppercase convention. iOS app data
+    // containers are case-sensitive (despite the host APFS volume being
+    // case-insensitive), so rescan_devices()'s "drives/Z/" probe and the
+    // mount() calls below have to find these exact names on disk.
+    // Use lowercase drive letters and firmcode dir names throughout. The
+    // system code paths that read the ROM / Z drive build their paths via
+    // common::lowercase_string(firmcode) and lowercase drive letters, and
+    // the iOS sim's runtime presents the app with a case-sensitive view of
+    // the host APFS volume (which itself is case-insensitive, so we can
+    // only ever have one entry per case-insensitive name on disk). Naming
+    // everything lowercase ensures both views agree.
     NSArray<NSString *> *subdirs = @[@"roms", @"data", @"sis",
                                       @"data/drives/c", @"data/drives/d",
                                       @"data/drives/e", @"data/drives/z",
@@ -118,6 +131,7 @@ namespace eka2l1::ios {
 
     eka2l1::log::setup_log(nullptr);
     LOG_INFO(eka2l1::FRONTEND_CMDLINE, "EKA2L1 iOS v0.0.1 ({}-{})", GIT_BRANCH, GIT_COMMIT_HASH);
+
 
     _state->conf.deserialize();
     _state->conf.storage = dataRoot.UTF8String;
@@ -241,11 +255,6 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return NO;
     }
-    // ROMs that live under Documents/roms/<name>/ are expected to already be
-    // a fully-extracted Symbian Z drive (i.e. a "device folder" produced by
-    // the desktop installer). Stage 2 just rsyncs that tree into the Z drive
-    // mount point under data/, then asks the system to rescan + pick the
-    // first matching device.
     NSString *romsRoot = [@(_state->documents_root.c_str()) stringByAppendingPathComponent:@"roms"];
     NSString *romPath = [romsRoot stringByAppendingPathComponent:romName];
     BOOL isDir = NO;
@@ -255,21 +264,81 @@ namespace eka2l1::ios {
 
     auto *sys = _state->symsys.get();
     const std::string storage = _state->conf.storage;
+    NSFileManager *fm = NSFileManager.defaultManager;
 
-    // Make sure the Z mount point exists and ensure the ROM contents are
-    // visible through it. We avoid copying — symlink the folder for cheap.
-    NSString *zPath = [@(storage.c_str()) stringByAppendingPathComponent:@"drives/z"];
-    [NSFileManager.defaultManager removeItemAtPath:zPath error:nil];
-    [NSFileManager.defaultManager createSymbolicLinkAtPath:zPath
-                                       withDestinationPath:romPath
-                                                     error:nil];
+    // The user-supplied ROM bundle ships as a desktop storage tree:
+    //   <romPath>/data/drives/z/<firm>/...   Symbian Z-drive filesystem
+    //   <romPath>/data/roms/<firm>/SYM.rom   raw ROM image (case-sensitive!)
+    // We stage it into the live sandbox so the running system finds it at
+    // both upper- and lower-case firmcode paths.
+    NSString *zSrc = [romPath stringByAppendingPathComponent:@"data/drives/z"];
+    NSString *romSrc = [romPath stringByAppendingPathComponent:@"data/roms"];
+    if (![fm fileExistsAtPath:zSrc isDirectory:&isDir] || !isDir ||
+        ![fm fileExistsAtPath:romSrc isDirectory:&isDir] || !isDir) {
+        return NO;
+    }
 
-    sys->rescan_devices(drive_z);
+    // Generate a devices.yml entry for each firm we find. device_manager
+    // only re-reads this on construction, so we have to write it BEFORE
+    // restarting / rebuilding system. For stage 2 we already created system
+    // in start(); to pick up devices we'll rewrite devices.yml and recreate
+    // system. That's a heavy hammer, but the alternative (calling
+    // rescan_devices) recurses into symlinked content and can destroy the
+    // user's bundle if the SYM.ROM probe fails.
+    NSMutableString *yaml = [NSMutableString string];
+    NSString *zDst = [@(storage.c_str()) stringByAppendingPathComponent:@"drives/z"];
+    NSString *romDst = [@(storage.c_str()) stringByAppendingPathComponent:@"roms"];
+    for (NSString *firm in [fm contentsOfDirectoryAtPath:zSrc error:nil]) {
+        NSString *firmLower = firm.lowercaseString;
+        NSString *firmUpper = firm.uppercaseString;
+        NSString *firmZSrc = [zSrc stringByAppendingPathComponent:firm];
+        NSString *firmZDst = [zDst stringByAppendingPathComponent:firmLower];
+        unlink(firmZDst.UTF8String);
+        symlink(firmZSrc.UTF8String, firmZDst.UTF8String);
+
+        NSString *romFirmSrc = [romSrc stringByAppendingPathComponent:firm];
+        NSString *romFirmDst = [romDst stringByAppendingPathComponent:firmLower];
+        [fm removeItemAtPath:romFirmDst error:nil];
+        [fm createDirectoryAtPath:romFirmDst withIntermediateDirectories:YES attributes:nil error:nil];
+        for (NSString *fname in [fm contentsOfDirectoryAtPath:romFirmSrc error:nil]) {
+            NSString *src = [romFirmSrc stringByAppendingPathComponent:fname];
+            // rescan/load_rom probes literal uppercase "SYM.ROM".
+            NSString *targetName = ([fname caseInsensitiveCompare:@"SYM.ROM"] == NSOrderedSame)
+                ? @"SYM.ROM" : fname;
+            NSString *dst = [romFirmDst stringByAppendingPathComponent:targetName];
+            unlink(dst.UTF8String);
+            symlink(src.UTF8String, dst.UTF8String);
+        }
+
+        // devices.yml uses uppercase firmcode (matches what
+        // determine_rpkg_product_info would parse from sw.txt).
+        [yaml appendFormat:@"%@:\n  platver: epoc94\n  manufacturer: Nokia\n  firmcode: %@\n  model: %@\n  machine-uid: 0\n",
+            firmUpper, firmUpper, firmUpper];
+    }
+    if (yaml.length == 0) {
+        return NO;
+    }
+
+    // Write devices.yml then re-instantiate system so device_manager picks
+    // up the new entries (constructor calls load_devices()).
+    NSString *yamlPath = [@(storage.c_str()) stringByAppendingPathComponent:@"devices.yml"];
+    [yaml writeToFile:yamlPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+
+    eka2l1::system_create_components comp;
+    comp.audio_ = nullptr;
+    comp.graphics_ = nullptr;
+    comp.conf_ = &_state->conf;
+    comp.settings_ = _state->settings.get();
+    _state->symsys = std::make_unique<eka2l1::system>(comp);
+    sys = _state->symsys.get();
+
     sys->startup();
     if (sys->get_device_manager()->total() == 0) {
         return NO;
     }
-    sys->set_device(0);
+    if (!sys->set_device(0)) {
+        return NO;
+    }
     sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
     sys->mount(drive_d, drive_media::physical, eka2l1::add_path(storage, "/drives/d/"), io_attrib_internal);
     sys->mount(drive_e, drive_media::physical, eka2l1::add_path(storage, "/drives/e/"), io_attrib_removeable);

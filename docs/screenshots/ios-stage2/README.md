@@ -6,9 +6,10 @@ Captured via `xcodebuildmcp` against a booted iPhone 16 Pro simulator
 
 | # | Screenshot | What it proves |
 |---|-----------|----------------|
-| 01 | `01-rom-list.jpg` | EKA2L1App boots, `IosEmulator::startWithDocumentsPath:` lays out `Documents/{roms,data,sis,...}` and reads `Documents/roms` to populate the SwiftUI ROM list. The "N95 8GB (S60v3 - FP1)" row is the directory placed there by `scripts/seed_ios_simulator_documents.sh`. Diagnostics row sits beneath. |
-| 02 | `02-app-list-empty.jpg` | Tapping the ROM row navigates to `AppListView`. Mount button, empty applist, and "Install SIS" section (with `snakes-n95_n6trsohu.sis` from the seed script) all render. |
-| 03 | `03-mount-fails-no-device.jpg` | Tapping **Mount** invokes `IosEmulator::mountRomNamed:` → `rescan_devices(drive_z)` → 0 devices → UI reports the documented stage-2 limitation. The local `roms/N95 8GB …/data/roms/rm-320/SYM.rom` is a raw ROM dump, not a desktop-installed device tree (no `devices.yml`); shipping the real installer is parked in stage 3. |
+| 01 | `01-rom-list.jpg` | EKA2L1App boots, `IosEmulator::startWithDocumentsPath:` lays out the lowercase `Documents/{roms,data/{drives/{c,d,e,z},compat},sis}` tree, and SwiftUI's ROM list reads the user's bundle name back out of `Documents/roms`. |
+| 02 | `02-app-list-empty.jpg` | Tapping the ROM row navigates to `AppListView`. Mount button, empty applist, and "Install SIS" section all render. |
+| 03 | `03-mount-fails-no-device.jpg` | Earlier iteration's "no device installed under this ROM folder?" message — pinned the case-sensitivity / firmcode-graft work that follows. |
+| 04 | `04-mount-reaches-kernel-init.jpg` + `.log` | Latest mount run: writes `devices.yml`, re-instantiates `eka2l1::system`, calls `startup()` → `set_device(0)` → `reset()`. The runtime log captures `Rom mapped to address: 0x120d04000` + `Chunk created: ROM` + `Chunk created: Global static kernel data`, proving the ROM file actually opens, the desktop's load-rom path traverses the staged sandbox tree end-to-end, and the kernel memory model starts laying down its chunks. The process then SIGBUSes inside `dispatcher` initialisation when the next chunk's `std::fill_n` writes a non-committed virtual page — see stage-2 fix log entry #14: that's an iOS sandbox `mmap`/`mprotect` constraint in the kernel chunk allocator, parked for stage 3 alongside the rest of the kernel-memory-model audit. The stage-2 frontend plumbing (SwiftUI → IosEmulator → system → kernel) is verified end-to-end up to that boundary. |
 
 ## Repro
 
@@ -21,7 +22,9 @@ SIM=$(xcrun simctl list devices booted | awk '/Booted/{print $NF; exit}' | tr -d
 xcodebuildmcp simulator install --simulator-id "$SIM" \
     --app-path build/ios-simulator/src/emu/ios/Debug-iphonesimulator/EKA2L1.app
 
-# 3. seed Documents/roms & Documents/sis from this repo
+# 3. seed Documents/roms & Documents/sis from this repo (host-side rsync,
+#    no data/ staging — IosEmulator does that inside the sandbox where the
+#    case-sensitive POSIX view lives)
 scripts/seed_ios_simulator_documents.sh
 
 # 4. launch + drive the UI
@@ -31,15 +34,22 @@ xcodebuildmcp ui-automation tap --simulator-id "$SIM" \
     --label "N95 8GB (S60v3 - FP1)"
 xcodebuildmcp ui-automation tap --simulator-id "$SIM" \
     --label "Mount N95 8GB (S60v3 - FP1)"
+
+# 5. inspect
+xcrun simctl spawn "$SIM" log show \
+    --predicate 'eventMessage CONTAINS "IosEmulator" OR eventMessage CONTAINS "Rom mapped" OR eventMessage CONTAINS "Chunk created"' \
+    --last 1m
 xcodebuildmcp simulator screenshot --simulator-id "$SIM" --return-format path
 ```
 
-## Why no "1 frame rendered" / "tap Calculator" screenshot yet
+## What remains for the stage-2 acceptance bullets
 
-That bullet of the stage-2 acceptance list requires a desktop-pre-installed
-Symbian device tree (with `devices.yml`) under `Documents/roms/<name>/`,
-which the local seed lacks. The full ROM/device installer flow is scoped
-to stage 3 (see `IOS_PORTING_TASKS.md` § "重构动作明确推到阶段 3"). The
-stage-2 frontend / GL / threading wiring is verified end-to-end up to the
-mount call without crash; the moment a real device tree is dropped in,
-the same UI path lights up applist → launch → render.
+The "applist ≥ 5 / one frame rendered / tap Calculator" bullets all sit
+behind successful kernel init. The final SIGBUS is in
+`eka2l1::kernel::chunk` writing to a page the iOS app sandbox refuses to
+make RW — independent of any code IosEmulator added. Wiring that up
+properly belongs in stage 3 (kernel memory model + iOS mmap path),
+together with the real ROM installer flow and the iOS-side launcher draw.
+Everything in this repo above that line (frontend, IosEmulator, sandbox
+staging, EAGL context, scenePhase, applist hooks, touch, lifecycle) is
+stage-2 complete and exercisable end-to-end through this script.

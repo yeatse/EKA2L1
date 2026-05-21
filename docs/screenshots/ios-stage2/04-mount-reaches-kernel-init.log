@@ -1,0 +1,8 @@
+I /Users/yeatse/Developer/Repo/EKA2L1/src/emu/ios/Bridge/IosEmulator.mm:133 [Frontend.Cmdline]: EKA2L1 iOS v0.0.1 (ios-bab45a071)
+E /Users/yeatse/Developer/Repo/EKA2L1/src/emu/system/src/devices.cpp:186 [System]: Devices file not found (or is invalid)!
+E /Users/yeatse/Developer/Repo/EKA2L1/src/emu/system/src/devices.cpp:323 [System]: Fail to load languages.txt file! (Searched path: /Users/yeatse/Library/Developer/CoreSimulator/Devices/26D5FEDA-3BDC-4699-83ED-58B749D676DF/data/Containers/Data/Application/191B2A32-9C5E-44CE-9527-EB216066B0BF/Documents/data/drives/z/rm-320/resource/bootdata/languages.txt).
+W /Users/yeatse/Developer/Repo/EKA2L1/src/emu/system/src/devices.cpp:343 [System]: No language is specified, adding English to prevent empty
+E /Users/yeatse/Developer/Repo/EKA2L1/src/emu/config/src/panic_blacklist.cpp:33 [Config]: Failed to open thread panic blacklist file!
+T /Users/yeatse/Developer/Repo/EKA2L1/src/emu/kernel/src/kernel.cpp:1294 [Kernel]: Rom mapped to address: 0x120d04000
+I /Users/yeatse/Developer/Repo/EKA2L1/src/emu/kernel/src/chunk.cpp:157 [Kernel]: Chunk created: ROM, base (in parent): 0x80000000, max size: 0x39cb000 type: normal, access: global
+I /Users/yeatse/Developer/Repo/EKA2L1/src/emu/kernel/src/chunk.cpp:157 [Kernel]: Chunk created: Global static kernel data, base (in parent): 0x83a00000, max size: 0x20000 type: normal, access: global
