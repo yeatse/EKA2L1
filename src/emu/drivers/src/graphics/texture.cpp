@@ -21,19 +21,15 @@
 #include <drivers/graphics/graphics.h>
 #include <drivers/graphics/texture.h>
 
-#if !EKA2L1_PLATFORM(IOS)
 #include <drivers/graphics/backend/ogl/texture_ogl.h>
-#endif
 
 namespace eka2l1::drivers {
     texture_ptr make_texture(graphics_driver *driver) {
         switch (driver->get_current_api()) {
-#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_texture>();
             break;
         }
-#endif
 
         default:
             break;
@@ -44,12 +40,10 @@ namespace eka2l1::drivers {
 
     renderbuffer_ptr make_renderbuffer(graphics_driver *driver) {
         switch (driver->get_current_api()) {
-#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_renderbuffer>();
             break;
         }
-#endif
 
         default:
             break;

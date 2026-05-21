@@ -24,28 +24,30 @@ if (NOT EKA2L1_IOS)
             src/video/backend/ffmpeg/video_player_ffmpeg.cpp)
 endif ()
 
-# The OGL graphics backend depends on glad, which is not currently set up for
-# iOS. Task 0.3 excludes the whole ogl subdirectory on iOS; phase 2 will bring
-# back a GLES-compatible variant (likely via a swapped loader or direct
-# <OpenGLES/ES3/gl.h> include).
-if (NOT EKA2L1_IOS)
-    set(DRIVERS_OGL_SRC
-            include/drivers/graphics/backend/ogl/buffer_ogl.h
-            include/drivers/graphics/backend/ogl/common_ogl.h
-            include/drivers/graphics/backend/ogl/fb_ogl.h
-            include/drivers/graphics/backend/ogl/graphics_ogl.h
-            include/drivers/graphics/backend/ogl/input_desc_ogl.h
-            include/drivers/graphics/backend/ogl/shader_ogl.h
-            include/drivers/graphics/backend/ogl/texture_ogl.h
-            src/graphics/backend/ogl/buffer_ogl.cpp
-            src/graphics/backend/ogl/common_ogl.cpp
-            src/graphics/backend/ogl/etcdec.cxx
-            src/graphics/backend/ogl/fb_ogl.cpp
-            src/graphics/backend/ogl/graphics_ogl.cpp
-            src/graphics/backend/ogl/input_desc_ogl.cpp
-            src/graphics/backend/ogl/pvrt-dec.cpp
-            src/graphics/backend/ogl/texture_ogl.cpp
-            src/graphics/backend/ogl/shader_ogl.cpp)
+# The OGL graphics backend was originally written against desktop GL via glad.
+# On iOS we substitute ios_gl_loader.h for <glad/glad.h> in each ogl source
+# (task 2.1) and link OpenGLES.framework directly below — glad itself stays
+# unbuilt.
+set(DRIVERS_OGL_SRC
+        include/drivers/graphics/backend/ogl/buffer_ogl.h
+        include/drivers/graphics/backend/ogl/common_ogl.h
+        include/drivers/graphics/backend/ogl/fb_ogl.h
+        include/drivers/graphics/backend/ogl/graphics_ogl.h
+        include/drivers/graphics/backend/ogl/input_desc_ogl.h
+        include/drivers/graphics/backend/ogl/shader_ogl.h
+        include/drivers/graphics/backend/ogl/texture_ogl.h
+        src/graphics/backend/ogl/buffer_ogl.cpp
+        src/graphics/backend/ogl/common_ogl.cpp
+        src/graphics/backend/ogl/etcdec.cxx
+        src/graphics/backend/ogl/fb_ogl.cpp
+        src/graphics/backend/ogl/graphics_ogl.cpp
+        src/graphics/backend/ogl/input_desc_ogl.cpp
+        src/graphics/backend/ogl/pvrt-dec.cpp
+        src/graphics/backend/ogl/texture_ogl.cpp
+        src/graphics/backend/ogl/shader_ogl.cpp)
+if (EKA2L1_IOS)
+    list(APPEND DRIVERS_OGL_SRC
+        include/drivers/graphics/backend/ogl/ios_gl_loader.h)
 endif ()
 
 add_library(drivers
@@ -193,9 +195,10 @@ target_link_libraries(miniBAE_EMU PRIVATE common)
 
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)
-    # glad / SDL2 are not linked on iOS; the ogl backend is excluded entirely
-    # in the source list above and the graphics factories below short-circuit
-    # via EKA2L1_PLATFORM(IOS). cubeb and ffmpeg link is gated by task 0.5.
+    # glad / SDL2 are not linked on iOS. The ogl backend compiles against
+    # OpenGLES.framework via ios_gl_loader.h (task 2.1). cubeb and ffmpeg
+    # remain unlinked per task 0.5.
+    target_link_libraries(drivers PRIVATE "-framework OpenGLES")
 else()
     target_link_libraries(drivers PRIVATE cubeb ffmpeg glad)
 endif()

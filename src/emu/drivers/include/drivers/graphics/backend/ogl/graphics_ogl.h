@@ -28,7 +28,12 @@
 
 #include <common/queue.h>
 #include <common/region.h>
+#include <common/platform.h>
+#if EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/ios_gl_loader.h>
+#else
 #include <glad/glad.h>
+#endif
 
 #include <memory>
 #include <queue>

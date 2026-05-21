@@ -22,7 +22,12 @@
 #include <drivers/graphics/backend/ogl/texture_ogl.h>
 #include <drivers/graphics/backend/ogl/graphics_ogl.h>
 
+#include <common/platform.h>
+#if EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/ios_gl_loader.h>
+#else
 #include <glad/glad.h>
+#endif
 
 #include <common/bytes.h>
 #include <common/log.h>

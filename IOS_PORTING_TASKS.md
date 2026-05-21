@@ -207,12 +207,11 @@
 ### 子任务
 
 #### 2.1 ogl 后端在 iOS 上的最小可编
-- 在 `src/emu/drivers/CMakeLists.txt` 把 `DRIVERS_OGL_SRC` 的 `if (NOT EKA2L1_IOS)` 改成三分支，让 iOS 也参与编译；同时把 `target_link_libraries(drivers ... glad)` 在 iOS 下替换为系统 framework `OpenGLES`。
-- 新增 `src/emu/drivers/include/drivers/graphics/backend/ogl/ios_gl_loader.h`：iOS 下直接 `#include <OpenGLES/ES3/gl.h>` + `<OpenGLES/ES3/glext.h>`，把 ogl 后端里所有 `<glad/glad.h>` 形式的 include 改为通过该 header 间接引入（用 `#if EKA2L1_PLATFORM(IOS)` 守护，桌面平台路径不动）。
-- `common_ogl.cpp` / `graphics_ogl.cpp` / `texture_ogl.cpp` 等里出现的桌面专属符号（`GL_BGRA`、`GL_TEXTURE_BORDER_COLOR`、`glPolygonMode`、`glClearDepth`（非 `f` 后缀）、`GL_LINE`/`GL_FILL` 等）逐一定位，按下面规则处理：
-  - 若是单纯 enum 缺失：iOS 下 `#define` 到等价 GLES 值或用 OES/EXT 扩展常量。
-  - 若是行为本身 GLES 不支持（如 `glPolygonMode`）：在调用点用 `#if !EKA2L1_PLATFORM(IOS)` 包住，并加 `// TODO(ios)` 注释保留语义说明（多数与线框调试有关，对验收不阻塞）。
-- 不允许在阶段 2 顺手重构 ogl 抽象层。所有改动用 `EKA2L1_PLATFORM(IOS)` 守护，保证 macOS / Linux / Windows / Android 桌面构建不动。
+- [x] `src/emu/drivers/CMakeLists.txt`：`DRIVERS_OGL_SRC` 提到三平台共用；iOS 下 `target_link_libraries(drivers PRIVATE "-framework OpenGLES")` 直接链 system framework，glad 仍只在桌面/Android 链接。
+- [x] 新增 `src/emu/drivers/include/drivers/graphics/backend/ogl/ios_gl_loader.h`，集中：①`#include <OpenGLES/ES3/gl.h>` + `<OpenGLES/ES3/glext.h>`；②`glad_glGetError` / `glad_glLineWidth` 直通真实 GLES 入口；③`gladLoadGL` / `gladLoadGLES2Loader` / `glad_set_post_callback` 写成 no-op；④补齐 `GL_BGRA` / `GL_BGR` / `GL_LINE_SMOOTH` / `GL_MULTISAMPLE` / `GL_SAMPLE_ALPHA_TO_ONE` / `GL_TEXTURE_1D` / `GL_TEXTURE_BINDING_1D` / `GL_TEXTURE_BORDER_COLOR` / `GL_SAMPLER_1D` / `GL_GEOMETRY_SHADER`；⑤inline shim：`glClearDepth` → `glClearDepthf`、`glDepthRange` → `glDepthRangef`、`glDrawBuffer` → `glDrawBuffers(1, …)`、`glPolygonMode` no-op、`glDrawElementsBaseVertex` 丢弃 base vertex 走 plain `glDrawElements`、`glTexImage1D` / `glTexSubImage1D` / `glCompressedTexImage1D` / `glCompressedTexSubImage1D` 全部空实现（Symbian 内容不会真的走 1D 纹理路径）；⑥顶端 `#define GLES_SILENCE_DEPRECATION` 抑制 iOS 12+ 噪音。
+- [x] 八个 ogl 源/头里所有 `#include <glad/glad.h>` 改成 `#if EKA2L1_PLATFORM(IOS) ios_gl_loader.h #else glad.h #endif`，桌面/Android 路径完全不变。`graphics_driver_shared.cpp` 已是 iOS-exclude，留作 no-op。
+- [x] 工厂层 `buffer.cpp` / `graphics.cpp` / `shader.cpp` / `fb.cpp` / `texture.cpp` / `input_desc.cpp` 中阶段 0 留下的 `#if !EKA2L1_PLATFORM(IOS)` 守卫全部撤掉，让 iOS 也走 `case graphic_api::opengl: return std::make_unique<ogl_*>(...)` 实分支。
+- [x] 真实构建验证：`scripts/build_ios.sh simulator` 通过；`scripts/build_ios.sh smoke` 仍打 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`，桌面 GL 假设并未泄漏到 dyncom smoke 路径。
 
 #### 2.2 EAGL graphics context
 - 新建 `src/emu/drivers/src/graphics/backend/context_eagl.{h,mm}`：实现 `gl_context` 派生类 `gl_context_eagl`，内部持有一个 `EAGLContext *`（`kEAGLRenderingAPIOpenGLES3`）和与之绑定的 `GLKView` 或裸 `CAEAGLLayer`-backed `UIView`。

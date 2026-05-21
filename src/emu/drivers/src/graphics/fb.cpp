@@ -21,9 +21,7 @@
 #include <drivers/graphics/fb.h>
 #include <drivers/graphics/graphics.h>
 
-#if !EKA2L1_PLATFORM(IOS)
 #include <drivers/graphics/backend/ogl/fb_ogl.h>
-#endif
 
 namespace eka2l1::drivers {
     std::uint64_t framebuffer::color_attachment_handle(const std::int32_t attachment_id) {
@@ -42,12 +40,10 @@ namespace eka2l1::drivers {
         const std::vector<int> &face_indicies, drawable *depth_buffer, const int depth_face_index,
         drawable *stencil_buffer, const int stencil_face_index) {
         switch (driver->get_current_api()) {
-#if !EKA2L1_PLATFORM(IOS)
         case graphic_api::opengl: {
             return std::make_unique<ogl_framebuffer>(color_buffer_list, face_indicies, depth_buffer, stencil_buffer, depth_face_index, stencil_face_index);
             break;
         }
-#endif
 
         default:
             break;

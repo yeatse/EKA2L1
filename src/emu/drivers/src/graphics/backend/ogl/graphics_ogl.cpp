@@ -28,7 +28,12 @@
 #include <drivers/graphics/backend/ogl/graphics_ogl.h>
 #include <drivers/graphics/backend/ogl/buffer_ogl.h>
 #include <drivers/graphics/backend/ogl/fb_ogl.h>
+#include <common/platform.h>
+#if EKA2L1_PLATFORM(IOS)
+#include <drivers/graphics/backend/ogl/ios_gl_loader.h>
+#else
 #include <glad/glad.h>
+#endif
 
 #if EKA2L1_PLATFORM(ANDROID)
 #include <EGL/egl.h>
