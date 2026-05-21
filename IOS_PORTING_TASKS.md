@@ -252,15 +252,11 @@
 - [x] simulator build 通过；运行时是否能真正拉起一个 GUI 应用要等任务 2.7 / 2.9 装好渲染管线后才能验证，stage-2 验收阶段最后跑 manual 走查。
 
 #### 2.7 SwiftUI 外壳与 EAGL 视图
-- 重写 `src/emu/ios/App/ContentView.swift`：用 `NavigationStack`，三屏：
-  1. **ROM 列表**：列出 `<Documents>/roms` 下的子目录，点击一个 = 当前 ROM。
-  2. **App 列表**：展示 applist 扫描结果 + 一个"安装 SIS"按钮（弹出当前 `<Documents>/sis/` 下文件供选择，调 `IosEmulator::install_sis`）。
-  3. **Emulator**：全屏覆盖 `EmulatorViewControllerRepresentable`（`UIViewControllerRepresentable`）。
-- 新建 `src/emu/ios/App/EmulatorView.swift` + `src/emu/ios/Bridge/EmulatorViewController.{h,mm}`：
-  - `EmulatorViewController` 持有一个 `EAGLView : UIView`（`+ (Class)layerClass { return [CAEAGLLayer class]; }`），把 layer 指针传给 `IosEmulator::start_render(layer)`。
-  - `viewDidLoad` 调 `IosEmulator::launch_app(uid)`；`viewWillDisappear` 调 `IosEmulator::shutdown()`。
-  - `viewDidLayoutSubviews` 更新 emu_window size & scale（取 `UIScreen.main.nativeScale`）。
-- 老的 CPU smoke UI 收进一个"Diagnostics"二级页面，不在主路径里。
+- [x] 重写 `src/emu/ios/App/ContentView.swift`：`NavigationStack` 三屏 — ROM 列表（`Documents/roms` 一级目录）→ App 列表（`mountRomNamed:` + `rescanApps` + "Install SIS" 列出 `Documents/sis/` 下 `.sis/.sisx`）→ EmulatorView。原 CPU smoke UI 移到 "Diagnostics" 二级页（保留 `EKA2L1CpuSmokeBridge` 入口）。booting 时调 `EKA2L1Emulator.shared().start(documentsPath:)`，失败展示 banner。
+- [x] 新建 `src/emu/ios/App/EmulatorView.swift`：`UIViewControllerRepresentable`，把 UID 透到 `EmulatorViewController`。
+- [x] 新建 `src/emu/ios/Bridge/EmulatorViewController.{h,mm}`：内部 `EAGL2L1View : UIView`，`+layerClass = CAEAGLLayer`，`contentScaleFactor = UIScreen.mainScreen.nativeScale`，`opaque = YES`；`layoutSubviews` 算出像素尺寸后 `attachLayer:pixelSize:scale:` 推回 IosEmulator。`viewDidAppear` 在 layer ready 后 `launchAppWithUID:` + `resume`；`viewWillDisappear` `pause`。
+- [x] Bridging header 加入 `EmulatorViewController.h`；CMake bundle 编进 `EmulatorView.swift` + `EmulatorViewController.{h,mm}`；simulator build 通过。
+- [x] 单指触控派发到 `EKA2L1Emulator::submitPointerEventAtX:y:phase:pointerId:`（任务 2.8 的派发链路在这里就位，IosEmulator 内部转发到 window_server 也在 2.8 完成）。
 
 #### 2.8 输入：触控 → pointer_event
 - `EAGLView` 重写 `touchesBegan/Moved/Ended/Cancelled`，对每个 `UITouch` 抽出 `(x, y, phase)`，转 framebuffer 坐标（乘 scale + 减去 letterbox offset），投递到 `IosEmulator::submit_pointer_event`。

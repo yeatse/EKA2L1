@@ -28,6 +28,7 @@ set(EKA2L1_IOS_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Bridge")
 set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/EKA2L1App.swift"
     "${EKA2L1_IOS_APP_DIR}/ContentView.swift"
+    "${EKA2L1_IOS_APP_DIR}/EmulatorView.swift"
     "${EKA2L1_IOS_BRIDGE_DIR}/StartupBridge.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/StartupBridge.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBlob.h"
@@ -35,6 +36,8 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.mm"
+    "${EKA2L1_IOS_BRIDGE_DIR}/EmulatorViewController.h"
+    "${EKA2L1_IOS_BRIDGE_DIR}/EmulatorViewController.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
     "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
