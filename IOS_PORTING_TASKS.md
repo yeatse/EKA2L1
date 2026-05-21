@@ -293,6 +293,7 @@
 8. **smoke 自动回归丢失**：阶段 2 把 ContentView 从 "默认跑 smoke" 改成 "默认进 ROM 列表"，导致 `scripts/build_ios.sh smoke` 30s timeout。改在 `EKA2L1App.init()` 里 background dispatch 一次 `EKA2L1CpuSmokeBridge` 并 NSLog `EKA2L1_SMOKE: ...` 标记，UI 流程保持新的 stage-2 三屏。
 9. **`drive_number` 命名空间**：阶段 0 写的 `eka2l1::drive_number::drive_d` 在 iOS path 触发 "no type named 'drive_number' in namespace 'eka2l1'"。`drive_number` / `drive_z` 等都是顶层枚举，去掉冗余的 `eka2l1::` 限定即可。
 10. **`present_status` 类型**：第一版写成 `std::atomic<int>` 想跨线程，但 `graphics_command_builder::present(int*)` 要的是裸 `int*`。还原为 `int` 字段，依赖窗口服务回调串行化保护。
+11. **os_thread 在 mount 之前跑 `symsys->loop()` → SIGSEGV**：xcodebuildmcp 装好 .app 后启动立刻 crash。Crash report 显示 `kernel_system::crr_thread()` 在 `unique_ptr<thread_scheduler>::operator->` 上 deref null —— `system_impl::loop()` 在 `set_device` / `startup` 之前不能跑。补一个 `std::atomic<bool> mounted{false}`，os_thread 未 mount 时只 sleep；`mountRomNamed:` 末尾翻为 true。修复后 simulator 启动稳定，主屏 → AppListView → Mount 全程不再 crash。
 
 ### 阶段 2 已知风险
 - **OpenGL ES on iOS 已 deprecated 但仍可用**：iOS 12+ 至今 SDK 仍带 OpenGLES.framework，但 Apple 偶尔在新 SDK 提高警告等级。验收期内（iOS 18 / Xcode 26 序列）确认 OK；长期方向是 MoltenVK / Metal，留给后续阶段。一旦 SDK 真的拿掉 OpenGLES，本阶段产物会一起失效，但这是已知交换。

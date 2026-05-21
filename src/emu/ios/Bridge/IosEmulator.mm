@@ -55,6 +55,10 @@ namespace eka2l1::ios {
 
         std::atomic<bool> running{false};
         std::atomic<bool> paused{false};
+        // symsys->loop() must not run before mountRomNamed: completes —
+        // kernel_system::crr_thread() dereferences a null thread_scheduler
+        // otherwise. The os_thread idles until this flips true.
+        std::atomic<bool> mounted{false};
 
         // Frame loop / lifecycle (task 2.9). Two threads sit behind the
         // singleton — one feeds drivers::graphics_driver::run() (must own
@@ -173,16 +177,12 @@ namespace eka2l1::ios {
 
     _state->os_thread = std::make_unique<std::thread>([state]() {
         while (state->running) {
-            if (state->paused) {
+            if (state->paused || !state->mounted.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
                 continue;
             }
             try {
-                if (state->symsys) {
-                    state->symsys->loop();
-                } else {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
-                }
+                state->symsys->loop();
             } catch (std::exception &exc) {
                 LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Emu loop exception: {}", exc.what());
                 state->running = false;
@@ -282,6 +282,8 @@ namespace eka2l1::ios {
     _state->winserv = reinterpret_cast<eka2l1::window_server *>(
         kern->get_by_name<eka2l1::service::server>(
             eka2l1::get_winserv_name_by_epocver(sys->get_symbian_version_use())));
+
+    _state->mounted = true;
 
     // Register a per-screen redraw callback so each frame produced by the
     // Symbian window server triggers a swap on the EAGL context. The
