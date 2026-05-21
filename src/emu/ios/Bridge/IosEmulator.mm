@@ -4,6 +4,9 @@
 #import "IosEmulator.h"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -20,6 +23,8 @@
 #include <drivers/graphics/backend/emu_window_ios.h>
 #include <drivers/graphics/graphics.h>
 #include <drivers/input/common.h>
+#include <drivers/itc.h>
+#include <services/window/screen.h>
 #include <kernel/kernel.h>
 #include <package/manager.h>
 #include <services/applist/applist.h>
@@ -51,11 +56,22 @@ namespace eka2l1::ios {
         std::atomic<bool> running{false};
         std::atomic<bool> paused{false};
 
+        // Frame loop / lifecycle (task 2.9). Two threads sit behind the
+        // singleton — one feeds drivers::graphics_driver::run() (must own
+        // the EAGL context), the other ticks symsys->loop().
+        std::unique_ptr<std::thread> os_thread;
+        std::unique_ptr<std::thread> graphics_thread;
+
         std::mutex layer_mutex;
+        std::condition_variable layer_cv;
+        bool layer_dirty = false;
         void *pending_layer = nullptr;
         std::uint32_t pending_width = 0;
         std::uint32_t pending_height = 0;
         float pending_scale = 1.0f;
+
+        std::vector<std::size_t> screen_redraw_handles;
+        int present_status = 0;
     };
 }
 
@@ -113,6 +129,68 @@ namespace eka2l1::ios {
     _state->window = std::make_unique<eka2l1::drivers::emu_window_ios>();
 
     _state->running = true;
+
+    auto *state = _state.get();
+    _state->graphics_thread = std::make_unique<std::thread>([state]() {
+        // Wait for the EAGLView to publish its CAEAGLLayer; the EAGL context
+        // can't be created without a drawable. attachLayer:pixelSize:scale:
+        // flips layer_dirty under layer_mutex.
+        std::unique_lock<std::mutex> lock(state->layer_mutex);
+        state->layer_cv.wait(lock, [state]() {
+            return !state->running || state->pending_layer != nullptr;
+        });
+        if (!state->running) {
+            return;
+        }
+        state->window->surface_changed(state->pending_layer, state->pending_width,
+            state->pending_height, state->pending_scale);
+        state->layer_dirty = false;
+        lock.unlock();
+
+        // Build the graphics driver on this thread so the EAGL context is
+        // current here. The OGL driver's run() loop owns the thread until
+        // the symsys / driver tear down.
+        state->graphics_driver = eka2l1::drivers::create_graphics_driver(
+            eka2l1::drivers::graphic_api::opengl,
+            state->window->get_window_system_info());
+        if (!state->graphics_driver) {
+            LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver creation failed");
+            return;
+        }
+        state->symsys->set_graphics_driver(state->graphics_driver.get());
+
+        state->window->surface_change_hook = [state](void *new_surface) {
+            state->graphics_driver->update_surface(new_surface);
+        };
+        state->graphics_driver->set_display_hook([]() {
+            // CAEAGLLayer presentation is implicit in gl_context_eagl::
+            // swap_buffers; nothing extra to poll here. iOS lifecycle hooks
+            // gate pause/resume via context::pause()/resume().
+        });
+
+        state->graphics_driver->run();
+    });
+
+    _state->os_thread = std::make_unique<std::thread>([state]() {
+        while (state->running) {
+            if (state->paused) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                continue;
+            }
+            try {
+                if (state->symsys) {
+                    state->symsys->loop();
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(16));
+                }
+            } catch (std::exception &exc) {
+                LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Emu loop exception: {}", exc.what());
+                state->running = false;
+                break;
+            }
+        }
+    });
+
     return YES;
 }
 
@@ -121,6 +199,19 @@ namespace eka2l1::ios {
         return;
     }
     _state->running = false;
+    {
+        std::lock_guard<std::mutex> lk(_state->layer_mutex);
+        _state->layer_cv.notify_all();
+    }
+    if (_state->graphics_driver) {
+        _state->graphics_driver->abort();
+    }
+    if (_state->os_thread && _state->os_thread->joinable()) {
+        _state->os_thread->join();
+    }
+    if (_state->graphics_thread && _state->graphics_thread->joinable()) {
+        _state->graphics_thread->join();
+    }
     _state->graphics_driver.reset();
     _state->symsys.reset();
     _state->window.reset();
@@ -191,6 +282,33 @@ namespace eka2l1::ios {
     _state->winserv = reinterpret_cast<eka2l1::window_server *>(
         kern->get_by_name<eka2l1::service::server>(
             eka2l1::get_winserv_name_by_epocver(sys->get_symbian_version_use())));
+
+    // Register a per-screen redraw callback so each frame produced by the
+    // Symbian window server triggers a swap on the EAGL context. The
+    // launcher.draw() composition layer from the Android frontend is not
+    // ported in stage 2 — see "已知风险" — so content drawing depends on the
+    // standard graphics_driver command pipeline alone.
+    if (_state->winserv) {
+        auto *state = _state.get();
+        eka2l1::epoc::screen *screens = _state->winserv->get_screens();
+        while (screens) {
+            std::size_t handle = screens->add_screen_redraw_callback(state,
+                [](void *userdata, eka2l1::epoc::screen * /*scr*/, const bool /*is_dsa*/) {
+                    auto *st = reinterpret_cast<eka2l1::ios::emulator *>(userdata);
+                    if (!st->graphics_driver) {
+                        return;
+                    }
+                    st->graphics_driver->wait_for(&st->present_status);
+                    eka2l1::drivers::graphics_command_builder builder;
+                    st->present_status = -100;
+                    builder.present(&st->present_status);
+                    eka2l1::drivers::command_list retrieved = builder.retrieve_command_list();
+                    st->graphics_driver->submit_command_list(retrieved);
+                });
+            _state->screen_redraw_handles.push_back(handle);
+            screens = screens->next;
+        }
+    }
 
     return YES;
 }
@@ -264,14 +382,26 @@ namespace eka2l1::ios {
 - (void)attachLayer:(CAEAGLLayer *)layer
          pixelSize:(CGSize)pixelSize
               scale:(CGFloat)scale {
-    if (!_state || !_state->window) {
+    if (!_state) {
         return;
     }
-    _state->window->surface_changed((__bridge void *)layer,
-        static_cast<int>(pixelSize.width),
-        static_cast<int>(pixelSize.height),
-        static_cast<float>(scale));
-    // graphics_driver bootstrap and per-frame loop land in task 2.9.
+    {
+        std::lock_guard<std::mutex> lk(_state->layer_mutex);
+        _state->pending_layer = (__bridge void *)layer;
+        _state->pending_width = static_cast<std::uint32_t>(pixelSize.width);
+        _state->pending_height = static_cast<std::uint32_t>(pixelSize.height);
+        _state->pending_scale = static_cast<float>(scale);
+        _state->layer_dirty = true;
+        _state->layer_cv.notify_all();
+    }
+    // Once the graphics thread has consumed the first layer, subsequent
+    // changes flow through surface_change_hook → driver->update_surface.
+    if (_state->window && _state->graphics_driver) {
+        _state->window->surface_changed((__bridge void *)layer,
+            static_cast<int>(pixelSize.width),
+            static_cast<int>(pixelSize.height),
+            static_cast<float>(scale));
+    }
 }
 
 - (void)pause {

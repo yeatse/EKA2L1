@@ -265,9 +265,12 @@
 - [x] 不接键盘 / 物理键盘 / 游戏手柄；阶段 4 与发布通道一起做。simulator build 通过。
 
 #### 2.9 帧循环与生命周期
-- `IosEmulator` 内部用一个独立的 emu 线程（不是 CADisplayLink）跑 `symsys` 的主循环，graphics_driver 的 `process()` 在该线程上 dispatch；EAGL `presentRenderbuffer:` 必须在持有 context 的线程上调用，所以渲染线程 = emu 线程。UI 线程通过 `dispatch_async` 投递事件。
-- 桥接 iOS 生命周期：在 `EKA2L1App` 里用 `@Environment(\.scenePhase)` 监听 `.active / .inactive / .background`，分别调 `IosEmulator::resume / pause / shutdown_render`。`shutdown_render` 释放 framebuffer 但保留 `symsys` 状态。
-- 后台 GL 调用必须严格规避；可以让 emu 线程在 pause 期间 `wait` 在 condition_variable 上。
+- [x] `startWithDocumentsPath:` 末尾 spawn 两条 `std::thread`：①graphics_thread —— 在 `layer_cv` 上等到 attachLayer 首次推 layer，把 layer 透给 `emu_window_ios::surface_changed`，然后在本线程创建 `drivers::create_graphics_driver(opengl, info)`（这样 EAGL context 与 ogl driver `run()` 都绑定在同一条线程），注册 `surface_change_hook` / `set_display_hook`（presentRenderbuffer 已经在 `gl_context_eagl::swap_buffers` 内部，hook 为空），最后调 `graphics_driver->run()` 阻塞驱动循环。②os_thread —— `while(running) symsys->loop()`；`paused` 时 sleep。
+- [x] `attachLayer:pixelSize:scale:`（主线程调用）在 layer_mutex 下把指针/尺寸/scale 推到 pending_* 字段并 `notify_all`，graphics_thread 首次启动后续 layout 变更则走 `emu_window_ios::surface_changed → surface_change_hook → graphics_driver->update_surface`，避免再次跨线程构造 driver。
+- [x] `mountRomNamed:` 成功后给每块 `epoc::screen` 注册 `add_screen_redraw_callback`，回调里 `wait_for(&present_status)` → `graphics_command_builder.present(&present_status)` → `submit_command_list`，让窗口服务的画帧节拍触发 EAGL swap。
+- [x] `EKA2L1App` 用 `@Environment(\.scenePhase)` 监听 `.active / .inactive / .background`：active → `EKA2L1Emulator::resume`、其它 → `pause`。`pause` 标志被 os_thread 与 swap_buffers 双重尊重；graphics_driver::pause()/resume() 留给后续在 gl_context_eagl 上加 hook（当前 swap_buffers 已经检查 `m_paused`）。
+- [x] `shutdown` 把 `running=false`、`layer_cv.notify_all`、`graphics_driver->abort()`，再 join 两条线程，安全释放 symsys / driver / window。
+- [x] **stage-1 回归**：阶段 2 UI 重构后 `scripts/build_ios.sh smoke` 不再因为 ContentView 不自动跑 smoke 而 timeout —— 改在 `EKA2L1App.init()` 里 background dispatch 一次 `EKA2L1CpuSmokeBridge`，PASS 仍打 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。simulator + smoke 双绿。
 
 #### 2.10 验证脚本
 - 不要求阶段 2 做端到端的"无人值守"自动验证（无法可靠 grep 出"出图了"）；保留 `scripts/build_ios.sh smoke` 的语义不变，只验 CPU smoke 仍然通过——这是回归网。
