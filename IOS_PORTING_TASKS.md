@@ -239,12 +239,10 @@
 - [x] 链接闭环修复：①新增 `src/emu/common/src/ios/applauncher.mm`，`eka2l1::common::launch_browser` 走 `UIApplication openURL`（host_launch.o 一直引用该符号，桌面有 Qt 版、Android 有 JNI 版，iOS 之前缺）；②新增 `src/emu/drivers/src/ui/input_dialog_ios.cpp`，`drivers::ui::open_input_view` / `close_input_view` / `show_yes_no_dialog` 暂作 no-op，让 dispatch 层的 ehui_* 链接通过（真实弹窗推迟到阶段 3）。simulator build 通过。
 
 #### 2.5 ROM / 数据布局
-- 选定 sandbox 内的目录结构（写入 `IOS_PORTING_PLAN.md` 对应章节，本任务只确定即可）：
-  - `<Documents>/roms/<rom-folder>/SYM.ROM` —— ROM 入口文件，前端扫描 `roms/` 一级子目录。
-  - `<Documents>/data/` —— `eka2l1::system` 的 data root（drives C/E、安装目录、配置等）。
-  - `<Documents>/sis/` —— 拖入待安装的 .sis / .sisx。
-- iOS 前端启动时若目录不存在则创建空目录；不再硬编码 PC/Android 上的相对路径。把这部分写进 `IosEmulator::start`。
-- 验证素材：手工把 `roms/N95 8GB (S60v3 - FP1)` 子目录拷进模拟器 sandbox（`xcrun simctl get_app_container booted com.eka2l1.emulator data` 拿到路径后 cp 进去）。`snakes-n95_n6trsohu.sis` 同样手工放进 `<Documents>/sis/`。开发期写一段一次性的 `scripts/seed_ios_simulator_documents.sh` 把仓库里的 `roms/` 同步过去，减少踩坑。
+- [x] sandbox 目录结构写进 `IOS_PORTING_PLAN.md` 阶段 2 章节："iOS sandbox 目录布局（任务 2.5 定稿）"：`Documents/{roms/<rom>,data/{drives/{c,d,e,z},compat,config.yml,EKA2L1.log},sis/}`，附 host 路径取法。
+- [x] `IosEmulator::startWithDocumentsPath:` 自动建出全部缺失子目录（roms / data / sis / drives/{c,d,e,z} / compat），然后 `chdir(<Documents>/data)` 并把 `conf.storage` 指向同路径。前端从此不再依赖 cwd 假设。
+- [x] 新增 `scripts/seed_ios_simulator_documents.sh`：把本地 `roms/` 一级子目录用 `rsync -a --delete` 同步到 `xcrun simctl get_app_container booted <bundle> data/Documents/roms/`，顶层 `*.sis` / `*.sisx` 同步到 `…/Documents/sis/`；支持 `--dry-run`，含路径含空格的目录正确加引号；booted 模拟器缺失或 EKA2L1 未装时报错退出。
+- [x] 回归：`scripts/build_ios.sh smoke` 仍 PASS，证明 sandbox bootstrap 没有影响 stage-1 通路。
 
 #### 2.6 ROM 加载与 applist 扫描
 - `IosEmulator::mount_rom`：调用 `symsys` 现有的 ROM mount / `epoc::set_symbian_version` / Z 盘加载流程（参考 android `launcher::load_rom`）。

@@ -65,6 +65,39 @@ EKA2L1 的代码组织：
 - [ ] 触控 → `emu_window` 指针事件；按键映射先用屏上虚拟按键（N-Gage 是关键场景）。
 - [ ] 至少能加载一个不依赖音频的 demo（Symbian 自带 calculator/clock）。
 
+#### iOS sandbox 目录布局（任务 2.5 定稿）
+
+iOS App sandbox 的 `Documents/` 一律按下面的树状结构组织。`IosEmulator
+::startWithDocumentsPath:` 在启动时若目录缺失则自动创建；emu 进程在
+启动后 `chdir` 到 `Documents/data/`，使 `config::state::storage` 与底
+层 IO 路径假设都落在该子目录内。
+
+```
+<App Sandbox>/Documents/
+├── roms/                                ← 用户拷入的 ROM 解压目录
+│   └── <rom-folder>/                    ← 一个 ROM 一个一级子目录
+│       └── SYM.ROM                      ← ROM 入口文件（或 .img/.ROM 等）
+├── data/                                ← eka2l1::system 的 data root
+│   ├── drives/                          ← Symbian C/D/E/Z 持久化盘
+│   │   ├── c/                           ← 内部存储
+│   │   ├── d/                           ← 临时盘
+│   │   ├── e/                           ← 可移动卡（应用安装）
+│   │   └── z/                           ← ROM 镜像挂载点
+│   ├── compat/                          ← 兼容补丁/脚本目录
+│   ├── config.yml                       ← `conf.deserialize/serialize` 落地
+│   └── EKA2L1.log                       ← spdlog 写入
+└── sis/                                 ← 手工放入待安装的 .sis / .sisx
+```
+
+- 路径含空格（如 `N95 8GB (S60v3 - FP1)`）是常见情况；shell 脚本必须
+  正确引用，C++ 侧不要在路径里强行 split。
+- ROM 通过 Files App 或 `scripts/seed_ios_simulator_documents.sh`
+  拖进 `Documents/roms/<name>/`；前端按一级子目录枚举。
+- `.sis` 直接拷进 `Documents/sis/`，前端按文件名枚举（真正的
+  `UIDocumentPickerViewController` 入口推迟到阶段 3）。
+- 进入应用沙箱：`xcrun simctl get_app_container booted com.eka2l1.emulator data`
+  返回的就是 `<App Sandbox>` 的 host 路径，可直接 `cp -R` 进 Documents。
+
 ### 阶段 3：完整体验
 - [ ] 音频：cubeb AudioUnit / Core Audio 后端打通。
 - [ ] 振动：`UIImpactFeedbackGenerator` 实现 `vibration` 接口。
