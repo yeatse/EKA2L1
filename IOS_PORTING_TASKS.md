@@ -214,11 +214,13 @@
 - [x] 真实构建验证：`scripts/build_ios.sh simulator` 通过；`scripts/build_ios.sh smoke` 仍打 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`，桌面 GL 假设并未泄漏到 dyncom smoke 路径。
 
 #### 2.2 EAGL graphics context
-- 新建 `src/emu/drivers/src/graphics/backend/context_eagl.{h,mm}`：实现 `gl_context` 派生类 `gl_context_eagl`，内部持有一个 `EAGLContext *`（`kEAGLRenderingAPIOpenGLES3`）和与之绑定的 `GLKView` 或裸 `CAEAGLLayer`-backed `UIView`。
-- 构造路径：接收一个由前端传入的 `CAEAGLLayer *`（通过 `window_system_info::render_surface`），创建 framebuffer + color renderbuffer，调 `renderbufferStorage:fromDrawable:` 绑定 layer；缺失则报错。
-- 接入 `src/emu/drivers/src/graphics/context.cpp`：在 `EKA2L1_PLATFORM(MACOS)` 之前优先匹配 `EKA2L1_PLATFORM(IOS)`，返回 `gl_context_eagl`。`gl_context_agl` 路径保持不变（macOS 桌面 Qt 仍用 AGL）。
-- 实现 `swap_buffers` = `presentRenderbuffer:GL_RENDERBUFFER`；`make_current` 用 `[EAGLContext setCurrentContext:]`。
-- App 进入后台必须先 `glFinish` 再 `setCurrentContext:nil`（iOS GL 严格要求），由前端的生命周期回调触发，context 暴露 `pause()` / `resume()`。
+- [x] 新建 `src/emu/drivers/src/graphics/backend/context_eagl.{h,mm}`：`gl_context_eagl` 持有 `EAGLContext *`（优先 `kEAGLRenderingAPIOpenGLES3`，失败回落 GLES2）+ `CAEAGLLayer *`，自行管理 framebuffer / colorRenderbuffer / depth-stencil renderbuffer。`render_surface == nullptr` 时降级 headless，只建 FBO 备用。
+- [x] `attach_layer` 走 `[EAGLContext renderbufferStorage:GL_RENDERBUFFER fromDrawable:]` 绑 layer；从 renderbuffer 反查 width/height 作为 `m_backbuffer_*`；挂 `GL_DEPTH24_STENCIL8` 到 depth/stencil attachment。
+- [x] `swap_buffers` = `presentRenderbuffer:GL_RENDERBUFFER`；`make_current` / `clear_current` 走 `[EAGLContext setCurrentContext:]`。`update(w,h)` 重新 attach layer（renderbuffer 跟随 drawable size）。
+- [x] `pause()` 在持有 context 的线程上 `glFinish` 再 `setCurrentContext:nil`；`resume()` 重新 setCurrentContext。后台回前台时给前端 hook（任务 2.9 调用）。
+- [x] `update_surface(void*)` 允许 EAGLView 重建后换 layer。
+- [x] `context.cpp` 在 `EKA2L1_PLATFORM(MACOS)` 之前优先匹配 `EKA2L1_PLATFORM(IOS)`，返回 `gl_context_eagl`；AGL 路径不动。`window_system_type::iOS` 加入枚举。
+- [x] `CMakeLists.txt` iOS 分支编译 `context_eagl.{h,mm}`，并链 `QuartzCore` / `Foundation` / `UIKit`（除原本就有的 OpenGLES.framework）。simulator 构建通过。
 
 #### 2.3 iOS emu_window
 - 新建 `src/emu/drivers/include/drivers/graphics/backend/emu_window_ios.h` + `src/emu/drivers/src/graphics/backend/emu_window_ios.mm`，对标 `emu_window_android`：

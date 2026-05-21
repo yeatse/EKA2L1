@@ -149,8 +149,13 @@ if(WIN32)
 
     target_link_libraries(drivers PRIVATE opengl32.lib Mfuuid.lib Propsys.lib)
 elseif (EKA2L1_IOS)
-    # No GL context backend wired up yet; context::make_gl_context() falls
-    # through to its nullptr branch on iOS until task 2.
+    # EAGL-backed GLES3 context (task 2.2). The frontend hands a CAEAGLLayer
+    # in via window_system_info::render_surface; this backend owns the FBO
+    # and the colour / depth-stencil renderbuffers bound to the layer.
+    target_sources(drivers PRIVATE
+        src/graphics/backend/context_eagl.h
+        src/graphics/backend/context_eagl.mm
+    )
 elseif(APPLE)
     target_sources(drivers PRIVATE
         src/graphics/backend/context_agl.h
@@ -198,7 +203,11 @@ if (EKA2L1_IOS)
     # glad / SDL2 are not linked on iOS. The ogl backend compiles against
     # OpenGLES.framework via ios_gl_loader.h (task 2.1). cubeb and ffmpeg
     # remain unlinked per task 0.5.
-    target_link_libraries(drivers PRIVATE "-framework OpenGLES")
+    target_link_libraries(drivers PRIVATE
+        "-framework OpenGLES"
+        "-framework QuartzCore"
+        "-framework Foundation"
+        "-framework UIKit")
 else()
     target_link_libraries(drivers PRIVATE cubeb ffmpeg glad)
 endif()
