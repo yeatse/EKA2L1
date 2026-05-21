@@ -245,9 +245,11 @@
 - [x] 回归：`scripts/build_ios.sh smoke` 仍 PASS，证明 sandbox bootstrap 没有影响 stage-1 通路。
 
 #### 2.6 ROM 加载与 applist 扫描
-- `IosEmulator::mount_rom`：调用 `symsys` 现有的 ROM mount / `epoc::set_symbian_version` / Z 盘加载流程（参考 android `launcher::load_rom`）。
-- `IosEmulator::rescan_apps`：触发 `applist_server::rescan_registries`，回调里把 `apa_app_registry`（包含 UID、可读名、icon 数据）抽成一个 plain C struct 列表，传给 Obj-C 层再转 Swift。
-- iOS UI 暂时只显示名字与 UID；icon 渲染留给阶段 3（避免和 EAGL 上下文抢生命周期）。
+- [x] `-mountRomNamed:`：把 `<Documents>/data/drives/z/` `symlink → <Documents>/roms/<name>/`（避免几百 MB 的拷贝），再依次 `rescan_devices(drive_z)` / `startup()` / `set_device(0)` / 挂 C/D/E/Z / `initialize_user_parties()`，最后通过 `get_winserv_name_by_epocver` 抓 `window_server` 句柄缓存到 state 里（任务 2.8 的输入路径要用）。前提是 ROM 文件夹内已经是 desktop 安装好的 device 树（含 `devices.yml`），与 Android 流程一致；没有 device 时返回 NO 让 UI 报错。
+- [x] `-rescanApps`：通过 `kern->get_by_name<service::server>(get_app_list_server_name_by_epocver(...))` 抓 `applist_server`，调 `rescan_registries(io)`，遍历 `get_registerations()`，跳过 `caps.is_hidden`，把 `(uid, long_caption→UTF8)` 装进 `EKA2L1AppEntry` 数组返回 Swift。Icon / SVG 渲染留给阶段 3。
+- [x] `-launchAppWithUID:`：拿 `get_registration(uid)`，构造 `epoc::apa::command_line{ launch_cmd_ = command_create }`，`kern->lock()` → `alserv->launch_app(*reg, cmdline, nullptr, nullptr)` → `kern->unlock()`，返回结果布尔。
+- [x] `-installSisAtPath:`：调 `symsys->install_package` 装到 E 盘（S80 则装 D），结果转 `installation_result_success` 判断。
+- [x] simulator build 通过；运行时是否能真正拉起一个 GUI 应用要等任务 2.7 / 2.9 装好渲染管线后才能验证，stage-2 验收阶段最后跑 manual 走查。
 
 #### 2.7 SwiftUI 外壳与 EAGL 视图
 - 重写 `src/emu/ios/App/ContentView.swift`：用 `NavigationStack`，三屏：

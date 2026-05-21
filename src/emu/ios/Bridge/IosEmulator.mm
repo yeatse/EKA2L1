@@ -20,11 +20,13 @@
 #include <drivers/graphics/backend/emu_window_ios.h>
 #include <drivers/graphics/graphics.h>
 #include <drivers/input/common.h>
+#include <kernel/kernel.h>
 #include <package/manager.h>
 #include <services/applist/applist.h>
 #include <services/window/window.h>
 #include <system/devices.h>
 #include <system/epoc.h>
+#include <utils/apacmd.h>
 
 @implementation EKA2L1AppEntry
 @end
@@ -145,26 +147,118 @@ namespace eka2l1::ios {
 }
 
 - (BOOL)mountRomNamed:(NSString *)romName {
-    // Implementation lands in task 2.6 (ROM mount & applist scan).
-    (void)romName;
-    return NO;
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    // ROMs that live under Documents/roms/<name>/ are expected to already be
+    // a fully-extracted Symbian Z drive (i.e. a "device folder" produced by
+    // the desktop installer). Stage 2 just rsyncs that tree into the Z drive
+    // mount point under data/, then asks the system to rescan + pick the
+    // first matching device.
+    NSString *romsRoot = [@(_state->documents_root.c_str()) stringByAppendingPathComponent:@"roms"];
+    NSString *romPath = [romsRoot stringByAppendingPathComponent:romName];
+    BOOL isDir = NO;
+    if (![NSFileManager.defaultManager fileExistsAtPath:romPath isDirectory:&isDir] || !isDir) {
+        return NO;
+    }
+
+    auto *sys = _state->symsys.get();
+    const std::string storage = _state->conf.storage;
+
+    // Make sure the Z mount point exists and ensure the ROM contents are
+    // visible through it. We avoid copying — symlink the folder for cheap.
+    NSString *zPath = [@(storage.c_str()) stringByAppendingPathComponent:@"drives/z"];
+    [NSFileManager.defaultManager removeItemAtPath:zPath error:nil];
+    [NSFileManager.defaultManager createSymbolicLinkAtPath:zPath
+                                       withDestinationPath:romPath
+                                                     error:nil];
+
+    sys->rescan_devices(drive_z);
+    sys->startup();
+    if (sys->get_device_manager()->total() == 0) {
+        return NO;
+    }
+    sys->set_device(0);
+    sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
+    sys->mount(drive_d, drive_media::physical, eka2l1::add_path(storage, "/drives/d/"), io_attrib_internal);
+    sys->mount(drive_e, drive_media::physical, eka2l1::add_path(storage, "/drives/e/"), io_attrib_removeable);
+    sys->mount(drive_z, drive_media::rom, eka2l1::add_path(storage, "/drives/z/"),
+        io_attrib_internal | io_attrib_write_protected);
+
+    sys->initialize_user_parties();
+
+    auto *kern = sys->get_kernel_system();
+    _state->winserv = reinterpret_cast<eka2l1::window_server *>(
+        kern->get_by_name<eka2l1::service::server>(
+            eka2l1::get_winserv_name_by_epocver(sys->get_symbian_version_use())));
+
+    return YES;
 }
 
 - (NSArray<EKA2L1AppEntry *> *)rescanApps {
-    // Implementation lands in task 2.6.
-    return @[];
+    NSMutableArray<EKA2L1AppEntry *> *out = [NSMutableArray array];
+    if (!_state || !_state->symsys) {
+        return out;
+    }
+    auto *kern = _state->symsys->get_kernel_system();
+    if (!kern) {
+        return out;
+    }
+    auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
+        kern->get_by_name<eka2l1::service::server>(
+            eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
+    if (!alserv) {
+        return out;
+    }
+    alserv->rescan_registries(_state->symsys->get_io_system());
+    for (auto &reg : alserv->get_registerations()) {
+        if (reg.caps.is_hidden) {
+            continue;
+        }
+        EKA2L1AppEntry *entry = [[EKA2L1AppEntry alloc] init];
+        entry.uid = reg.mandatory_info.uid;
+        std::string name = eka2l1::common::ucs2_to_utf8(reg.mandatory_info.long_caption.to_std_string(nullptr));
+        entry.name = [NSString stringWithUTF8String:name.c_str()];
+        [out addObject:entry];
+    }
+    return out;
 }
 
 - (BOOL)launchAppWithUID:(uint32_t)uid {
-    // Implementation lands in task 2.6.
-    (void)uid;
-    return NO;
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    auto *kern = _state->symsys->get_kernel_system();
+    auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
+        kern->get_by_name<eka2l1::service::server>(
+            eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
+    if (!alserv) {
+        return NO;
+    }
+    auto *reg = alserv->get_registration(uid);
+    if (!reg) {
+        return NO;
+    }
+    eka2l1::epoc::apa::command_line cmdline;
+    cmdline.launch_cmd_ = eka2l1::epoc::apa::command_create;
+
+    kern->lock();
+    bool launched = alserv->launch_app(*reg, cmdline, nullptr, nullptr);
+    kern->unlock();
+    return launched ? YES : NO;
 }
 
 - (BOOL)installSisAtPath:(NSString *)sisPath {
-    // Stage 3 plugs in UIDocumentPicker; stage 2 leaves manual file copy.
-    (void)sisPath;
-    return NO;
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    std::u16string upath = eka2l1::common::utf8_to_ucs2(sisPath.UTF8String);
+    drive_number install_drive = _state->symsys->is_s80_device_active()
+        ? drive_number::drive_d
+        : drive_number::drive_e;
+    auto result = static_cast<eka2l1::package::installation_result>(
+        _state->symsys->install_package(upath, install_drive));
+    return result == eka2l1::package::installation_result_success ? YES : NO;
 }
 
 - (void)attachLayer:(CAEAGLLayer *)layer
