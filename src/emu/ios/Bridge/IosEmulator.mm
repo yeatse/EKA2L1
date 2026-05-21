@@ -288,8 +288,27 @@ namespace eka2l1::ios {
                             y:(CGFloat)y
                         phase:(EKA2L1PointerPhase)phase
                     pointerId:(uintptr_t)pointerId {
-    // Real dispatch into window_server lands in task 2.8.
-    (void)x; (void)y; (void)phase; (void)pointerId;
+    if (!_state || !_state->winserv) {
+        return;
+    }
+    eka2l1::drivers::input_event evt;
+    evt.type_ = eka2l1::drivers::input_event_type::touch;
+    evt.time_ = 0;
+    evt.mouse_.pos_x_ = static_cast<int>(x);
+    evt.mouse_.pos_y_ = static_cast<int>(y);
+    evt.mouse_.pos_z_ = 0;
+    evt.mouse_.button_ = eka2l1::drivers::mouse_button_left;
+    evt.mouse_.raw_screen_pos_ = true;
+    // Single-touch in stage 2; the UITouch pointer hash maps to a mouse_id
+    // so window_server can still tell separate gestures apart later.
+    evt.mouse_.mouse_id = static_cast<std::uint32_t>(pointerId & 0xFFFFFFFFu);
+    switch (phase) {
+        case EKA2L1PointerPhaseBegan:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_press; break;
+        case EKA2L1PointerPhaseMoved:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_repeat; break;
+        case EKA2L1PointerPhaseEnded:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
+        case EKA2L1PointerPhaseCancelled: evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
+    }
+    _state->winserv->queue_input_from_driver(evt);
 }
 
 @end

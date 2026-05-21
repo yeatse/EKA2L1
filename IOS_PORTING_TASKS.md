@@ -259,9 +259,10 @@
 - [x] 单指触控派发到 `EKA2L1Emulator::submitPointerEventAtX:y:phase:pointerId:`（任务 2.8 的派发链路在这里就位，IosEmulator 内部转发到 window_server 也在 2.8 完成）。
 
 #### 2.8 输入：触控 → pointer_event
-- `EAGLView` 重写 `touchesBegan/Moved/Ended/Cancelled`，对每个 `UITouch` 抽出 `(x, y, phase)`，转 framebuffer 坐标（乘 scale + 减去 letterbox offset），投递到 `IosEmulator::submit_pointer_event`。
-- 在 `IosEmulator` 内部按 `UITouch` 指针 ↔ `pointer_event::id` 一对一映射；多指支持留给阶段 3（验收只需要单指）。
-- 不实现键盘 / 物理键盘 / 手柄；阶段 4 与发布通道一起做。
+- [x] `EAGL2L1View` 重写 `touchesBegan/Moved/Ended/Cancelled`：对每个 `UITouch` 抽 `locationInView:`，乘 `contentScaleFactor` 转 framebuffer 像素，phase 映射 `UITouchPhase → EKA2L1PointerPhase`，`pointerId = (uintptr_t)touch` 单调可比，调 `EKA2L1Emulator::submitPointerEventAtX:y:phase:pointerId:`。
+- [x] `multipleTouchEnabled = NO`（stage-2 验收只要求单指）；多指 / 长按 / 拖拽手势识别留给阶段 3。
+- [x] `IosEmulator::submitPointerEventAtX:...` 构造 `drivers::input_event{ type_=touch, mouse_=…, raw_screen_pos_=true, mouse_id=pointerId&0xFFFFFFFF }`，phase 映射 `mouse_action_press/repeat/release`，调 `_state->winserv->queue_input_from_driver(evt)`。`winserv` 句柄是任务 2.6 `mountRomNamed:` 时从 `kern->get_by_name<service::server>(get_winserv_name_by_epocver(...))` 拿到的，未挂 ROM 时 silently drop。
+- [x] 不接键盘 / 物理键盘 / 游戏手柄；阶段 4 与发布通道一起做。simulator build 通过。
 
 #### 2.9 帧循环与生命周期
 - `IosEmulator` 内部用一个独立的 emu 线程（不是 CADisplayLink）跑 `symsys` 的主循环，graphics_driver 的 `process()` 在该线程上 dispatch；EAGL `presentRenderbuffer:` 必须在持有 context 的线程上调用，所以渲染线程 = emu 线程。UI 线程通过 `dispatch_async` 投递事件。
