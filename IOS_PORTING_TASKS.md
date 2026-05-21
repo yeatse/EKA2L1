@@ -13,7 +13,7 @@
 |------|------|------|
 | 0 | 工程骨架可在 iOS arm64 上构建出空壳 | ✅（`build/ios-device/.../EKA2L1.app` 已成功产出，arm64 Mach-O） |
 | 1 | dyncom 解释器在 iOS 上跑通一段裸 ARM 代码片段，结果可在 SwiftUI 展示 | ✅（booted iPhone 16 Pro 模拟器上 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`） |
-| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧 | ⬜ |
+| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡 |
 | 3 | 音频 / 输入 / 振动 / 文件导入完整体验 | ⬜ |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
 
@@ -189,14 +189,105 @@
 ## 阶段 2：iOS 前端壳 + 渲染
 
 ### 目标
-SwiftUI/UIKit 壳能：选择 ROM、选择已安装应用、用 CAEAGLLayer 渲染一帧 EKA2L1 输出；触控事件能转成 emu_window 输入。能跑通一个不依赖音频的 Symbian 内建应用（如 Calculator）。
+让 iOS 前端壳真正驱动 `eka2l1::system` 的最小闭环：在 SwiftUI/UIKit 外壳里完成 **ROM 加载 → applist 扫描 → 选中一个应用 → 用 EAGL 渲染一帧 → 触控事件回到 emu_window**。目标不是把所有 Symbian 应用都跑稳，而是验证"前端 ↔ drivers ↔ services ↔ kernel ↔ cpu(dyncom)"在 iOS arm64 上能从输入到出图整链路活的。
 
-### 验收标准（草稿）
-- [ ] 真机能加载 ROM、列出 apps、点击启动后看到画面。
-- [ ] 触控点击映射成指针事件，能完成一次"在 Calculator 上按 1 + 1 =" 的交互。
+阶段 1 已经证明 cpu 子系统在 iOS 上跑得通；阶段 2 把链路向上延伸到 services / window-server / drivers。**显式不在范围内**：音频（cubeb，阶段 3）、振动（Core Haptics，阶段 3）、UIDocumentPicker 导入流程（阶段 3）、设置面板、Vulkan/Metal 渲染、dynarmic JIT（阶段 4）。ROM 通过 Files App 手工放进 sandbox 的 Documents 目录即可，不做精致的导入 UI。
+
+`roms/N95 8GB (S60v3 - FP1)` 解压版与 `roms/snakes-n95_n6trsohu.sis` 用作验证素材：前者是 ROM、后者是一个真实 S60v3 应用安装包。
+
+### 验收标准
+- [ ] iOS 真机或模拟器上启动 EKA2L1.app 后，SwiftUI 主屏列出 sandbox Documents 下检测到的 ROM；选定 N95 ROM 后能完成 mount、applist 扫描，并显示至少 5 个内建应用条目（与 Qt / Android 前端在同一 ROM 下的列表对得上）。
+- [ ] 在该列表上点击一个 GUI 内建应用（候选：Calculator / Notes / Calendar，任一不依赖音频且 launch 路径稳定的即可），EAGL 渲染面能稳定刷出 ≥1 帧真实画面（不是清屏色），无 crash 持续运行 ≥ 10s。
+- [ ] 在 (Documents) 下放入 `snakes-n95_n6trsohu.sis`，前端 UI 上有一个"安装 SIS"入口能调 `eka2l1::package::manager::install_package`，安装完成后该 app 出现在列表里、能 launch 到主菜单（即便游戏内逻辑跑不下去也算通过）。
+- [ ] 单指 tap / drag 事件被映射为 `drivers::pointer_event`，能在所选应用的 UI 上完成一次明确可见的交互（例如在 Calculator 上按 `1 + 1 =` 看到结果，或在 Snakes 主菜单上选中一个菜单项）。
+- [ ] iOS 下 `eka2l1::drivers::graphics::make_gl_context` 返回真实 EAGL 上下文实现，不再走 nullptr 兜底；ogl 后端在 iOS 上编进 drivers 并被 graphics_driver 正常实例化。
+- [ ] App 进入后台 (`UIApplicationWillResignActive`) 时模拟器暂停、回前台时恢复，不出现因丢失 GL 上下文的渲染崩溃。
+- [ ] 阶段期间为修复 iOS 编译/运行问题打的 patch 集中记录在本阶段末尾的"阶段 2 修复清单"，沿用 0.7 / 1.x 的体例。
 
 ### 子任务
-> 进入此阶段时再拆。
+
+#### 2.1 ogl 后端在 iOS 上的最小可编
+- 在 `src/emu/drivers/CMakeLists.txt` 把 `DRIVERS_OGL_SRC` 的 `if (NOT EKA2L1_IOS)` 改成三分支，让 iOS 也参与编译；同时把 `target_link_libraries(drivers ... glad)` 在 iOS 下替换为系统 framework `OpenGLES`。
+- 新增 `src/emu/drivers/include/drivers/graphics/backend/ogl/ios_gl_loader.h`：iOS 下直接 `#include <OpenGLES/ES3/gl.h>` + `<OpenGLES/ES3/glext.h>`，把 ogl 后端里所有 `<glad/glad.h>` 形式的 include 改为通过该 header 间接引入（用 `#if EKA2L1_PLATFORM(IOS)` 守护，桌面平台路径不动）。
+- `common_ogl.cpp` / `graphics_ogl.cpp` / `texture_ogl.cpp` 等里出现的桌面专属符号（`GL_BGRA`、`GL_TEXTURE_BORDER_COLOR`、`glPolygonMode`、`glClearDepth`（非 `f` 后缀）、`GL_LINE`/`GL_FILL` 等）逐一定位，按下面规则处理：
+  - 若是单纯 enum 缺失：iOS 下 `#define` 到等价 GLES 值或用 OES/EXT 扩展常量。
+  - 若是行为本身 GLES 不支持（如 `glPolygonMode`）：在调用点用 `#if !EKA2L1_PLATFORM(IOS)` 包住，并加 `// TODO(ios)` 注释保留语义说明（多数与线框调试有关，对验收不阻塞）。
+- 不允许在阶段 2 顺手重构 ogl 抽象层。所有改动用 `EKA2L1_PLATFORM(IOS)` 守护，保证 macOS / Linux / Windows / Android 桌面构建不动。
+
+#### 2.2 EAGL graphics context
+- 新建 `src/emu/drivers/src/graphics/backend/context_eagl.{h,mm}`：实现 `gl_context` 派生类 `gl_context_eagl`，内部持有一个 `EAGLContext *`（`kEAGLRenderingAPIOpenGLES3`）和与之绑定的 `GLKView` 或裸 `CAEAGLLayer`-backed `UIView`。
+- 构造路径：接收一个由前端传入的 `CAEAGLLayer *`（通过 `window_system_info::render_surface`），创建 framebuffer + color renderbuffer，调 `renderbufferStorage:fromDrawable:` 绑定 layer；缺失则报错。
+- 接入 `src/emu/drivers/src/graphics/context.cpp`：在 `EKA2L1_PLATFORM(MACOS)` 之前优先匹配 `EKA2L1_PLATFORM(IOS)`，返回 `gl_context_eagl`。`gl_context_agl` 路径保持不变（macOS 桌面 Qt 仍用 AGL）。
+- 实现 `swap_buffers` = `presentRenderbuffer:GL_RENDERBUFFER`；`make_current` 用 `[EAGLContext setCurrentContext:]`。
+- App 进入后台必须先 `glFinish` 再 `setCurrentContext:nil`（iOS GL 严格要求），由前端的生命周期回调触发，context 暴露 `pause()` / `resume()`。
+
+#### 2.3 iOS emu_window
+- 新建 `src/emu/drivers/include/drivers/graphics/backend/emu_window_ios.h` + `src/emu/drivers/src/graphics/backend/emu_window_ios.mm`，对标 `emu_window_android`：
+  - 持有 layer 指针、当前 logical size / scale、orientation。
+  - 暴露 setter 给 iOS 前端在 UIView 的 `layoutSubviews` / `viewDidLayoutSubviews` 中调用，更新 framebuffer size 与 `pointer_event` 坐标系。
+  - 不复用 `drivers::emu_window`（SDL2 桌面那套），iOS 直接继承 `drivers::emu_window` 抽象的最小子集即可。
+- `src/emu/drivers/CMakeLists.txt` 在 `elseif (EKA2L1_IOS)` 分支里把 `emu_window_ios` 的源文件加进 drivers target（与 ogl 一起）。
+
+#### 2.4 iOS 端 emulator state 对象
+- 新建 `src/emu/ios/Bridge/IosEmulator.{h,mm}`：iOS 版 `eka2l1::ios::emulator`，结构对标 `src/emu/android/app/src/main/cpp/include/android/state.h` 里的 `eka2l1::android::emulator`，但删掉 sensor / camera / vibration / audio_driver（阶段 3 再补）。
+  - 字段：`std::unique_ptr<system> symsys` / `graphics_driver` / `launcher`（参考 android launcher 但做减法）/ `emu_window_ios window` / `config::app_settings`。
+  - 提供 `start(documents_root)` / `mount_rom(path)` / `rescan_apps()` / `launch_app(uid)` / `submit_pointer_event(...)` / `pause()` / `resume()` / `shutdown()`。
+  - 后台一条独立 emu 线程跑 `symsys->loop()` 等价的调度循环；UI 线程只投递事件、查询状态。
+- 暴露 Obj-C facade `EKA2L1Emulator`（singleton），供 SwiftUI 调用。Bridging-Header 加入。
+
+#### 2.5 ROM / 数据布局
+- 选定 sandbox 内的目录结构（写入 `IOS_PORTING_PLAN.md` 对应章节，本任务只确定即可）：
+  - `<Documents>/roms/<rom-folder>/SYM.ROM` —— ROM 入口文件，前端扫描 `roms/` 一级子目录。
+  - `<Documents>/data/` —— `eka2l1::system` 的 data root（drives C/E、安装目录、配置等）。
+  - `<Documents>/sis/` —— 拖入待安装的 .sis / .sisx。
+- iOS 前端启动时若目录不存在则创建空目录；不再硬编码 PC/Android 上的相对路径。把这部分写进 `IosEmulator::start`。
+- 验证素材：手工把 `roms/N95 8GB (S60v3 - FP1)` 子目录拷进模拟器 sandbox（`xcrun simctl get_app_container booted com.eka2l1.emulator data` 拿到路径后 cp 进去）。`snakes-n95_n6trsohu.sis` 同样手工放进 `<Documents>/sis/`。开发期写一段一次性的 `scripts/seed_ios_simulator_documents.sh` 把仓库里的 `roms/` 同步过去，减少踩坑。
+
+#### 2.6 ROM 加载与 applist 扫描
+- `IosEmulator::mount_rom`：调用 `symsys` 现有的 ROM mount / `epoc::set_symbian_version` / Z 盘加载流程（参考 android `launcher::load_rom`）。
+- `IosEmulator::rescan_apps`：触发 `applist_server::rescan_registries`，回调里把 `apa_app_registry`（包含 UID、可读名、icon 数据）抽成一个 plain C struct 列表，传给 Obj-C 层再转 Swift。
+- iOS UI 暂时只显示名字与 UID；icon 渲染留给阶段 3（避免和 EAGL 上下文抢生命周期）。
+
+#### 2.7 SwiftUI 外壳与 EAGL 视图
+- 重写 `src/emu/ios/App/ContentView.swift`：用 `NavigationStack`，三屏：
+  1. **ROM 列表**：列出 `<Documents>/roms` 下的子目录，点击一个 = 当前 ROM。
+  2. **App 列表**：展示 applist 扫描结果 + 一个"安装 SIS"按钮（弹出当前 `<Documents>/sis/` 下文件供选择，调 `IosEmulator::install_sis`）。
+  3. **Emulator**：全屏覆盖 `EmulatorViewControllerRepresentable`（`UIViewControllerRepresentable`）。
+- 新建 `src/emu/ios/App/EmulatorView.swift` + `src/emu/ios/Bridge/EmulatorViewController.{h,mm}`：
+  - `EmulatorViewController` 持有一个 `EAGLView : UIView`（`+ (Class)layerClass { return [CAEAGLLayer class]; }`），把 layer 指针传给 `IosEmulator::start_render(layer)`。
+  - `viewDidLoad` 调 `IosEmulator::launch_app(uid)`；`viewWillDisappear` 调 `IosEmulator::shutdown()`。
+  - `viewDidLayoutSubviews` 更新 emu_window size & scale（取 `UIScreen.main.nativeScale`）。
+- 老的 CPU smoke UI 收进一个"Diagnostics"二级页面，不在主路径里。
+
+#### 2.8 输入：触控 → pointer_event
+- `EAGLView` 重写 `touchesBegan/Moved/Ended/Cancelled`，对每个 `UITouch` 抽出 `(x, y, phase)`，转 framebuffer 坐标（乘 scale + 减去 letterbox offset），投递到 `IosEmulator::submit_pointer_event`。
+- 在 `IosEmulator` 内部按 `UITouch` 指针 ↔ `pointer_event::id` 一对一映射；多指支持留给阶段 3（验收只需要单指）。
+- 不实现键盘 / 物理键盘 / 手柄；阶段 4 与发布通道一起做。
+
+#### 2.9 帧循环与生命周期
+- `IosEmulator` 内部用一个独立的 emu 线程（不是 CADisplayLink）跑 `symsys` 的主循环，graphics_driver 的 `process()` 在该线程上 dispatch；EAGL `presentRenderbuffer:` 必须在持有 context 的线程上调用，所以渲染线程 = emu 线程。UI 线程通过 `dispatch_async` 投递事件。
+- 桥接 iOS 生命周期：在 `EKA2L1App` 里用 `@Environment(\.scenePhase)` 监听 `.active / .inactive / .background`，分别调 `IosEmulator::resume / pause / shutdown_render`。`shutdown_render` 释放 framebuffer 但保留 `symsys` 状态。
+- 后台 GL 调用必须严格规避；可以让 emu 线程在 pause 期间 `wait` 在 condition_variable 上。
+
+#### 2.10 验证脚本
+- 不要求阶段 2 做端到端的"无人值守"自动验证（无法可靠 grep 出"出图了"）；保留 `scripts/build_ios.sh smoke` 的语义不变，只验 CPU smoke 仍然通过——这是回归网。
+- 新增 `scripts/seed_ios_simulator_documents.sh`：把 `roms/N95 8GB (S60v3 - FP1)`、`roms/snakes-n95_n6trsohu.sis` 同步到当前 booted 模拟器的 EKA2L1 sandbox Documents 下，方便复跑。
+- 手工验收步骤记录在本阶段末尾（截屏 + 日志）。
+
+#### 2.11 文档与遗留项
+- 本文件阶段 2 末尾追加"阶段 2 修复清单"，逐条记录踩坑修复（沿用 0.7 / 1.x 体例）。
+- 阶段 2 落地后回看：如果 applist 渲染、SIS 安装、pointer 路径出现需要重构的设计问题，把"重构动作"明确推到阶段 3，**不要在阶段 2 内做**。
+
+### 阶段 2 修复清单（按出现顺序）
+> 进入实现阶段后逐条登记。
+
+### 阶段 2 已知风险
+- **OpenGL ES on iOS 已 deprecated 但仍可用**：iOS 12+ 至今 SDK 仍带 OpenGLES.framework，但 Apple 偶尔在新 SDK 提高警告等级。验收期内（iOS 18 / Xcode 26 序列）确认 OK；长期方向是 MoltenVK / Metal，留给后续阶段。一旦 SDK 真的拿掉 OpenGLES，本阶段产物会一起失效，但这是已知交换。
+- **ogl 后端隐含的桌面 GL 假设面积可能比当前列出的大**：解码路径里的 `GL_BGRA`、纹理 swizzle、PBO upload、debug callback 等都可能命中。原则同阶段 1 ——就地最小修复 + `// TODO(ios)`，不重构。
+- **EAGL 上下文与线程绑定严格**：一旦把 emu 线程切到别处或在主线程偷偷调 GL，会拿到 `INVALID_OPERATION` 或直接 crash。所有 GL 调用必须严格走 emu 线程；后台/前台切换路径要在第一版就写对。
+- **applist 在 iOS 上首次扫描可能因 vfs/路径假设暴露 Linux/Android 专属代码**：`load_registry` 系列在 case-sensitive FS 下读 Z 盘资源时，路径大小写差异可能导致扫描结果为空。优先复用 Android 的 `vfs` 处理，避免阶段 2 引入新 vfs 行为。
+- **Documents 沙盒路径含空格**：`N95 8GB (S60v3 - FP1)` 这种带空格的目录名会让 shell 脚本 / 部分 C++ 路径拼接出问题。`seed_ios_simulator_documents.sh` 必须正确引用，C++ 侧确认 `eka2l1::common::utf8_to_utf16` + `loader` 不在路径里强行 split。
+- **不做 audio 的情况下 services 启动顺序可能依赖音频初始化完成的信号**：阶段 0 已经让 `make_audio_driver` 在 iOS 返回 nullptr，但 services 内部 `if (audio_driver)` 检查不一定齐全，可能在 applist / mediaclient 启动路径上踩 nullptr。命中时就地最小修复，不要在阶段 2 改音频架构。
 
 ---
 
@@ -243,3 +334,4 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-20 | 阶段 0 验收：`scripts/build_ios.sh simulator` 通过（arm64 iphonesimulator .app），在 booted iPhone 16 Pro (iOS 26.5) 上 `simctl install + launch` 成功，进程长时驻留无即时崩溃；`otool -L` 确认 device/simulator 产物均未链接 SDL2。阶段 0 七项验收标准全部打勾。 |
 | 2026-05-20 | 阶段 1 拆解：缩窄为"dyncom 解释器跑通裸 ARM 片段"，dynarmic / MAP_JIT / entitlement 与发布通道合并到新的阶段 4。子任务 1.1–1.7 落地：smoke blob 设计、SmokeBridge、cpu iOS 真实可链、SwiftUI 展示、factory 回落语义、`build_ios.sh smoke` 验证、文档与遗留项。 |
 | 2026-05-21 | 阶段 1 完成：simulator 上 `scripts/build_ios.sh smoke` exit 0，`EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。期间踩了 5 个坑（详见阶段 1 修复清单）。dynarmic 请求按预期回落 dyncom，UI 显示 fallback reason。 |
+| 2026-05-21 | 阶段 2 拆解：目标聚焦"ROM 加载 → applist → 出一帧 + 单指交互"，音频/振动/导入 UI 全部推迟到阶段 3。子任务 2.1–2.11 落地：ogl 后端 iOS 化、EAGL 上下文、iOS emu_window、IosEmulator state、Documents 布局、applist 扫描、SwiftUI 三屏、触控、生命周期、`seed_ios_simulator_documents.sh`、文档收口。验证素材选定 `roms/N95 8GB (S60v3 - FP1)` + `roms/snakes-n95_n6trsohu.sis`。 |

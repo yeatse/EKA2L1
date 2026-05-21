@@ -20,3 +20,5 @@ cmake-build-*
 # Local agent / harness state, not project source.
 .claude/
 AGENTS.md
+# Local ROMs and SIS packages used for iOS porting validation.
+roms/
