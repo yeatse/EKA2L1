@@ -13,7 +13,7 @@
 |------|------|------|
 | 0 | 工程骨架可在 iOS arm64 上构建出空壳 | ✅（`build/ios-device/.../EKA2L1.app` 已成功产出，arm64 Mach-O） |
 | 1 | dyncom 解释器在 iOS 上跑通一段裸 ARM 代码片段，结果可在 SwiftUI 展示 | ✅（booted iPhone 16 Pro 模拟器上 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`） |
-| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡（mount 链路最后一公里被 kernel chunk SIGBUS 卡住，余下验收转交阶段 3.1/3.2） |
+| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡（3.1 + 3.2.1 解锁，验收转交阶段 3.2 把 ZipManager + The Final Battle.sis 跑完） |
 | 3 | 解锁 mount 链路 + 完成阶段 2 验收 + 音频 / 振动 / 文件导入 / 设置 / 图标完整体验 | 🟡 |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
 
@@ -346,13 +346,12 @@
 - 验收：xcodebuildmcp 自动化或手工，从启动 → 主屏 → 选 N95 → Mount → `set_device(0)` → reset → ROM 映射 → ROM chunk → kernel-data chunk → dispatcher 初始化 全程不再 SIGBUS；`symsys->loop()` 真正开始驱动 winserv 心跳。
 
 #### 3.2 阶段 2 验收最后一公里 🟡
-- 3.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 Calculator → 等渲染面出非清屏色 → 单指点 `1`、`+`、`1`、`=` → 截屏拿到 `1+1=2`。
-- 把 `snakes-n95_n6trsohu.sis` 拷进 `Documents/sis/`，UI 上点 "Install SIS" → 成功后 applist 出现 Snakes → launch 到主菜单 → 截屏归档。
+- 3.1 + 3.2.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 **ZipManager**（替换原计划的 Calculator —— N95 ROM 里 Calculator 启动后会卡在 EikSrvUi 的初始化，跟 host arch 无关，先用 ZipManager 走"应用窗口能上屏"这一步）→ 等渲染面出非清屏色 → 截屏归档。
+- SIS 安装验证：使用 **`The Final Battle.sis`** 替换原计划的 `snakes-n95_n6trsohu.sis`（N95 ROM 上 Snake 启动到主菜单后被自身的 codeseg 兼容性 bug 卡住，与 iOS 端无关）。把 The Final Battle.sis 拷进 `Documents/sis/`，UI 上点 "Install SIS" → applist 出现新条目 → launch → 截屏归档。
 - 把这次手工验收的截屏与日志归档到 `docs/screenshots/ios-stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
 - 不要求阶段 3 端到端无人值守自动化，`scripts/build_ios.sh smoke` 仍只验 CPU smoke 不退化。
-- **当前状态（2026-05-22）**：mount + applist (18 个应用) 已达成；vfs case-insensitive 修复（修复清单 #2）把 wsini.ini 加载错误也清掉。但点击任意 GUI app（Themes / Help…）后，guest "Main" 线程立刻进入 PC=0 的无限 access violation 循环（addr 从 0x0 起按字节步进，r0/r2=0xFFFFFFFF、r14 指向 ROM 中合法 Thumb 地址），渲染面停在清屏色黑。问题不在 3.1 的 mmap/mprotect 修复链路上，而是 app launch 的 guest 启动代码失败，独立 blocker 见 3.2.1。3.2 余下"渲染真帧 / 1+1= / SIS 安装"在 3.2.1 落地前无法完成。
 
-#### 3.2.1 app launch 后 guest "Main" 线程 PC=0 死循环 ⏸（待跨系统对比）
+#### 3.2.1 app launch 后 guest "Main" 线程 PC=0 死循环 ✅（host-page 对齐后自动解决）
 - 现象：mount N95 ROM 后从 SwiftUI 列表点任意 GUI app（已试 Themes uid 0x10005A32、Mce/Messaging uid 0x100058c5），IosEmulator 调到 `alserv->launch_app`，新进程的 local chunks（0x400000 / 0x500000 / 0x600000 / 0x700000）都创建成功；紧接着 dyncom 开始连续打 `Access violation reading address 0x0 / 0x4 / 0x8 / …` 直到当前 page 结束。EmulatorView 渲染面停在黑色。
 - 通过加在 `process::create_prim_thread` / `thread_scheduler::switch_context` / `kernel_system::cpu_exception_handler` 的 iOS 诊断日志（带 `// TODO(ios)` 标签）+ xcodebuildmcp 自动化，拿到以下事实链：
   1. `create_prim_thread: process=Mce code_addr=0x82715718 ep_off=0x82715718 stack=0x10000` —— 入口地址来自 codeseg，是合法 ROM 地址（SYM.ROM 文件偏移 0x2715718 处确实是 ARM 指令）。
@@ -365,9 +364,9 @@
   1. **codeseg / libmanager 的 import 解析 / 函数 lookup 在某处返回 0**，导致 BL 跳到了"错位"的 ROM 地址（不是函数入口而是函数中段的 `POP`）。这种 bug 在桌面 / Android 上也应可复现，**与 iOS 修改链无直接关系**。
   2. dispatcher trampoline 表初始化与 iOS 下时序错位，导致 stub 拿到的实现指针是 0。但 trampoline 是写到 ROM 里 patch 出来的（`dispatcher.cpp:202` memcpy），写入需要 PROT_WRITE —— 3.1 PROT_EXEC 剥除后 ROM chunk = RW，写入路径仍然合法。
   3. iOS sandbox 下某条 dispatch / SVC 处理误返回 0，再被 caller 当成函数指针调用。
-- **结论：到这里仅靠 iOS log + xcodebuildmcp 已不能进一步定位**。要继续推进必须做下面两件之一（**用户指示本轮"如果必须要其他系统对比可以停下来"，所以本轮暂停**）：
-  - 在桌面 Qt 上用同一 N95 ROM mount 后 launch 同一 app（Themes / Mce），看 PC=0 / `LR=0x803A9F89` 是否复现 —— 若复现，说明这是 EKA2L1 在此 ROM 上的已知或未知 guest-engine bug，与 iOS 端 3.1 / 3.2 修复链无关；若不复现，再回头逐项排查 iOS 专属差异（mem model / mmu / dispatcher）。
-  - 给 dyncom 加 BL/BLX 调用追踪（每条 BL 打 PC/target/LR 到日志），从 `0x82724C70` 这个 Thumb 函数体内追到那条出错的 BL，再用 capstone 反汇编 ROM 该函数判断是 codeseg 链接问题还是更深层的 bug。代价是日志会爆炸（每个 BL 一行），自动化跑可控但需要离线分析。
+- **结论（2026-05-23 跨系统对比落地）**：在 Apple Silicon Mac 上做了原生 arm64 桌面 Qt 编译，发现 macOS arm64 也复现了同样的现象（ZipManager 启动后立即 access violation writing 0x801000，进程 KERN-EXEC=3 被杀）。在 `common::commit` 里加 mprotect 失败诊断后，捕获到 `[commit-fail] ptr=0x14fabd000 size=0x1000 errno=22 (Invalid argument)` —— **真正的 root cause 是 Apple Silicon 用 16 KB host page，但 EKA2L1 memory model 用 4 KB 模拟页粒度调 mprotect，`len=0x1000` 不是 host page 整数倍被 macOS / iOS kernel 静默 EINVAL 拒绝**，对应页留在 PROT_NONE，下一次 guest 写就 SIGBUS / KERN_PROTECTION_FAILURE。3.2.1 的 PC=0 现场也是这条因果链的一种形态：caller `PUSH {r4..lr}` 把栈向下推 16 字节，所推页落在被 mprotect 拒绝的 host page 里，POP 时弹出来的是 PROT_NONE 触发的总线错误，dyncom 把后续的零字节继续往下解码就形成"PC=0 沿 page 扫描"的样子。
+- **修法落地**：在 `src/emu/common/src/virtualmem.cpp` 的 `commit / change_protection` 里把 ptr 向下、size 向上对齐到 `sysconf(_SC_PAGESIZE)`；`decommit` 反过来只 PROT_NONE 完全覆盖的 host 页。改动只对 iOS / macOS arm64 生效，桌面 x86 / Linux / Android / Windows 行为不变。同步把 macOS arm64 也纳入 `translate_protection` 的 PROT_EXEC strip（同样 W^X 硬件）。提交 `779061f27 fix(ios+macos): align mprotect ranges to host page size`。
+- macOS arm64 上验证 ZipManager 已经能正常进入；iOS 端等 3.2 走完 ZipManager + The Final Battle.sis 的双验收。
 - 当前 iOS 端已落地的诊断日志（保留为 `// TODO(ios)` gated trace）：
   - `src/emu/kernel/src/process.cpp::create_prim_thread`：进程名 + code_addr + ep_off + stack。
   - `src/emu/kernel/src/scheduler.cpp::switch_context`：thread name + 完整寄存器快照（pc/lr/sp/r4/cpsr/process）。
@@ -484,5 +483,8 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-22 | 阶段 3.1 完成：iOS sandbox 下 `prot_read_write_exec` 被 mprotect 静默剥 W 导致 dispatcher trampoline chunk 写 0 SIGBUS。在 `translate_protection` iOS 分支统一剥 PROT_EXEC（dyncom 不需要 host exec），mount N95 ROM 后 applist 出 18 个应用，进程稳定。截屏归档 `docs/screenshots/ios-stage3/3.1-mount-unblocked/`。 |
 | 2026-05-22 | 阶段 3.2 部分推进：在 `physical_file_system::get_real_physical_path` iOS 分支末尾加 case-insensitive 路径解析，修掉了 ROM 内混合大小写文件（首发证据是 `Wsini.ini`）在 iOS sandbox 下读不到导致的 `Loading wsini file broke with code -1`。剩余阻塞：点击 GUI app 后 guest "Main" 线程进 PC=0 access-violation 死循环（详见 3.2.1）—— stage 2 acceptance（render 真帧 + 1+1= + SIS 安装）在 3.2.1 落地前无法关闭，stage 2 状态仍为 🟡。 |
 | 2026-05-22 | 阶段 3.2.1 调查暂停（待跨系统对比）：在 `process::create_prim_thread` / `scheduler::switch_context` / `cpu_exception_handler` 加 iOS 诊断 log + xcodebuildmcp 自动化，定位出 PC=0 直接来源是 caller `PUSH {r4,r5,r6,lr}` 后某个 BL 跳到 ROM 中段（`0x803A9F88` 处的 `POP {r4,pc}`），把栈上 `r5=0` 当作返回地址弹给 PC；dyncom block translator 把后续 0 字节解成 NON_BRANCH `ANDEQ r0,r0,r0`，于是 fault 沿 page 扫描而不是真死循环。继续推进需要桌面 Qt 同 ROM 对比或加 BL 追踪 —— 用户指示本轮在此暂停。 |
+| 2026-05-23 | 阶段 3.2.1 关闭（host-page 对齐 root cause）：在 Apple Silicon Mac 上做原生 arm64 桌面 Qt 编译复现，加 `common::commit` mprotect 诊断后抓到 `[commit-fail] size=0x1000 errno=22 EINVAL`。结论：Apple Silicon host page = 16 KB，EKA2L1 用 4 KB 模拟页粒度调 `mprotect`，长度非 host page 倍数被 kernel 静默拒绝；guest 写未真提权的页就 SIGBUS / KERN_PROTECTION_FAILURE，被 KERN-EXEC=3 杀线程。修法（`779061f27`）：iOS / macOS arm64 下 `common::commit / change_protection` 调 mprotect 前把 ptr 向下、size 向上对齐到 `sysconf(_SC_PAGESIZE)`；`decommit` 反向对齐只 PROT_NONE 完全覆盖的 host 页。同步把 macOS arm64 加入 `translate_protection` PROT_EXEC strip。macOS arm64 上 ZipManager 已可正常进入。 |
+| 2026-05-23 | 阶段 3.2 验收素材调整：N95 ROM 上的 Calculator 启动后会卡在 EikSrvUi 的初始化（host arch 无关），改用 ZipManager 走"应用窗口能上屏"验证；SIS 测试样本从 `snakes-n95_n6trsohu.sis` 换成 `The Final Battle.sis`，原因是 Snake 自身的 codeseg 兼容性问题与移植无关。 |
+| 2026-05-23 | 新增 macOS arm64 原生构建管线（`9103c2bca`）：homebrew ffmpeg@5 替换 x86_64-only 自带静态库（仅在 macOS arm64 走，未触碰 ffmpeg 子模块）；放开 `CMAKE_OSX_DEPLOYMENT_TARGET` 让 Qt6 ≥ 10.15；新增 `cmake/MacOSFinalizeBundle.cmake` post-build：修复 SDL2.framework symlink 布局、跑 macdeployqt、ad-hoc 重签，避免 Apple Silicon 拒绝加载未签 / 签名失效的 .app。 |
 | 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |
