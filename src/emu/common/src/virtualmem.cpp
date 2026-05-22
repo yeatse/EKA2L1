@@ -32,6 +32,10 @@
 #include <unistd.h>
 #endif
 
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+
 namespace eka2l1::common {
     void *map_memory(const std::size_t size) {
 #if EKA2L1_PLATFORM(WIN32)
@@ -59,6 +63,25 @@ namespace eka2l1::common {
         return true;
     }
 
+#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+    // Apple Silicon (iOS / macOS arm64) uses 16 KB host pages, but the Symbian
+    // memory model is built around 4 KB pages. mprotect(2) rejects ranges that
+    // aren't a multiple of the host page size with EINVAL, so widen both ends
+    // of any sub-host-page request to the surrounding host page. The mmap'd
+    // region the chunk lives in is always at least host-page sized (max_size
+    // is page-table aligned), so this only ever touches pages that are part
+    // of the same chunk.
+    static inline void align_to_host_page(void *&ptr, std::size_t &size) {
+        const std::size_t host_page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        const std::size_t mask = host_page - 1;
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
+        const std::uintptr_t aligned_addr = addr & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t head = addr - aligned_addr;
+        ptr = reinterpret_cast<void *>(aligned_addr);
+        size = (size + head + mask) & ~mask;
+    }
+#endif
+
     bool commit(void *ptr, const std::size_t size, const prot commit_prot) {
 #if EKA2L1_PLATFORM(WIN32)
         DWORD oldprot = 0;
@@ -68,7 +91,21 @@ namespace eka2l1::common {
 
         if (!res) {
 #else
-        const int result = mprotect(ptr, size, translate_protection(commit_prot));
+        void *mp_ptr = ptr;
+        std::size_t mp_size = size;
+#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        align_to_host_page(mp_ptr, mp_size);
+#endif
+        const int tprot = translate_protection(commit_prot);
+        const int result = mprotect(mp_ptr, mp_size, tprot);
+
+#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        if (result == -1) {
+            const int err = errno;
+            fprintf(stderr, "[commit-fail] ptr=%p size=0x%zx (mp_ptr=%p mp_size=0x%zx) cprot=%d tprot=0x%x errno=%d (%s)\n",
+                ptr, size, mp_ptr, mp_size, static_cast<int>(commit_prot), tprot, err, std::strerror(err));
+        }
+#endif
 
         if (result == -1) {
 #endif
@@ -84,7 +121,29 @@ namespace eka2l1::common {
 
         if (!res) {
 #else
-        const auto result = mprotect(ptr, size, PROT_NONE);
+        void *mp_ptr = ptr;
+        std::size_t mp_size = size;
+#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        // On 16K-page hosts, only decommit the *fully covered* host pages so
+        // we never wipe a neighbouring guest page that's still live. Round
+        // ptr UP and size DOWN to host-page granularity; if nothing's left,
+        // skip the syscall (the perms stay whatever they were — that's safe
+        // because the chunk still owns the address range).
+        const std::size_t host_page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        const std::size_t mask = host_page - 1;
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
+        const std::uintptr_t aligned_addr = (addr + mask) & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t head = aligned_addr - addr;
+        if (size <= head) {
+            return true;
+        }
+        mp_ptr = reinterpret_cast<void *>(aligned_addr);
+        mp_size = (size - head) & ~mask;
+        if (mp_size == 0) {
+            return true;
+        }
+#endif
+        const auto result = mprotect(mp_ptr, mp_size, PROT_NONE);
 
         if (result == -1) {
 #endif
@@ -103,7 +162,12 @@ namespace eka2l1::common {
 
         if (!res) {
 #else
-        const int result = mprotect(ptr, size, translate_protection(new_prot));
+        void *mp_ptr = ptr;
+        std::size_t mp_size = size;
+#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        align_to_host_page(mp_ptr, mp_size);
+#endif
+        const int result = mprotect(mp_ptr, mp_size, translate_protection(new_prot));
 
         if (result == -1) {
 #endif
