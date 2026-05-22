@@ -58,6 +58,9 @@ namespace eka2l1::kernel {
 
     void process::create_prim_thread(uint32_t code_addr, uint32_t ep_off, uint32_t stack_size, uint32_t heap_min,
         uint32_t heap_max, kernel::thread_priority pri) {
+        LOG_INFO(KERNEL, "create_prim_thread: process={} code_addr=0x{:08X} ep_off=0x{:08X} stack=0x{:X}",
+            process_name, code_addr, ep_off, stack_size);
+
         primary_thread
             = kern->create<kernel::thread>(
                 mem,

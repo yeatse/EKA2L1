@@ -360,7 +360,18 @@ namespace eka2l1 {
                 return true;
             }
 
-            LOG_ERROR(KERNEL, "Access violation {} address 0x{:X} in thread {}", (exception_type == arm::exception_type_access_violation_read) ? "reading" : "writing", exception_data, crr_thread()->name());
+            {
+                // TODO(ios): rate-limit to first N reports per (thread, pc) to keep diagnostic log readable
+                static std::atomic<int> av_reported_count{0};
+                int reported = av_reported_count.fetch_add(1);
+                if (reported < 32) {
+                    LOG_ERROR(KERNEL, "Access violation {} address 0x{:X} in thread {} (pc=0x{:08X} lr=0x{:08X} process={})",
+                        (exception_type == arm::exception_type_access_violation_read) ? "reading" : "writing",
+                        exception_data, crr_thread()->name(),
+                        core->get_pc(), core->get_lr(),
+                        crr_thread()->owning_process() ? crr_thread()->owning_process()->name() : "?");
+                }
+            }
             break;
 
         case arm::exception_type_undefined_inst:
