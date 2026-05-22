@@ -706,7 +706,77 @@ namespace eka2l1 {
                 vert_path_no_root = common::lowercase_ucs2_string(vert_path_no_root);
             }
 
-            return eka2l1::add_path(map_path, vert_path_no_root);
+            std::u16string final_path = eka2l1::add_path(map_path, vert_path_no_root);
+
+#if EKA2L1_PLATFORM(IOS)
+            // TODO(ios): iOS sandbox presents a case-sensitive view to the app
+            // process even though the macOS host APFS volume is usually
+            // case-insensitive. ROM dumps with mixed-case filenames (e.g.
+            // `Wsini.ini`, `SkinExclusions.ini`) therefore can't be opened
+            // through the lowercased path the vfs hands back. Resolve each
+            // path component case-insensitively against the real filesystem so
+            // those reads succeed. We only do this on iOS to keep the
+            // desktop/Linux/Android paths exactly as before.
+            const std::string final_utf8 = common::ucs2_to_utf8(final_path);
+            if (!common::exists(final_utf8)) {
+                const std::string base_utf8 = common::ucs2_to_utf8(map_path);
+                std::string resolved = base_utf8;
+                if (!resolved.empty() && !eka2l1::is_separator(resolved.back())) {
+                    resolved += eka2l1::get_separator();
+                }
+                if (!common::exists(resolved)) {
+                    return final_path;
+                }
+                const std::string relative = common::ucs2_to_utf8(vert_path_no_root);
+                std::size_t i = 0;
+                bool ok = true;
+                while (i < relative.size()) {
+                    while (i < relative.size() && eka2l1::is_separator(relative[i])) {
+                        ++i;
+                    }
+                    if (i >= relative.size()) {
+                        break;
+                    }
+                    std::size_t j = i;
+                    while (j < relative.size() && !eka2l1::is_separator(relative[j])) {
+                        ++j;
+                    }
+                    const std::string component = relative.substr(i, j - i);
+                    const std::string direct = resolved + component;
+                    if (common::exists(direct)) {
+                        resolved = direct;
+                    } else {
+                        auto it = common::make_directory_iterator(resolved, "");
+                        if (!it || !it->is_valid()) {
+                            ok = false;
+                            break;
+                        }
+                        common::dir_entry entry;
+                        bool matched = false;
+                        while (it->next_entry(entry) >= 0) {
+                            if (common::compare_ignore_case(entry.name.c_str(), component.c_str()) == 0) {
+                                resolved += entry.name;
+                                matched = true;
+                                break;
+                            }
+                        }
+                        if (!matched) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (j < relative.size()) {
+                        resolved += eka2l1::get_separator();
+                    }
+                    i = j;
+                }
+                if (ok) {
+                    final_path = common::utf8_to_ucs2(resolved);
+                }
+            }
+#endif
+
+            return final_path;
         }
 
     public:

@@ -345,11 +345,25 @@
 - **不在 3.1 范围内**：dynarmic / MAP_JIT / `pthread_jit_write_protect_np`。这些是阶段 4。3.1 只解决 "非可执行内存的写访问"。
 - 验收：xcodebuildmcp 自动化或手工，从启动 → 主屏 → 选 N95 → Mount → `set_device(0)` → reset → ROM 映射 → ROM chunk → kernel-data chunk → dispatcher 初始化 全程不再 SIGBUS；`symsys->loop()` 真正开始驱动 winserv 心跳。
 
-#### 3.2 阶段 2 验收最后一公里
+#### 3.2 阶段 2 验收最后一公里 🟡
 - 3.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 Calculator → 等渲染面出非清屏色 → 单指点 `1`、`+`、`1`、`=` → 截屏拿到 `1+1=2`。
 - 把 `snakes-n95_n6trsohu.sis` 拷进 `Documents/sis/`，UI 上点 "Install SIS" → 成功后 applist 出现 Snakes → launch 到主菜单 → 截屏归档。
-- 把这次手工验收的截屏与日志归档到 `docs/screenshots/stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
+- 把这次手工验收的截屏与日志归档到 `docs/screenshots/ios-stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
 - 不要求阶段 3 端到端无人值守自动化，`scripts/build_ios.sh smoke` 仍只验 CPU smoke 不退化。
+- **当前状态（2026-05-22）**：mount + applist (18 个应用) 已达成；vfs case-insensitive 修复（修复清单 #2）把 wsini.ini 加载错误也清掉。但点击任意 GUI app（Themes / Help…）后，guest "Main" 线程立刻进入 PC=0 的无限 access violation 循环（addr 从 0x0 起按字节步进，r0/r2=0xFFFFFFFF、r14 指向 ROM 中合法 Thumb 地址），渲染面停在清屏色黑。问题不在 3.1 的 mmap/mprotect 修复链路上，而是 app launch 的 guest 启动代码失败，独立 blocker 见 3.2.1。3.2 余下"渲染真帧 / 1+1= / SIS 安装"在 3.2.1 落地前无法完成。
+
+#### 3.2.1 app launch 后 guest "Main" 线程 PC=0 死循环
+- 现象：mount N95 ROM 后从 SwiftUI 列表点任意 GUI app（已试 Themes uid 0x10005A32），IosEmulator 调到 `alserv->launch_app`，新进程的 local chunks（0x400000 / 0x500000 / 0x600000 / 0x700000）都创建成功；紧接着 dyncom 开始从 PC=0 取指，连续打 `Access violation reading address 0x0 / 0x4 / 0x8 / ...`，每次基本块退出 + 重 fetch，永远停不下来。寄存器快照（来自 `arm_utils::dump`）：r0=0xFFFFFFFF、r2=0xFFFFFFFF、r3..r11=0、r12 / r14 都是 ROM 中合法 Thumb 地址（如 0x82724c71 / 0x803a9f89），sp=0x40FFC0 / 0x50FFC0 等 local stack 顶。
+- 候选 root cause：
+  1. app launch 路径里某个 HLE 查找（imports / `Lookup` / `GetExportEntry` 等）在 iOS 下返回 −1，启动 stub 没检查直接 `bx r0` / `mov pc, rX` 跳到 0；
+  2. codeseg / e32_image 加载到 code chunk 后某段未真正写入（在 3.1 PROT_EXEC 剥除后是否有边缘 case 受影响需排查 —— 已确认 prot_read_write_exec 在 iOS 下落到 RW，loader 写入应该可行）；
+  3. dispatcher trampoline 表初始化与 iOS 下首次访问时机错位，导致 stub 拿到的实现指针是空。
+- 排查步骤：
+  - 在 `loader/libmanager.cpp` 的 import 解析处加 iOS log，定位是否返回 −1；
+  - 对比 Android frontend 同 ROM 同 app 的 launch 日志（同样 dyncom-only 应能跑通），看 PC=0 是否平台无关；
+  - 如平台无关，回退到 stage 2 #14 之前的 commit + 在桌面 Qt 上跑 N95 ROM 看同一 app 是否也 PC=0；
+  - 如 iOS-only，缩小到具体 syscall / dispatch ord，从对应 dispatch handler 入手。
+- 验收：再次 xcodebuildmcp 自动化点 Calculator 后，EmulatorView 渲染面在 10s 内出现非黑像素（taskbar / 主菜单 / 任意 UI 元素均可）；单指 tap `1`、`+`、`1`、`=` 后截屏 OCR 或人工目视有 "2" 输出。归档 `docs/screenshots/ios-stage3/2-acceptance/`，stage 2 翻 ✅。
 
 #### 3.3 `common::virtualmem` 与 mem 模块的 iOS 落实
 - 3.1 在 mem 路径上打的 iOS 守护代码沉淀到 `common::virtualmem` 的稳定 API 上：明确 "非可执行内存" 与 "可执行内存" 分双 API，前者在阶段 3 完成，后者（`map_executable` / `jit_write_protect`）骨架留给阶段 4 填实现。
@@ -414,6 +428,7 @@
 
 ### 阶段 3 修复清单（按出现顺序）
 1. **`prot_read_write_exec` 在 iOS sandbox 下 `mprotect` 静默丢 W**：阶段 2 #14 的 SIGBUS 根因。崩溃 IPS 显示在 `std::fill(base, base+0x4000, 0)` 写第一个字节就 `KERN_PROTECTION_FAILURE` (`Data Abort byte write Translation fault`)，栈顶是 `kernel::chunk::chunk` → `dispatcher::dispatcher`（创建 "DispatcherTrampolines" chunk，`prot_read_write_exec`，4 KB）。原因：iOS arm64 sandbox 强制 W^X，`mprotect(PROT_READ|PROT_WRITE|PROT_EXEC)` 返回 0（成功）但实际页是 RX（PROT_WRITE 被静默剥离），随后写入触发 KERN_PROTECTION_FAILURE。dyncom 路径下 host 永远不真正执行 guest 页（dyncom 是解释器），PROT_EXEC 对 host_base 是纯冗余。修法：`src/emu/common/src/types.cpp::translate_protection` 在 iOS 分支末尾统一剥 PROT_EXEC（若结果为 0 回落 PROT_READ），并加 `// TODO(ios)` 说明 stage 4 引入 `map_executable` / MAP_JIT 时替换。此改动只影响 iOS，POSIX / Win32 / Android / macOS 桌面不变。验证：xcodebuildmcp 自动化 Mount N95 ROM 后 UI 显示 `Mounted: N95 8GB (S60v3 - FP1)` + `Apps (18)`，进程不再 SIGBUS。截屏 `docs/screenshots/ios-stage3/3.1-mount-unblocked/applist-18-apps.jpg`。
+2. **iOS sandbox 内 vfs 路径解析 case-sensitive，碰到混合大小写的 ROM 文件名失败**：3.1 修复 SIGBUS 后第一次跑 mount，启动日志看到 `[Service.Window]: Loading wsini file broke with code -1`，path 是 `data/drives/z/rm-320/system/data/wsini.ini`（全小写），但 host 真实文件名是 `Wsini.ini`。stage 2 #13 已经统一了顶层目录大小写，但 ROM tree 里很多文件（如 `Wsini.ini` / `SkinExclusions.ini` / `Iva_base.dof`）保留了原始混合大小写。`physical_file_system::get_real_physical_path` 走 `is_system_case_insensitive()` 的桌面默认值在 iOS 下返回 false → 整条路径被 `lowercase_ucs2_string` 强制小写 → host 那侧（iOS sim app 进程视角 = case-sensitive）找不到。修法：在 `src/emu/vfs/src/vfs.cpp::get_real_physical_path` 末尾、iOS 分支下，若 lowercased path 不存在，则从 mount root 开始逐级用 `make_directory_iterator` + `compare_ignore_case` 把每一段解析回真实大小写，再返回新的 final_path。只在 iOS 触发，桌面/Android/Win32 行为完全不变。验证：再跑 mount，`Loading wsini file broke` 日志消失。后续残留的 `Fail to load languages.txt`、`Failed to open thread panic blacklist file` 走的是裸 `dynamic_ifile`/`ro_std_file_stream` 直读 host 路径（不经 vfs），二者本身都是路径合法但 host 文件不存在的"信息缺失"类，不属于本条修复范围。
 
 ### 阶段 3 已知风险
 - **iOS sandbox 下 mmap / mprotect 行为差异是 3.1 的关键变量**：模拟器（Apple Silicon host）与真机的 sandbox 配额不完全一致，3.1 修完后必须在真机上至少跑一次 mount，不能只靠 booted 模拟器。
@@ -458,5 +473,6 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-21 | 阶段 1 完成：simulator 上 `scripts/build_ios.sh smoke` exit 0，`EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。期间踩了 5 个坑（详见阶段 1 修复清单）。dynarmic 请求按预期回落 dyncom，UI 显示 fallback reason。 |
 | 2026-05-21 | 阶段 2 拆解：目标聚焦"ROM 加载 → applist → 出一帧 + 单指交互"，音频/振动/导入 UI 全部推迟到阶段 3。子任务 2.1–2.11 落地：ogl 后端 iOS 化、EAGL 上下文、iOS emu_window、IosEmulator state、Documents 布局、applist 扫描、SwiftUI 三屏、触控、生命周期、`seed_ios_simulator_documents.sh`、文档收口。验证素材选定 `roms/N95 8GB (S60v3 - FP1)` + `roms/snakes-n95_n6trsohu.sis`。 |
 | 2026-05-22 | 阶段 3.1 完成：iOS sandbox 下 `prot_read_write_exec` 被 mprotect 静默剥 W 导致 dispatcher trampoline chunk 写 0 SIGBUS。在 `translate_protection` iOS 分支统一剥 PROT_EXEC（dyncom 不需要 host exec），mount N95 ROM 后 applist 出 18 个应用，进程稳定。截屏归档 `docs/screenshots/ios-stage3/3.1-mount-unblocked/`。 |
+| 2026-05-22 | 阶段 3.2 部分推进：在 `physical_file_system::get_real_physical_path` iOS 分支末尾加 case-insensitive 路径解析，修掉了 ROM 内混合大小写文件（首发证据是 `Wsini.ini`）在 iOS sandbox 下读不到导致的 `Loading wsini file broke with code -1`。剩余阻塞：点击 GUI app 后 guest "Main" 线程进 PC=0 access-violation 死循环（详见 3.2.1）—— stage 2 acceptance（render 真帧 + 1+1= + SIS 安装）在 3.2.1 落地前无法关闭，stage 2 状态仍为 🟡。 |
 | 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |
