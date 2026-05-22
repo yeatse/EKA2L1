@@ -131,36 +131,79 @@ namespace eka2l1::drivers::graphics {
             return false;
         }
 
+        // CAEAGLLayer property mutations (opaque / drawableProperties) and the
+        // -[EAGLContext renderbufferStorage:fromDrawable:] call (which sets
+        // CALayer.contents internally) MUST happen on the main thread, or
+        // UIKit raises an exception and the renderbuffer never gets a backing
+        // store -- the EmulatorView then stays at clear color. The graphics
+        // driver constructor runs on a worker thread, so bounce the layer-
+        // touching work to the main queue via dispatch_sync. Pure GL state
+        // (depth/stencil renderbuffer, FBO attachments) stays on the caller
+        // thread; named GL objects are shared regardless of which thread
+        // currently holds the EAGLContext.
         m_layer = layer;
-        m_layer.opaque = YES;
-        m_layer.drawableProperties = @{
-            kEAGLDrawablePropertyRetainedBacking: @NO,
-            kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8,
+
+        __block bool layer_ok = true;
+        EAGLContext *ctx = m_context;
+        CAEAGLLayer *target_layer = m_layer;
+        __block GLuint colorbuffer = m_colorbuffer;
+        __block GLint backing_width = 0;
+        __block GLint backing_height = 0;
+
+        dispatch_block_t main_work = ^{
+            target_layer.opaque = YES;
+            target_layer.drawableProperties = @{
+                kEAGLDrawablePropertyRetainedBacking: @NO,
+                kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8,
+            };
+
+            // EAGLContext is a per-thread "current" pointer. Borrow it for the
+            // duration of the main-thread block so renderbufferStorage: binds
+            // the storage to *our* colorbuffer; restore nil on the way out so
+            // the worker thread can re-make_current and own it afterwards.
+            EAGLContext *prev = [EAGLContext currentContext];
+            [EAGLContext setCurrentContext:ctx];
+
+            if (colorbuffer == 0) {
+                glGenRenderbuffers(1, &colorbuffer);
+            }
+            glBindRenderbuffer(GL_RENDERBUFFER, colorbuffer);
+
+            if (![ctx renderbufferStorage:GL_RENDERBUFFER fromDrawable:target_layer]) {
+                LOG_ERROR(DRIVER_GRAPHICS, "EAGL renderbufferStorage:fromDrawable: failed");
+                [EAGLContext setCurrentContext:prev];
+                layer_ok = false;
+                return;
+            }
+
+            glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &backing_width);
+            glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &backing_height);
+
+            [EAGLContext setCurrentContext:prev];
         };
 
+        if ([NSThread isMainThread]) {
+            main_work();
+        } else {
+            dispatch_sync(dispatch_get_main_queue(), main_work);
+        }
+
+        if (!layer_ok) {
+            return false;
+        }
+
+        m_colorbuffer = colorbuffer;
+        m_backbuffer_width = static_cast<std::uint32_t>(backing_width);
+        m_backbuffer_height = static_cast<std::uint32_t>(backing_height);
+
+        // Re-acquire the context on the caller thread for the remaining GL
+        // setup and any draw work that follows.
         [EAGLContext setCurrentContext:m_context];
 
         if (m_framebuffer == 0) {
             glGenFramebuffers(1, &m_framebuffer);
         }
         glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
-
-        if (m_colorbuffer == 0) {
-            glGenRenderbuffers(1, &m_colorbuffer);
-        }
-        glBindRenderbuffer(GL_RENDERBUFFER, m_colorbuffer);
-
-        if (![m_context renderbufferStorage:GL_RENDERBUFFER fromDrawable:m_layer]) {
-            LOG_ERROR(DRIVER_GRAPHICS, "EAGL renderbufferStorage:fromDrawable: failed");
-            return false;
-        }
-
-        GLint width = 0;
-        GLint height = 0;
-        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_WIDTH, &width);
-        glGetRenderbufferParameteriv(GL_RENDERBUFFER, GL_RENDERBUFFER_HEIGHT, &height);
-        m_backbuffer_width = static_cast<std::uint32_t>(width);
-        m_backbuffer_height = static_cast<std::uint32_t>(height);
 
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
             GL_RENDERBUFFER, m_colorbuffer);
@@ -169,7 +212,7 @@ namespace eka2l1::drivers::graphics {
             glGenRenderbuffers(1, &m_depthbuffer);
         }
         glBindRenderbuffer(GL_RENDERBUFFER, m_depthbuffer);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, backing_width, backing_height);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
             GL_RENDERBUFFER, m_depthbuffer);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT,
