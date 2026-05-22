@@ -13,8 +13,8 @@
 |------|------|------|
 | 0 | 工程骨架可在 iOS arm64 上构建出空壳 | ✅（`build/ios-device/.../EKA2L1.app` 已成功产出，arm64 Mach-O） |
 | 1 | dyncom 解释器在 iOS 上跑通一段裸 ARM 代码片段，结果可在 SwiftUI 展示 | ✅（booted iPhone 16 Pro 模拟器上 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`） |
-| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡 |
-| 3 | 音频 / 输入 / 振动 / 文件导入完整体验 | ⬜ |
+| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡（mount 链路最后一公里被 kernel chunk SIGBUS 卡住，余下验收转交阶段 3.1/3.2） |
+| 3 | 解锁 mount 链路 + 完成阶段 2 验收 + 音频 / 振动 / 文件导入 / 设置 / 图标完整体验 | 🟡 |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
 
 ---
@@ -308,16 +308,121 @@
 
 ---
 
-## 阶段 3：完整体验
+## 阶段 3：解锁 mount 链路 + 完成阶段 2 验收 + 完整体验
 
 ### 目标
-音频（cubeb AudioUnit）、振动（Core Haptics）、文件导入（UIDocumentPicker / Files App）、设置面板、字体/SIS 安装流程全部可用。
+两件事并轨推进：
 
-### 验收标准（草稿）
-- [ ] 一个公开的 N-Gage 游戏（dev 自有合法 ROM）能跑起来、有声音、能交互。
+1. **解阶段 2 遗留**：阶段 2 修复清单第 14 条的 kernel chunk SIGBUS 把 mount → applist → 出帧 → 触控 这条主线管线堵在了 "chunk 初始化写 0" 那一步，导致阶段 2 的真实验收（applist ≥ 5、Calculator 出一帧、单指交互、SIS 安装后出现在 applist）至今没法跑通。阶段 3 必须先把这个 mmap/mprotect/W^X 的 mismatch 解掉，然后回头补完阶段 2 的真实验收，再继续往下。
+2. **完整体验**：在 mount 链路彻底通畅后，按原计划把音频（cubeb AudioUnit）、振动（Core Haptics）、文件导入（UIDocumentPicker）、SVG/MIF 图标、设置面板、UIAlertController 输入、多指/手势、真正的 ROM 安装流程、字体导入引导逐项接齐。
+
+阶段 4 的 dynarmic / JIT / W^X / entitlement / 发布通道**仍然不在范围内** —— 阶段 3 只在解 3.1 的 chunk 分配问题时，会顺手把 `common::virtualmem` 的 "非可执行内存" 路径理顺；可执行内存（MAP_JIT）继续推迟到阶段 4，与签名通道一起做。
+
+### 验收标准
+- [ ] **阶段 2 acceptance 补完**：N95 ROM 在 booted 模拟器和 iOS 真机上挂载后，applist 列出 ≥ 5 个内建应用、与 Qt / Android 前端在同一 ROM 下的列表对得上；点击 Calculator（或 Notes / Calendar，任一不依赖音频的 GUI 内建应用），EAGL 渲染面稳定刷出 ≥ 1 帧真实画面、无 crash 持续 ≥ 10s；单指 tap 把 `1 + 1 =` 算出来。
+- [ ] **SIS 安装链路真实跑通**：通过 UIDocumentPicker 或手工放进 `Documents/sis/`，`snakes-n95_n6trsohu.sis` 装到 E 盘、出现在 applist 并能 launch 到游戏主菜单（游戏内逻辑跑不下去不计入失败）。
+- [ ] **音频**：cubeb iOS AudioUnit 后端在 iOS 重新进 build graph，`make_audio_driver` 返回真实实例；一个带 BGM 或 SFX 的 ROM 应用（候选：N-Gage 试玩 / 一个有声音的 Symbian 小游戏）能听见声音。
+- [ ] **振动**：`drivers::vibration` 在 iOS 下走 `CHHapticEngine`（或 `UIImpactFeedbackGenerator` fallback），有一个触发振动的应用能感受到反馈，无 crash。
+- [ ] **文件导入**：`UIDocumentPickerViewController` + Info.plist 文件关联（`.sis` / `.sisx` / `.zip`-ROM / `.ttf`-字体）打通；从 Files App "Share to EKA2L1" 把上述四类资源送进 sandbox 对应目录，前端 UI 上即时刷新。
+- [ ] **AppList 图标**：applist 显示真实 SVG/MIF 图标（解码走 lunasvg / mif decoder），不再是占位。
+- [ ] **设置面板**：SwiftUI 设置页覆盖 `config::state` 主要字段（device 切换、屏幕方向、上采样、音量、按键映射），改动持久化到 `config.yml`。
+- [ ] **输入对话框**：阶段 2 留下的 `input_dialog_ios.cpp` no-op 替换为真实 `UIAlertController` 实现（包括 `open_input_view` / `close_input_view` / `show_yes_no_dialog`）。
+- [ ] **真正的 ROM 安装流程**：取消阶段 2 mount 用的 "目录 symlink graft + 期望 desktop 预装 device tree" 权宜方案，iOS 端自管 `devices.yml` 生成 / device 注册 / 资源拷贝；同时由本阶段引入的 chunk 修复保证 `rescan_devices` 即使误删也不会跟随 symlink 删用户原始 ROM。
+- [ ] **字体导入引导**：检测到 ROM 缺字体时，UI 引导用户通过 DocumentPicker 添加 `.ttf`，拷到 `data/fonts/` 并被 freetype 拾取。
+- [ ] **多指 / 手势**：`multipleTouchEnabled = YES`，至少跑通双指（用于 launcher 缩放或屏幕键盘场景）和长按手势。
+- [ ] 阶段 3 修复清单按出现顺序登记（同 0.7 / 1.x / 2.x 体例）。
 
 ### 子任务
-> 进入此阶段时再拆。
+
+#### 3.1 解锁 mount 链路：iOS 内核 chunk 写 0 SIGBUS
+- 定位现场：阶段 2 #14 的 SIGBUS 出现在 mount 走到 dispatcher 初始化分配 kernel chunk → `std::fill_n` 清零时，地址 `0x11f904000` 区间。先把崩溃栈、所在 chunk 的 `create_info`（region flag / size / max_size / permission）、`commit()` 的实际入参与 `mprotect` 的 errno 全部抓出来登记到本阶段修复清单里，再决定怎么改。
+- 候选 root cause：①`common::map_memory` 在 iOS 上 reserve 一大块 `PROT_NONE`，随后 `commit()` 走 `mprotect(PROT_READ|PROT_WRITE)` —— iOS sandbox 对单进程最大 mmap 数 / RLIMIT_AS / `vm_allocate` 行为与 Linux / macOS 桌面不一致，可能 mprotect 返回 0 但实际页未真正变成 W；②kernel chunk 的某个 region 标志在 iOS 上被错误识别成 code（W^X 互斥下默认 R+X，写入就 KERN_PROTECTION_FAILURE）；③`max_size_` 与 page size 错位，commit 漏掉了 `fill_n` 写的尾部页。需要逐一排查，不要凭直觉一把改。
+- 修法分层（按代价从低到高，验证一种再上下一种）：
+  1. 在 `multiple_mem_model_chunk::create` / `commit` 路径上加 iOS 专属断言 + 详细日志，先把哪条 region / 哪段 offset 失败定死。
+  2. 如果是 W^X 误判：在 `common::is_memory_wx_exclusive()` 的语义上明确 "非可执行内存不受 W^X 限制"，让 kernel data / ROM image / dispatcher static 走纯 RW 路径，不被当作 JIT。
+  3. 如果是 mmap reserve 行为差异：iOS 下改用 "小步 reserve + commit 同步分配" 或直接 `mmap(MAP_ANON|MAP_PRIVATE, PROT_READ|PROT_WRITE)` 跳过 `PROT_NONE` 阶段；必要时给 `common::map_memory` 增加 iOS 分支或新增 `map_memory_committed(size, prot)` API。
+  4. 如果是 dispatcher 自己的内部分配器假设了 "reserve 完整 chunk 后线性 fill" —— 在 iOS 下让分配器按已 commit 区域走，或一次性 commit 全 chunk。
+- **不在 3.1 范围内**：dynarmic / MAP_JIT / `pthread_jit_write_protect_np`。这些是阶段 4。3.1 只解决 "非可执行内存的写访问"。
+- 验收：xcodebuildmcp 自动化或手工，从启动 → 主屏 → 选 N95 → Mount → `set_device(0)` → reset → ROM 映射 → ROM chunk → kernel-data chunk → dispatcher 初始化 全程不再 SIGBUS；`symsys->loop()` 真正开始驱动 winserv 心跳。
+
+#### 3.2 阶段 2 验收最后一公里
+- 3.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 Calculator → 等渲染面出非清屏色 → 单指点 `1`、`+`、`1`、`=` → 截屏拿到 `1+1=2`。
+- 把 `snakes-n95_n6trsohu.sis` 拷进 `Documents/sis/`，UI 上点 "Install SIS" → 成功后 applist 出现 Snakes → launch 到主菜单 → 截屏归档。
+- 把这次手工验收的截屏与日志归档到 `docs/screenshots/stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
+- 不要求阶段 3 端到端无人值守自动化，`scripts/build_ios.sh smoke` 仍只验 CPU smoke 不退化。
+
+#### 3.3 `common::virtualmem` 与 mem 模块的 iOS 落实
+- 3.1 在 mem 路径上打的 iOS 守护代码沉淀到 `common::virtualmem` 的稳定 API 上：明确 "非可执行内存" 与 "可执行内存" 分双 API，前者在阶段 3 完成，后者（`map_executable` / `jit_write_protect`）骨架留给阶段 4 填实现。
+- `is_memory_wx_exclusive()` 的语义在 doc 注释里写清楚：iOS 下仍返回 true，但只影响 "打算运行代码的内存"，普通 data chunk 不受此限制。
+- 所有 iOS 专属分支统一加 `// TODO(ios)` 标签，确保后续 grep 可见；macOS / Linux / Android / Win32 行为不被改动，桌面 Qt 构建跑一次确认无回归。
+
+#### 3.4 真正的 ROM 安装流程（取代 symlink graft）
+- 取消阶段 2 `mountRomNamed:` 里的 `Documents/data/drives/z → roms/<rom>/data/drives/z` symlink；改成：①如果 `<rom>` 目录已含完整 desktop device tree，复用现状但**不再调** `rescan_devices`（阶段 2 #12 教训）；②若只是裸 ROM 镜像，IosEmulator 自己生成 `devices.yml`、把 ROM 注册成单 device，drives/z 用文件级 hard-link 或 manifest 表，避免 `remove_all` 跟随 symlink 删源文件。
+- 与 3.5 UIDocumentPicker 配合：用户从 Files App 拖入裸 ROM 镜像后自动走 "安装为 device" 流程，前端无需用户手工搭 device tree。
+- 验收：删除并重建 sandbox，从空白 Documents 出发，通过 UI 全程导入一个 ROM + 一个 SIS，applist 出 Snakes、可 launch。
+
+#### 3.5 UIDocumentPicker 文件导入
+- Info.plist 加 UTType / `CFBundleDocumentTypes` / `LSItemContentTypes`：`com.symbian.sis` / `com.symbian.sisx` / `public.zip-archive`（ROM）/ `public.truetype-ttf-font`（字体）。
+- ROM 列表页 + AppList 页加导入按钮 → `UIDocumentPickerViewController(forOpeningContentTypes:)`；选完后 IosEmulator 按 UTType 分发到对应处理器（ROM 解压 / SIS 走 3.4 的 install_package / 字体落 `data/fonts/`）。
+- "Share to EKA2L1" extension 留作未来工作，阶段 3 只做 in-app picker。
+- 阶段 2 留下的 `scripts/seed_ios_simulator_documents.sh` 仍保留，作为开发期复跑捷径，不进 release 路径。
+
+#### 3.6 AppList 图标（SVG / MIF 解码）
+- 在 IosEmulator 侧给 `EKA2L1AppEntry` 加 `iconPNGData: NSData?` 字段；后端遍历 registration 时调 applist server 取 icon（复用 Qt / Android 的解码路径），mif 走 mif decoder、svg 走 lunasvg，统一光栅化到 64×64 RGBA，编码 PNG 后跨 ARC 边界传给 Swift。
+- AppListView 用 `Image(uiImage:)` 异步渲染；解码放后台 queue，主线程只赋值。
+- 字体缺失时 SVG 文本会失败，3.12 的引导覆盖这种情况。
+
+#### 3.7 cubeb iOS AudioUnit 后端
+- `src/external/CMakeLists.txt`：iOS 下重新 `add_subdirectory(cubeb)`（阶段 0 跳过名单里移除 cubeb）。验证 cubeb 自带的 `cubeb_audiounit` 在 iOS 18 / Xcode 26 SDK 下编得过；编不过就给 cubeb 打最小 patch（CMake 检测 + AVAudioSession 配置）。
+- `src/emu/drivers/CMakeLists.txt` + `audio.cpp` / `dsp.cpp`：撤掉阶段 0 在 iOS 下对 cubeb 工厂 case 的 `#if !EKA2L1_PLATFORM(IOS)` 守护，重新让 `audio_driver_backend::cubeb` 在 iOS 落到 cubeb_audiounit。
+- 配 `AVAudioSession`：`category=playback` + `mode=default`，App 切后台时调 `setActive:NO`，回前台 `setActive:YES`；与阶段 2 的 scenePhase 钩子共用。
+- ffmpeg 仍然跳过；dsp out-stream / video player 在 iOS 继续 nullptr，由阶段 3 验收里 "声音能听到" 覆盖到一个不依赖 ffmpeg 的应用即可。
+- 验收：一个公开的 Symbian 小游戏或自带 BGM 的内建应用（候选：Music Player / 一个有 SFX 的免费 N-Gage demo）能听见声音；后台/前台切换不打嗝、不 crash。
+
+#### 3.8 振动：Core Haptics
+- 新建 `src/emu/drivers/src/hwrm/backend/vibration_ios.{h,mm}`：iOS 14+ 用 `CHHapticEngine` + `CHHapticPattern` 把 duration / intensity / sharpness 映射到一次连续振动；iOS 12/13 fallback 到 `UIImpactFeedbackGenerator`。
+- CMake iOS 分支链 `CoreHaptics` / `UIKit`；`vibration.cpp` 工厂在 iOS 走 `vibration_ios` 替换 stage-0 的 `vibration_null`。
+- 验收：找一个触发振动的应用（或写一个临时 dispatcher hook 在 tap 时强制振动一下）能感受到反馈。
+
+#### 3.9 多指 / 手势
+- `EAGL2L1View.multipleTouchEnabled = YES`，`touchesBegan/Moved/Ended/Cancelled` 已经是数组迭代，扩 pointerId 上限即可。
+- 双指缩放（pinch）+ 长按（long press）做成 `UIGestureRecognizer`，事件转换为 `drivers::input_event` 中的 `keyboard_input`（虚拟方向键 / select）或 `mouse_action` 长按语义。具体语义对照 Android 前端的 `gesture_dispatcher` 写。
+- 物理键盘 / 手柄推迟到阶段 4。
+
+#### 3.10 设置面板
+- SwiftUI 设置页（`SettingsView`）+ `IosEmulator` 暴露 `-currentConfig` / `-applyConfigChanges:`；改动序列化回 `Documents/data/config.yml`。
+- 字段：device 选择、屏幕方向（auto / portrait / landscape）、上采样倍率、主音量、按键映射（虚拟方向键 / 软键盘开关）、日志等级、JIT 开关（占位，文案标注 "阶段 4 启用"）。
+- 入口放在 ROM 列表页右上角 gear icon。
+
+#### 3.11 UIAlertController 输入对话框
+- 替换 `src/emu/drivers/src/ui/input_dialog_ios.cpp` 的 no-op：
+  - `open_input_view(title, current_text, max_len)`：弹 `UIAlertController(.alert)` + `addTextField`，回调写回 `drivers::ui::input_dialog_result`。
+  - `close_input_view`：dismiss。
+  - `show_yes_no_dialog`：两按钮 alert，return 阻塞或异步看 dispatcher 期望。
+- 必须在主线程上推 ViewController，跨线程信号用 `dispatch_async(dispatch_get_main_queue(), ...)` 推入。
+- 验收：触发一个需要文本输入的 Symbian 对话（如 Notes 创建条目），能输入文字并提交回模拟器。
+
+#### 3.12 字体导入引导
+- 启动时检测 `data/fonts/` 是否为空且 ROM 字体缺失（freetype 无 face 时由 services/fbs 给信号）；若缺，AppList 顶部出现一条引导横幅 → 点击触发 3.5 的 DocumentPicker（限制为 `public.truetype-ttf-font` / `org.openfontformat.otf`）。
+- 拷贝完成后调 fbs 重新扫描字体目录。
+
+#### 3.13 文档与遗留项
+- 阶段 3 修复清单（按出现顺序，体例同 0.7 / 1.x / 2.x）维护在本节末尾。
+- 把 "dynarmic / MAP_JIT / `common::virtualmem::map_executable` / W^X 切换 / `pthread_jit_write_protect_np` / 各签名通道下的 JIT 启用方法 / CI / dyncom vs dynarmic benchmark" 统一推到阶段 4，确保 3.3 留下的可执行内存 API 骨架在阶段 4 直接接得上。
+- 阶段 3 期间的截屏（mount 链路打通后的 applist、Calculator 出帧、Snakes 主菜单、设置面板等）归档到 `docs/screenshots/stage3/`，按子任务编号分目录。
+- 变更日志补阶段 3 拆解条目与各阶段收尾条目。
+
+### 阶段 3 修复清单（按出现顺序）
+> _进入此阶段后逐条登记，沿用 0.7 / 1.x / 2.x 体例。_
+
+### 阶段 3 已知风险
+- **iOS sandbox 下 mmap / mprotect 行为差异是 3.1 的关键变量**：模拟器（Apple Silicon host）与真机的 sandbox 配额不完全一致，3.1 修完后必须在真机上至少跑一次 mount，不能只靠 booted 模拟器。
+- **cubeb iOS 后端历史包袱**：cubeb_audiounit 在新 SDK 下偶有编译告警升错；如真的编不过、又不想动 cubeb 源，可以临时给一个最薄的 AVAudioEngine 后端走 `audio_driver` 接口，但务必记录在修复清单里、不要让回退方案永久化。
+- **AVAudioSession 与 EAGL 生命周期耦合**：进后台时音频要先 deactivate 再让 GL pause，否则 AudioUnit 在 EAGL context 释放后仍持引用可能 crash；scenePhase 路径里写明先后顺序。
+- **Core Haptics 在 iOS 模拟器上不可用**：模拟器 silently 失败，验证振动只能上真机；CI 烟测里跳过振动相关 assert。
+- **UIDocumentPicker 返回的是 security-scoped URL**：必须配对 `startAccessingSecurityScopedResource` / `stop...`，否则后台拷贝会读不到文件。这是阶段 3 上手时最容易踩的隐性坑。
+- **chunk 修复一旦泄漏到桌面**：mem 模块的所有改动都要在 macOS / Linux / Win32 桌面 Qt 构建上跑一次回归，3.3 的 API 拆分尤其要小心 ABI 漂移。
+- **设置面板与 services 的耦合**：`config::state` 字段改完不一定立即对 services 生效（多数需要 reset 模拟器）；设置面板要在 UI 上明确告知 "需要重启模拟器才能生效" 的字段。
 
 ---
 
@@ -352,4 +457,5 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-20 | 阶段 1 拆解：缩窄为"dyncom 解释器跑通裸 ARM 片段"，dynarmic / MAP_JIT / entitlement 与发布通道合并到新的阶段 4。子任务 1.1–1.7 落地：smoke blob 设计、SmokeBridge、cpu iOS 真实可链、SwiftUI 展示、factory 回落语义、`build_ios.sh smoke` 验证、文档与遗留项。 |
 | 2026-05-21 | 阶段 1 完成：simulator 上 `scripts/build_ios.sh smoke` exit 0，`EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。期间踩了 5 个坑（详见阶段 1 修复清单）。dynarmic 请求按预期回落 dyncom，UI 显示 fallback reason。 |
 | 2026-05-21 | 阶段 2 拆解：目标聚焦"ROM 加载 → applist → 出一帧 + 单指交互"，音频/振动/导入 UI 全部推迟到阶段 3。子任务 2.1–2.11 落地：ogl 后端 iOS 化、EAGL 上下文、iOS emu_window、IosEmulator state、Documents 布局、applist 扫描、SwiftUI 三屏、触控、生命周期、`seed_ios_simulator_documents.sh`、文档收口。验证素材选定 `roms/N95 8GB (S60v3 - FP1)` + `roms/snakes-n95_n6trsohu.sis`。 |
+| 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |
