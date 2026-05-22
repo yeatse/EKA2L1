@@ -334,7 +334,7 @@
 
 ### 子任务
 
-#### 3.1 解锁 mount 链路：iOS 内核 chunk 写 0 SIGBUS
+#### 3.1 解锁 mount 链路：iOS 内核 chunk 写 0 SIGBUS ✅
 - 定位现场：阶段 2 #14 的 SIGBUS 出现在 mount 走到 dispatcher 初始化分配 kernel chunk → `std::fill_n` 清零时，地址 `0x11f904000` 区间。先把崩溃栈、所在 chunk 的 `create_info`（region flag / size / max_size / permission）、`commit()` 的实际入参与 `mprotect` 的 errno 全部抓出来登记到本阶段修复清单里，再决定怎么改。
 - 候选 root cause：①`common::map_memory` 在 iOS 上 reserve 一大块 `PROT_NONE`，随后 `commit()` 走 `mprotect(PROT_READ|PROT_WRITE)` —— iOS sandbox 对单进程最大 mmap 数 / RLIMIT_AS / `vm_allocate` 行为与 Linux / macOS 桌面不一致，可能 mprotect 返回 0 但实际页未真正变成 W；②kernel chunk 的某个 region 标志在 iOS 上被错误识别成 code（W^X 互斥下默认 R+X，写入就 KERN_PROTECTION_FAILURE）；③`max_size_` 与 page size 错位，commit 漏掉了 `fill_n` 写的尾部页。需要逐一排查，不要凭直觉一把改。
 - 修法分层（按代价从低到高，验证一种再上下一种）：
@@ -413,7 +413,7 @@
 - 变更日志补阶段 3 拆解条目与各阶段收尾条目。
 
 ### 阶段 3 修复清单（按出现顺序）
-> _进入此阶段后逐条登记，沿用 0.7 / 1.x / 2.x 体例。_
+1. **`prot_read_write_exec` 在 iOS sandbox 下 `mprotect` 静默丢 W**：阶段 2 #14 的 SIGBUS 根因。崩溃 IPS 显示在 `std::fill(base, base+0x4000, 0)` 写第一个字节就 `KERN_PROTECTION_FAILURE` (`Data Abort byte write Translation fault`)，栈顶是 `kernel::chunk::chunk` → `dispatcher::dispatcher`（创建 "DispatcherTrampolines" chunk，`prot_read_write_exec`，4 KB）。原因：iOS arm64 sandbox 强制 W^X，`mprotect(PROT_READ|PROT_WRITE|PROT_EXEC)` 返回 0（成功）但实际页是 RX（PROT_WRITE 被静默剥离），随后写入触发 KERN_PROTECTION_FAILURE。dyncom 路径下 host 永远不真正执行 guest 页（dyncom 是解释器），PROT_EXEC 对 host_base 是纯冗余。修法：`src/emu/common/src/types.cpp::translate_protection` 在 iOS 分支末尾统一剥 PROT_EXEC（若结果为 0 回落 PROT_READ），并加 `// TODO(ios)` 说明 stage 4 引入 `map_executable` / MAP_JIT 时替换。此改动只影响 iOS，POSIX / Win32 / Android / macOS 桌面不变。验证：xcodebuildmcp 自动化 Mount N95 ROM 后 UI 显示 `Mounted: N95 8GB (S60v3 - FP1)` + `Apps (18)`，进程不再 SIGBUS。截屏 `docs/screenshots/ios-stage3/3.1-mount-unblocked/applist-18-apps.jpg`。
 
 ### 阶段 3 已知风险
 - **iOS sandbox 下 mmap / mprotect 行为差异是 3.1 的关键变量**：模拟器（Apple Silicon host）与真机的 sandbox 配额不完全一致，3.1 修完后必须在真机上至少跑一次 mount，不能只靠 booted 模拟器。
@@ -457,5 +457,6 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-20 | 阶段 1 拆解：缩窄为"dyncom 解释器跑通裸 ARM 片段"，dynarmic / MAP_JIT / entitlement 与发布通道合并到新的阶段 4。子任务 1.1–1.7 落地：smoke blob 设计、SmokeBridge、cpu iOS 真实可链、SwiftUI 展示、factory 回落语义、`build_ios.sh smoke` 验证、文档与遗留项。 |
 | 2026-05-21 | 阶段 1 完成：simulator 上 `scripts/build_ios.sh smoke` exit 0，`EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`。期间踩了 5 个坑（详见阶段 1 修复清单）。dynarmic 请求按预期回落 dyncom，UI 显示 fallback reason。 |
 | 2026-05-21 | 阶段 2 拆解：目标聚焦"ROM 加载 → applist → 出一帧 + 单指交互"，音频/振动/导入 UI 全部推迟到阶段 3。子任务 2.1–2.11 落地：ogl 后端 iOS 化、EAGL 上下文、iOS emu_window、IosEmulator state、Documents 布局、applist 扫描、SwiftUI 三屏、触控、生命周期、`seed_ios_simulator_documents.sh`、文档收口。验证素材选定 `roms/N95 8GB (S60v3 - FP1)` + `roms/snakes-n95_n6trsohu.sis`。 |
+| 2026-05-22 | 阶段 3.1 完成：iOS sandbox 下 `prot_read_write_exec` 被 mprotect 静默剥 W 导致 dispatcher trampoline chunk 写 0 SIGBUS。在 `translate_protection` iOS 分支统一剥 PROT_EXEC（dyncom 不需要 host exec），mount N95 ROM 后 applist 出 18 个应用，进程稳定。截屏归档 `docs/screenshots/ios-stage3/3.1-mount-unblocked/`。 |
 | 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |

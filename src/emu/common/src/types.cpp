@@ -74,6 +74,21 @@ int translate_protection(prot cprot) {
         tprot = -1;
     }
 
+#if EKA2L1_PLATFORM(IOS)
+    // TODO(ios): iOS sandbox enforces W^X — mprotect with PROT_EXEC on a non-MAP_JIT page
+    // silently strips PROT_WRITE, so the page reads RX and any later write traps with
+    // KERN_PROTECTION_FAILURE. In dyncom-only mode the host never executes guest pages,
+    // so PROT_EXEC on host_base is functionally redundant; drop it here so RWX chunks
+    // (e.g. dispatcher trampolines) commit as plain RW and `std::fill` succeeds.
+    // Stage 4 will introduce a separate map_executable / MAP_JIT path for dynarmic.
+    if (tprot != -1 && tprot != PROT_NONE) {
+        tprot &= ~PROT_EXEC;
+        if (tprot == 0) {
+            tprot = PROT_READ;
+        }
+    }
+#endif
+
     return tprot;
 }
 
