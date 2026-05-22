@@ -16,7 +16,9 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
     # toolchain sets it from EKA2L1_IOS_DEPLOYMENT_TARGET. Do not overwrite it
     # there with the macOS default.
     if (NOT EKA2L1_IOS)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14" CACHE STRING "Minimum OS X version to target for deployment" FORCE)
+        if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+            set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum OS X version to target for deployment" FORCE)
+        endif ()
     endif ()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-invalid-offsetof")
 endif ()

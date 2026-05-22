@@ -330,6 +330,19 @@ if(APPLE)
        ${CMAKE_INSTALL_NAME_TOOL} -add_rpath "@executable_path/../Frameworks/"
        $<TARGET_FILE:eka2l1_qt>)
 
+    # Finalize the bundle: restore SDL2.framework symlink layout, deploy Qt
+    # plugins/frameworks, and re-apply an ad-hoc signature. Without these the
+    # .app fails to launch on Apple Silicon ("code signature invalid" or
+    # "Could not find the Qt platform plugin cocoa").
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt HINTS "${QT_BIN_DIR}")
+    add_custom_command(TARGET eka2l1_qt POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DAPP_BUNDLE=$<TARGET_BUNDLE_DIR:eka2l1_qt>
+            -DMACDEPLOYQT=${MACDEPLOYQT_EXECUTABLE}
+            -P ${PROJECT_SOURCE_DIR}/cmake/MacOSFinalizeBundle.cmake
+        COMMENT "Finalizing macOS bundle (SDL2 symlinks + macdeployqt + ad-hoc sign)"
+        VERBATIM)
+
     if (EKA2L1_DEPLOY_DMG)
         find_program(MACDEPLOYQT_EXECUTABLE macdeployqt HINTS "${QT_BIN_DIR}")
 
