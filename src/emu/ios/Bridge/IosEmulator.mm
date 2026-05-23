@@ -460,6 +460,17 @@ namespace eka2l1::ios {
     //   <romPath>/data/roms/<firm>/SYM.rom   raw ROM image (case-sensitive!)
     // We stage it into the live sandbox so the running system finds it at
     // both upper- and lower-case firmcode paths.
+    //
+    // Stage 3.4 note: the previous implementation symlinked the firm dirs
+    // and ROM files. That worked while we explicitly skip rescan_devices
+    // (the stage 2 #12 culprit), but `common::delete_folder` recurses into
+    // symlinked directories — any future caller (e.g. a "remove device" UI
+    // path) would wipe the user's source ROM. Switch to APFS hardlinks via
+    // NSFileManager linkItemAtPath: hardlinks share an inode, so deleting
+    // the destination name only removes that name; the source data and the
+    // separate directory tree under <romPath> are untouched. Directories on
+    // APFS can't be hardlinked, so linkItemAtPath recurses and hardlinks
+    // each contained file individually.
     NSString *zSrc = [romPath stringByAppendingPathComponent:@"data/drives/z"];
     NSString *romSrc = [romPath stringByAppendingPathComponent:@"data/roms"];
     if (![fm fileExistsAtPath:zSrc isDirectory:&isDir] || !isDir ||
@@ -499,8 +510,17 @@ namespace eka2l1::ios {
         const std::string firmLowerUtf8 = eka2l1::common::lowercase_string(firmCode);
         NSString *firmLower = [NSString stringWithUTF8String:firmLowerUtf8.c_str()];
         NSString *firmZDst = [zDst stringByAppendingPathComponent:firmLower];
-        unlink(firmZDst.UTF8String);
-        symlink(firmZSrc.UTF8String, firmZDst.UTF8String);
+        [fm removeItemAtPath:firmZDst error:nil];
+        // Make sure the parent (`drives/z`) exists so linkItemAtPath:'s
+        // implicit mkdir of the leaf has somewhere to land.
+        [fm createDirectoryAtPath:zDst withIntermediateDirectories:YES attributes:nil error:nil];
+        NSError *zLinkErr = nil;
+        if (![fm linkItemAtPath:firmZSrc toPath:firmZDst error:&zLinkErr]) {
+            LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS mount: failed to hardlink Z drive {} → {}: {}",
+                firmZSrc.UTF8String, firmZDst.UTF8String,
+                zLinkErr.localizedDescription.UTF8String ?: "unknown");
+            return NO;
+        }
 
         NSString *romFirmSrc = [romSrc stringByAppendingPathComponent:firm];
         NSString *romFirmDst = [romDst stringByAppendingPathComponent:firmLower];
@@ -512,8 +532,14 @@ namespace eka2l1::ios {
             NSString *targetName = ([fname caseInsensitiveCompare:@"SYM.ROM"] == NSOrderedSame)
                 ? @"SYM.ROM" : fname;
             NSString *dst = [romFirmDst stringByAppendingPathComponent:targetName];
-            unlink(dst.UTF8String);
-            symlink(src.UTF8String, dst.UTF8String);
+            [fm removeItemAtPath:dst error:nil];
+            NSError *romLinkErr = nil;
+            if (![fm linkItemAtPath:src toPath:dst error:&romLinkErr]) {
+                LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS mount: failed to hardlink ROM file {} → {}: {}",
+                    src.UTF8String, dst.UTF8String,
+                    romLinkErr.localizedDescription.UTF8String ?: "unknown");
+                return NO;
+            }
         }
 
         [yaml appendFormat:@"%s:\n  platver: %s\n  manufacturer: %s\n  firmcode: %s\n  model: %s\n  machine-uid: 0\n",

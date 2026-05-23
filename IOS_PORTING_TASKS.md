@@ -409,10 +409,11 @@
 - ✅ `src/emu/common/src/virtualmem.cpp` 的 iOS / macOS arm64 `commit()` / `change_protection()` 16 KB host-page 对齐分支加 `// TODO(ios)` 注释，引用 3.2.1 的来历；清理 3.2.1 阶段加的 `[commit-fail]` 调试 fprintf 与 `<cerrno>` / `<cstdio>` / `<cstring>` 包含。
 - ✅ 桌面 / Android / Win32 路径未受改动；iOS simulator build 通过（`scripts/build_ios.sh` 替代之 `xcodebuildmcp simulator build` SUCCEEDED）。
 
-#### 3.4 真正的 ROM 安装流程（取代 symlink graft）
-- 取消阶段 2 `mountRomNamed:` 里的 `Documents/data/drives/z → roms/<rom>/data/drives/z` symlink；改成：①如果 `<rom>` 目录已含完整 desktop device tree，复用现状但**不再调** `rescan_devices`（阶段 2 #12 教训）；②若只是裸 ROM 镜像，IosEmulator 自己生成 `devices.yml`、把 ROM 注册成单 device，drives/z 用文件级 hard-link 或 manifest 表，避免 `remove_all` 跟随 symlink 删源文件。
-- 与 3.5 UIDocumentPicker 配合：用户从 Files App 拖入裸 ROM 镜像后自动走 "安装为 device" 流程，前端无需用户手工搭 device tree。
-- 验收：删除并重建 sandbox，从空白 Documents 出发，通过 UI 全程导入一个 ROM + 一个 SIS，applist 出 Snakes、可 launch。
+#### 3.4 真正的 ROM 安装流程（取代 symlink graft）🟡
+- ✅ `mountRomNamed:` 不再用 `symlink(2)` graft drives/z firm 和 ROM 文件，改成 `NSFileManager.linkItemAtPath:toPath:`（APFS hardlink；目录级 hardlink 是 Apple FS 特有能力，TimeMachine 也用同一机制）。后果是即使将来某条代码路径误调 `common::delete_folder`（POSIX `remove(2)` 会跟着 directory symlink 递归删源文件），现在 `remove(2)` 只是 unlink hardlink name，inode 引用计数 -1，用户原 ROM 树（`roms/<rom>/data/...`）依然完整。
+- ✅ 已确认 `rescan_devices` 仍然 bypass（沿用阶段 2 #12 + 3.1 的结论），mount 直接走 `startup → set_device(0) → mount(c/d/e/z)`；任何失败的 `linkItemAtPath:` 会把整个 mount 流程 fail-fast 并返回 NO 给 SwiftUI。
+- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：fresh sandbox → mount N95 → `drives/z/rm-320` 是真目录（不是 symlink）、`roms/rm-320/SYM.ROM` link-count = 2 hardlink → applist 63 → Calculator 真实 UI 渲染稳定。
+- 🟡 剩余 follow-up：①裸 ROM 镜像（没有 desktop device tree 的 .rom 文件）→ 自动生成 minimal device tree 的路径还没做，要和 3.5 UIDocumentPicker ZIP/ROM 导入流程一起 land；②空白 sandbox + UI 全程导入 + applist 出 Snakes 的端到端验收要等 3.5 做完才能跑。
 
 #### 3.5 UIDocumentPicker 文件导入
 - Info.plist 加 UTType / `CFBundleDocumentTypes` / `LSItemContentTypes`：`com.symbian.sis` / `com.symbian.sisx` / `public.zip-archive`（ROM）/ `public.truetype-ttf-font`（字体）。
