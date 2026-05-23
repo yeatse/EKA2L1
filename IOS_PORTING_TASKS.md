@@ -404,10 +404,10 @@
 - 修法：只 lower-case Symbian 虚拟路径（`e:\resource\apps\...`）再交给 `io->get_raw_path` 解析，绝不 lower-case host 绝对路径；同时 `get_raw_path` 失败时返回 interpret false，避免以后继续出现"安装成功但文件为空"的假阳性。
 - 验收：iOS sim 上跑 The Final Battle.sis 安装 → `drives/e/resource/apps/fbattle.rsc` / `drives/e/sys/bin/fbattle.exe` / `drives/e/private/10003a3f/import/apps/fbattle_reg.rsc` 均存在 → applist 重扫出 `Final Battle, uid=0xA0003C62`。
 
-#### 3.3 `common::virtualmem` 与 mem 模块的 iOS 落实
-- 3.1 在 mem 路径上打的 iOS 守护代码沉淀到 `common::virtualmem` 的稳定 API 上：明确 "非可执行内存" 与 "可执行内存" 分双 API，前者在阶段 3 完成，后者（`map_executable` / `jit_write_protect`）骨架留给阶段 4 填实现。
-- `is_memory_wx_exclusive()` 的语义在 doc 注释里写清楚：iOS 下仍返回 true，但只影响 "打算运行代码的内存"，普通 data chunk 不受此限制。
-- 所有 iOS 专属分支统一加 `// TODO(ios)` 标签，确保后续 grep 可见；macOS / Linux / Android / Win32 行为不被改动，桌面 Qt 构建跑一次确认无回归。
+#### 3.3 `common::virtualmem` 与 mem 模块的 iOS 落实 ✅
+- ✅ `is_memory_wx_exclusive()` 的语义在头文件 doc 里写清楚（`src/emu/common/include/common/virtualmem.h`）：iOS / Apple Silicon 仍返回 true，但只对"host 真要执行"的 JIT block 生效；普通 data chunk 已经在 `translate_protection()` 里被 strip 掉 PROT_EXEC，走 plain RW。可执行内存（`map_executable` / `jit_write_protect` / MAP_JIT / `pthread_jit_write_protect_np`）继续保留在阶段 4，与 dynarmic 通路一起做。
+- ✅ `src/emu/common/src/virtualmem.cpp` 的 iOS / macOS arm64 `commit()` / `change_protection()` 16 KB host-page 对齐分支加 `// TODO(ios)` 注释，引用 3.2.1 的来历；清理 3.2.1 阶段加的 `[commit-fail]` 调试 fprintf 与 `<cerrno>` / `<cstdio>` / `<cstring>` 包含。
+- ✅ 桌面 / Android / Win32 路径未受改动；iOS simulator build 通过（`scripts/build_ios.sh` 替代之 `xcodebuildmcp simulator build` SUCCEEDED）。
 
 #### 3.4 真正的 ROM 安装流程（取代 symlink graft）
 - 取消阶段 2 `mountRomNamed:` 里的 `Documents/data/drives/z → roms/<rom>/data/drives/z` symlink；改成：①如果 `<rom>` 目录已含完整 desktop device tree，复用现状但**不再调** `rescan_devices`（阶段 2 #12 教训）；②若只是裸 ROM 镜像，IosEmulator 自己生成 `devices.yml`、把 ROM 注册成单 device，drives/z 用文件级 hard-link 或 manifest 表，避免 `remove_all` 跟随 symlink 删源文件。

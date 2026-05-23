@@ -32,10 +32,6 @@
 #include <unistd.h>
 #endif
 
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
-
 namespace eka2l1::common {
     void *map_memory(const std::size_t size) {
 #if EKA2L1_PLATFORM(WIN32)
@@ -94,18 +90,17 @@ namespace eka2l1::common {
         void *mp_ptr = ptr;
         std::size_t mp_size = size;
 #if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        // TODO(ios): Apple Silicon hosts use 16 KB host pages but the emu's
+        // memory model still operates at 4 KB granularity. mprotect rejects
+        // len-not-page-multiple ranges with EINVAL, which previously left the
+        // page PROT_NONE and tripped SIGBUS on the next guest write (see
+        // 3.2.1). Round ptr DOWN, size UP to the host page so the syscall
+        // covers the full guest range. This widens the protection by at most
+        // one extra host page on each side, which is safe because the
+        // surrounding memory belongs to the same chunk.
         align_to_host_page(mp_ptr, mp_size);
 #endif
-        const int tprot = translate_protection(commit_prot);
-        const int result = mprotect(mp_ptr, mp_size, tprot);
-
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-        if (result == -1) {
-            const int err = errno;
-            fprintf(stderr, "[commit-fail] ptr=%p size=0x%zx (mp_ptr=%p mp_size=0x%zx) cprot=%d tprot=0x%x errno=%d (%s)\n",
-                ptr, size, mp_ptr, mp_size, static_cast<int>(commit_prot), tprot, err, std::strerror(err));
-        }
-#endif
+        const int result = mprotect(mp_ptr, mp_size, translate_protection(commit_prot));
 
         if (result == -1) {
 #endif
@@ -165,6 +160,7 @@ namespace eka2l1::common {
         void *mp_ptr = ptr;
         std::size_t mp_size = size;
 #if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
+        // TODO(ios): see commit() — same 16 KB host-page alignment dance.
         align_to_host_page(mp_ptr, mp_size);
 #endif
         const int result = mprotect(mp_ptr, mp_size, translate_protection(new_prot));
