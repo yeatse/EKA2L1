@@ -34,6 +34,7 @@
 #include <services/window/window.h>
 #include <system/devices.h>
 #include <system/epoc.h>
+#include <system/software.h>
 #include <utils/apacmd.h>
 
 @implementation EKA2L1AppEntry
@@ -80,6 +81,38 @@ namespace eka2l1::ios {
         std::vector<std::size_t> screen_redraw_handles;
         int present_status = 0;
     };
+
+    static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
+        if (!state) {
+            return false;
+        }
+        std::unique_lock<std::mutex> lock(state->layer_mutex);
+        return state->layer_cv.wait_for(lock, timeout, [state]() {
+            return !state->running || state->graphics_driver != nullptr;
+        }) && state->graphics_driver != nullptr;
+    }
+
+    static bool bind_graphics_driver(emulator *state) {
+        if (!state || !state->symsys || !state->graphics_driver) {
+            return false;
+        }
+
+        state->symsys->set_graphics_driver(state->graphics_driver.get());
+        auto *kern = state->symsys->get_kernel_system();
+        if (!state->winserv && kern) {
+            state->winserv = reinterpret_cast<eka2l1::window_server *>(
+                kern->get_by_name<eka2l1::service::server>(
+                    eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+        }
+        if (state->winserv) {
+            for (eka2l1::epoc::screen *scr = state->winserv->get_screens(); scr; scr = scr->next) {
+                if (!scr->screen_texture) {
+                    scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
+                }
+            }
+        }
+        return true;
+    }
 
     static void submit_screen_frame(emulator *state, eka2l1::epoc::screen *scr) {
         if (!state || !state->graphics_driver || !state->window) {
@@ -318,13 +351,19 @@ namespace eka2l1::ios {
         // Build the graphics driver on this thread so the EAGL context is
         // current here. The OGL driver's run() loop owns the thread until
         // the symsys / driver tear down.
-        state->graphics_driver = eka2l1::drivers::create_graphics_driver(
+        auto graphics_driver = eka2l1::drivers::create_graphics_driver(
             eka2l1::drivers::graphic_api::opengl,
             state->window->get_window_system_info());
-        if (!state->graphics_driver) {
+        if (!graphics_driver) {
             LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver creation failed");
+            state->layer_cv.notify_all();
             return;
         }
+        {
+            std::lock_guard<std::mutex> publish_lock(state->layer_mutex);
+            state->graphics_driver = std::move(graphics_driver);
+        }
+        state->layer_cv.notify_all();
 
         state->window->surface_change_hook = [state](void *new_surface) {
             state->graphics_driver->update_surface(new_surface);
@@ -438,9 +477,26 @@ namespace eka2l1::ios {
     NSString *zDst = [@(storage.c_str()) stringByAppendingPathComponent:@"drives/z"];
     NSString *romDst = [@(storage.c_str()) stringByAppendingPathComponent:@"roms"];
     for (NSString *firm in [fm contentsOfDirectoryAtPath:zSrc error:nil]) {
-        NSString *firmLower = firm.lowercaseString;
-        NSString *firmUpper = firm.uppercaseString;
         NSString *firmZSrc = [zSrc stringByAppendingPathComponent:firm];
+        std::string manufacturer = "Nokia";
+        std::string firmCode = firm.UTF8String;
+        std::string model = firmCode;
+        epocver version = eka2l1::loader::determine_rpkg_symbian_version(firmZSrc.UTF8String);
+        eka2l1::loader::determine_rpkg_product_info(firmZSrc.UTF8String, manufacturer, firmCode, model);
+        NSString *systemInstall = [firmZSrc stringByAppendingPathComponent:@"system/Install"];
+        if (![fm fileExistsAtPath:systemInstall isDirectory:&isDir] || !isDir) {
+            systemInstall = [firmZSrc stringByAppendingPathComponent:@"System/Install"];
+        }
+        if (version == epocver::epoc94) {
+            if ([fm fileExistsAtPath:[systemInstall stringByAppendingPathComponent:@"Series60v3.1.sis"]]) {
+                version = epocver::epoc93fp1;
+            } else if ([fm fileExistsAtPath:[systemInstall stringByAppendingPathComponent:@"Series60v3.2.sis"]]) {
+                version = epocver::epoc93fp2;
+            }
+        }
+
+        const std::string firmLowerUtf8 = eka2l1::common::lowercase_string(firmCode);
+        NSString *firmLower = [NSString stringWithUTF8String:firmLowerUtf8.c_str()];
         NSString *firmZDst = [zDst stringByAppendingPathComponent:firmLower];
         unlink(firmZDst.UTF8String);
         symlink(firmZSrc.UTF8String, firmZDst.UTF8String);
@@ -459,10 +515,8 @@ namespace eka2l1::ios {
             symlink(src.UTF8String, dst.UTF8String);
         }
 
-        // devices.yml uses uppercase firmcode (matches what
-        // determine_rpkg_product_info would parse from sw.txt).
-        [yaml appendFormat:@"%@:\n  platver: epoc94\n  manufacturer: Nokia\n  firmcode: %@\n  model: %@\n  machine-uid: 0\n",
-            firmUpper, firmUpper, firmUpper];
+        [yaml appendFormat:@"%s:\n  platver: %s\n  manufacturer: %s\n  firmcode: %s\n  model: %s\n  machine-uid: 0\n",
+            firmCode.c_str(), epocver_to_string(version), manufacturer.c_str(), firmCode.c_str(), model.c_str()];
     }
     if (yaml.length == 0) {
         return NO;
@@ -482,9 +536,6 @@ namespace eka2l1::ios {
     sys = _state->symsys.get();
 
     sys->startup();
-    if (_state->graphics_driver) {
-        sys->set_graphics_driver(_state->graphics_driver.get());
-    }
     if (sys->get_device_manager()->total() == 0) {
         return NO;
     }
@@ -497,7 +548,13 @@ namespace eka2l1::ios {
     sys->mount(drive_z, drive_media::rom, eka2l1::add_path(storage, "/drives/z/"),
         io_attrib_internal | io_attrib_write_protected);
 
+    if (_state->graphics_driver) {
+        sys->set_graphics_driver(_state->graphics_driver.get());
+    }
     sys->initialize_user_parties();
+    if (_state->graphics_driver) {
+        sys->set_graphics_driver(_state->graphics_driver.get());
+    }
     eka2l1::ios::install_required_rom_patches(_state.get());
     sys->get_packages()->load_registries();
     sys->get_packages()->migrate_legacy_registries();
@@ -508,11 +565,7 @@ namespace eka2l1::ios {
             eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
 
     _state->mounted = true;
-    if (_state->winserv && _state->graphics_driver) {
-        for (eka2l1::epoc::screen *scr = _state->winserv->get_screens(); scr; scr = scr->next) {
-            scr->set_screen_mode(_state->winserv, _state->graphics_driver.get(), scr->crr_mode);
-        }
-    }
+    eka2l1::ios::bind_graphics_driver(_state.get());
 
     // Register a per-screen redraw callback so each frame produced by the
     // Symbian window server triggers a swap on the EAGL context. The
@@ -572,6 +625,12 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return NO;
     }
+    if (!eka2l1::ios::wait_for_graphics_driver(_state.get(), std::chrono::seconds(5))) {
+        LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver was not ready before app launch");
+        return NO;
+    }
+    eka2l1::ios::bind_graphics_driver(_state.get());
+
     auto *kern = _state->symsys->get_kernel_system();
     auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
         kern->get_by_name<eka2l1::service::server>(

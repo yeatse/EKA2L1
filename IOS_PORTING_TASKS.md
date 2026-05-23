@@ -350,7 +350,7 @@
 - SIS 安装验证：使用 **`The Final Battle.sis`** 替换原计划的 `snakes-n95_n6trsohu.sis`（N95 ROM 上 Snake 启动到主菜单后被自身的 codeseg 兼容性 bug 卡住，与 iOS 端无关）。把 The Final Battle.sis 拷进 `Documents/sis/`，UI 上点 "Install SIS" → applist 出现新条目 → launch → 截屏归档。
 - 把这次手工验收的截屏与日志归档到 `docs/screenshots/ios-stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
 - 不要求阶段 3 端到端无人值守自动化，`scripts/build_ios.sh smoke` 仍只验 CPU smoke 不退化。
-- **当前状态（2026-05-23）**：iPhone 16 Pro 模拟器上 mount N95 → applist 63 app 完整列出 ✅；iOS 启动时已自动复制 shader + `patch/*/group` 文件到 sandbox，并在 `initialize_user_parties()` 后按 Android 同款逻辑把 `goommonitor_general.dll` / `avkonfep_general.dll` 覆盖到 ROM raw path。点 Install SIS → The Final Battle payload 已写到 drive_e，applist 重扫出现 `Final Battle` ✅（3.2.3 关闭）。点 Calculator / Notes → 不再有 UIKit assertion，EAGL renderbuffer 正常 attach；但内建 GUI app 仍在创建窗口前返回到 `PC=0 / LR=0x803A9F89`，渲染面无真帧（独立 blocker 3.2.2，见下）。3.2 验收剩余 blocker 是 Calculator 真帧 + tap 交互。
+- **当前状态（2026-05-23）**：iPhone 16 Pro 模拟器上 mount N95 → applist 63 app 完整列出 ✅；iOS 启动时已自动复制 shader + `patch/*/group` 文件到 sandbox，并在 `initialize_user_parties()` 后按 Android 同款逻辑把 `goommonitor_general.dll` / `avkonfep_general.dll` 覆盖到 ROM raw path。点 Install SIS → The Final Battle payload 已写到 drive_e，applist 重扫出现 `Final Battle` ✅（3.2.3 关闭）。点 Calculator 后 guest 进程已不再 host crash / 不再回 SpringBoard，持续运行 ≥ 10s ✅；当前渲染面稳定停在 EAGL 洋红清屏/未提交真内容，日志里 Calculator 线程持续调度但屏幕仍无真实 UI。3.2 / stage-2 验收剩余 blocker 收窄为：把 Calculator 的 `screen_texture` 内容正确 present 出来，再完成 `1 + 1 =` tap 交互。
 - 当前已可归档：mount + applist 截屏（3.2.A），用于 stage 2 部分验收证据。
 
 #### 3.2.1 app launch 后 guest "Main" 线程 PC=0 死循环 ✅（host-page 对齐后自动解决）
@@ -372,7 +372,7 @@
 - 临时诊断日志已在后续清理中移除；3.2.2 的剩余问题单独记录在下一节。
 - 验收（恢复跨系统对比之后再跑）：xcodebuildmcp 自动化点 Calculator → EmulatorView 渲染面在 10s 内出现非黑像素 → 单指 tap `1`、`+`、`1`、`=` → 截屏目视 `2`。归档 `docs/screenshots/ios-stage3/2-acceptance/`，stage 2 翻 ✅。
 
-#### 3.2.2 iOS GUI app startup 仍返回到 PC=0（与 3.2.1 host-page 修复独立） ⏸
+#### 3.2.2 iOS Calculator 已启动但 EAGL 仍无真帧 ⏸
 - 现象：host-page 对齐修复（`779061f27`）+ EAGL 主线程修复（`b9e92897b`）+ iOS sim Dynarmic backend + ROM patch 复制/覆盖落地后，iOS 模拟器上点 Calculator：
   - **没有** `[commit-fail]` —— mprotect 全部成功（3.2.1 unblocked）。
   - **没有** UIKit assertion —— renderbuffer 正确 attach（3.2 render 路径 unblocked）。
@@ -389,6 +389,7 @@
   3. 若 macOS Calculator 正常，再继续收窄 iOS frontend 初始化差异（audio/sensor/null driver、AppArc/window-server startup 时序、launch command line）。
 - 验收：选定方案 → iOS sim 上 Calculator 启动后 EmulatorView 出非黑像素 → 单指 tap `1 + 1 =` 可见结果 → 截屏归档 `docs/screenshots/ios-stage3/3.2.2-render/`。
 - **当前结论**：3.2.2 是 stage 3 范围内一个独立的真 bug，也是 3.2 / stage-2 验收最后的功能 blocker。
+- **最新进展（2026-05-23）**：回退 iOS 默认 CPU backend 到 dyncom（simulator 仍保留 Dynarmic 可构建，用于后续定点调试；Dynarmic 当前在 Calculator A32 memory emit/regalloc 路径 host crash），并连续修掉三类 iOS frontend 缺省 driver 崩溃：①Window Server redraw 在 graphics driver 尚未发布时空指针；②KeySound server 在无 audio driver 时解引用空指针；③`bitmap_cache::add_or_get → drivers::create_bitmap` 在空 driver 下进入 graphics IPC。随后调整 mount/launch 时序：mount 不再硬等 EAGL layer，进入 EmulatorView 后等待 driver 并注入 `symsys/winserv`。xcodebuildmcp 复测：mount N95 → Apps(63) → Calculator，进程持续运行且无新 `.ips`，日志确认 `Calculator[10005902]` 线程持续调度；剩余问题是 EAGL 画面为整屏洋红，虽然 FBO incomplete 已通过 iOS color-only bitmap FBO / 32bpp RGBA render-target 收敛，但最终 screen_texture/present 仍未刷出 Calculator UI。
 
 #### 3.2.3 SIS 安装在 iOS 上静默写失败 ✅
 - 现象：iOS 模拟器上点 The Final Battle.sis → 日志按预期打印 `[Loader]: File detected:` 列出所有 SIS 内文件 → `[Packages]: Package Final Battle registering with UID: 0xa0003c62` → `[Packages]: Installation done!` → `[Service.Applist]: Loading app registries` / `Done loading!`（增量 = 0）。但实际检查 sandbox：
@@ -519,5 +520,6 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-23 | 新增 macOS arm64 原生构建管线（`9103c2bca`）：homebrew ffmpeg@5 替换 x86_64-only 自带静态库（仅在 macOS arm64 走，未触碰 ffmpeg 子模块）；放开 `CMAKE_OSX_DEPLOYMENT_TARGET` 让 Qt6 ≥ 10.15；新增 `cmake/MacOSFinalizeBundle.cmake` post-build：修复 SDL2.framework symlink 布局、跑 macdeployqt、ad-hoc 重签，避免 Apple Silicon 拒绝加载未签 / 签名失效的 .app。 |
 | 2026-05-23 | 阶段 3.2 推进：iOS sim 上 mount N95 → applist 62 app 正常 ✅。修 `gl_context_eagl::attach_layer` 把 CAEAGLLayer 的 opaque / drawableProperties / renderbufferStorage:fromDrawable: 三处 UIKit 调用全 dispatch_sync 到主线程（提交 `b9e92897b`），跑 Calculator 不再有 UIKit assertion，EAGL renderbuffer 正确分配。同时发现两个独立的剩余 blocker：①3.2.2 dyncom 在 iOS 上跑同一个 N95 Calculator 仍出 `PC=0 / LR=0x803A9F89` 的 BL→mid-function POP 现场；在 macOS arm64 桌面 build 上把 cpu 强制改成 dyncom 也完全复现，说明这是 dyncom 自己的 Thumb 解码 bug（macOS arm64 默认走 dynarmic 所以掩盖了）。②3.2.3 SIS 安装 The Final Battle.sis 时 sisregistry 元数据写成功但 payload 文件没落到 drive_e，applist 重扫 0 增量。两个 blocker 分别建为 3.2.2 / 3.2.3 子任务，3.2 验收暂停在"渲染真帧 + SIS 安装"前，mount + applist 部分可以归档为 3.2.A。 |
 | 2026-05-23 | 阶段 3.2 继续：iOS simulator 放开并默认使用 Dynarmic，device 仍保留 dyncom；iOS 启动时复制 shader/patch 资源并按 Android 同款逻辑覆盖 `goommonitor.dll` / `avkonfep.dll`；补齐 `process_open_by_id` 特殊句柄；修正 scripting 关闭时 stale `ENABLE_SCRIPTING=1` 的 CMake 污染。xcodebuildmcp `build-and-run` 通过，The Final Battle.sis 安装闭环已通；Calculator / Notes 仍在 `_E32Startup` 早期返回到 `PC=0 / LR=0x803A9F89`，3.2 / stage-2 验收剩余 blocker 收窄为 3.2.2。 |
+| 2026-05-23 | 阶段 3.2 继续：N95 `devices.yml` 由 ROM/Z 盘 metadata 生成，并对 `Series60v3.1.sis` 做 `epoc93fp1` 校正；iOS mount 不再等待 EAGL layer，Calculator 进入 EmulatorView 后等待 graphics driver 并绑定到 `symsys/winserv`。修复 iOS 无 audio/driver 下的 KeySound、Window redraw、graphics IPC 空指针崩溃；iOS simulator 默认回 dyncom，Dynarmic 保留构建但暂不默认。xcodebuildmcp 验证 mount N95 → Apps(63) → Calculator：无新 crash，Calculator 线程持续调度，剩余 blocker 从 PC=0/host crash 收敛为 EAGL 洋红画面，尚未刷出真实 Calculator UI，stage-2 acceptance 仍未关闭。 |
 | 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |

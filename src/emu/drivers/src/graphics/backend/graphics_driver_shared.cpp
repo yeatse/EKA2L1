@@ -72,10 +72,15 @@ namespace eka2l1::drivers {
             break;
 
         case 32:
+#if EKA2L1_PLATFORM(IOS)
+            format = texture_format::rgba;
+            internal_format = texture_format::rgba;
+#else
             format = texture_format::bgra;
 
             if (stricted)
                 internal_format = texture_format::bgra;
+#endif
 
             break;
 
@@ -106,12 +111,19 @@ namespace eka2l1::drivers {
     }
 
     static texture_ptr instantiate_bitmap_depth_stencil_texture(graphics_driver *driver, const eka2l1::vec2 &size) {
+#if EKA2L1_PLATFORM(IOS)
+        // iOS/GLES simulator rejects the depth24-stencil8 texture attachment
+        // used for generic bitmap FBOs (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT).
+        // Window-server bitmaps are 2D color targets, so keep them color-only.
+        return nullptr;
+#else
         auto ds_tex = make_texture(driver);
         ds_tex->create(driver, 2, 0, eka2l1::vec3(size.x, size.y, 0),
             texture_format::depth24_stencil8, texture_format::depth_stencil, texture_data_type::uint_24_8,
             nullptr, 0);
 
         return ds_tex;
+#endif
     }
 
     bitmap::bitmap(graphics_driver *driver, const eka2l1::vec2 &size, const int initial_bpp)

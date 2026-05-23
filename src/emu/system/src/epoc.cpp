@@ -617,12 +617,10 @@ namespace eka2l1 {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
 #elif EKA2L1_PLATFORM(IOS)
-#if EKA2L1_IOS_SIMULATOR_DYNARMIC
-        cpu_type = arm_emulator_type::dynarmic;
-#else
-        // iOS device sandbox requires MAP_JIT + entitlement to host dynarmic.
+        // Keep the iOS frontend on dyncom for now. Simulator builds still
+        // compile dynarmic for targeted debugging, but Calculator currently
+        // exposes a simulator-only Dynarmic A32 regalloc crash.
         cpu_type = arm_emulator_type::dyncom;
-#endif
 #else
         cpu_type = /*arm::string_to_arm_emulator_type(conf_->cpu_backend);*/ arm_emulator_type::dynarmic;
 #endif
