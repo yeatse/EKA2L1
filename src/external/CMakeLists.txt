@@ -97,10 +97,10 @@ add_subdirectory(glm)
 # Dynarmic: disable tests
 option(DYNARMIC_TESTS "Enable dynarmic tests" OFF)
 
-if (NOT ARCHITECTURE_ARM32 AND NOT EKA2L1_IOS)
-    # iOS sandbox prohibits standard JIT mmap. Stage 1 of the iOS port will
-    # introduce the MAP_JIT path; until then dynarmic is omitted from the
-    # build to avoid pulling in code that cannot run.
+if (NOT ARCHITECTURE_ARM32 AND (NOT EKA2L1_IOS OR EKA2L1_IOS_SIMULATOR_DYNARMIC))
+    # iOS device builds still omit dynarmic until the MAP_JIT entitlement path
+    # lands. Simulator builds run as host macOS processes and can use dynarmic
+    # for stage-2 acceptance coverage.
     add_subdirectory(dynarmic)
 endif()
 

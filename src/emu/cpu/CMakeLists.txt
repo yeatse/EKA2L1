@@ -93,11 +93,10 @@ add_library(cpu
 if (ARCHITECTURE_ARM32)
     target_sources(cpu PRIVATE ${SOURCE_12L1R})
     target_link_libraries(cpu PRIVATE Catch2)
-elseif (EKA2L1_IOS)
-    # Stage-0 iOS port runs the dyncom interpreter only. The dynarmic
-    # backend needs the MAP_JIT mmap path plus pthread_jit_write_protect_np
-    # toggling and the com.apple.security.cs.allow-jit entitlement at
-    # runtime; that is wired up in stage 1.
+elseif (EKA2L1_IOS AND NOT EKA2L1_IOS_SIMULATOR_DYNARMIC)
+    # iOS device builds run the dyncom interpreter only. The dynarmic backend
+    # needs the MAP_JIT mmap path plus pthread_jit_write_protect_np toggling
+    # and the com.apple.security.cs.allow-jit entitlement at runtime.
     message(STATUS "iOS build: linking cpu without dynarmic (dyncom only)")
 else()
     target_sources(cpu PRIVATE

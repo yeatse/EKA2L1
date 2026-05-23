@@ -617,9 +617,12 @@ namespace eka2l1 {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
 #elif EKA2L1_PLATFORM(IOS)
-        // iOS sandbox requires MAP_JIT + entitlement to host dynarmic; until
-        // that path lands in stage 1, fall back to the dyncom interpreter.
+#if EKA2L1_IOS_SIMULATOR_DYNARMIC
+        cpu_type = arm_emulator_type::dynarmic;
+#else
+        // iOS device sandbox requires MAP_JIT + entitlement to host dynarmic.
         cpu_type = arm_emulator_type::dyncom;
+#endif
 #else
         cpu_type = /*arm::string_to_arm_emulator_type(conf_->cpu_backend);*/ arm_emulator_type::dynarmic;
 #endif

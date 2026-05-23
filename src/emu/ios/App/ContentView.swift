@@ -88,7 +88,7 @@ struct AppListView: View {
                 }
             }
             Section("Apps (\(apps.count))") {
-                ForEach(apps, id: \.uid) { app in
+                ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
                         VStack(alignment: .leading) {
                             Text(app.name)

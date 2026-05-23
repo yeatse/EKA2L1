@@ -23,9 +23,9 @@
 
 #include <cpu/dyncom/arm_dyncom.h>
 
-// Stage-0 iOS port has no JIT backend wired up; only dyncom is available.
-// Stage 4 will gate dynarmic on a runtime MAP_JIT-entitlement probe.
-#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && !EKA2L1_PLATFORM(IOS))
+// iOS device builds have no JIT backend wired up yet; simulator builds run as
+// host macOS processes and can use dynarmic for acceptance coverage.
+#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && (!EKA2L1_PLATFORM(IOS) || EKA2L1_IOS_SIMULATOR_DYNARMIC))
 
 #if EKA2L1_ARCH(ARM)
 #include <cpu/12l1r/arm_12l1r.h>
@@ -38,8 +38,11 @@
 namespace eka2l1::arm {
     bool host_can_jit() {
 #if EKA2L1_PLATFORM(IOS)
-        // Stage 1 placeholder: no MAP_JIT probe yet, so no JIT available.
+#if EKA2L1_IOS_SIMULATOR_DYNARMIC
+        return true;
+#else
         return false;
+#endif
 #elif EKA2L1_ARCH(ARM)
         // 32-bit ARM hosts use 12l1r rather than dynarmic, treat as JIT-capable.
         return true;
@@ -54,10 +57,10 @@ namespace eka2l1::arm {
         const char *reason = nullptr;
         arm_emulator_type resolved = requested;
 
-#if EKA2L1_PLATFORM(IOS)
+#if EKA2L1_PLATFORM(IOS) && !EKA2L1_IOS_SIMULATOR_DYNARMIC
         if (requested == arm_emulator_type::dynarmic || requested == arm_emulator_type::r12l1
             || requested == arm_emulator_type::unicorn) {
-            reason = "no-jit-on-ios (stage-1 placeholder, no MAP_JIT probe yet)";
+            reason = "no-jit-on-ios-device (no MAP_JIT entitlement path yet)";
             resolved = arm_emulator_type::dyncom;
         }
 #else

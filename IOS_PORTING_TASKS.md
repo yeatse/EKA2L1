@@ -13,7 +13,7 @@
 |------|------|------|
 | 0 | 工程骨架可在 iOS arm64 上构建出空壳 | ✅（`build/ios-device/.../EKA2L1.app` 已成功产出，arm64 Mach-O） |
 | 1 | dyncom 解释器在 iOS 上跑通一段裸 ARM 代码片段，结果可在 SwiftUI 展示 | ✅（booted iPhone 16 Pro 模拟器上 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`） |
-| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡（3.1 + 3.2.1 解锁，验收转交阶段 3.2 把 ZipManager + The Final Battle.sis 跑完） |
+| 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | 🟡（3.1 + 3.2.1 解锁，验收转交阶段 3.2 把 Calculator + The Final Battle.sis 跑完） |
 | 3 | 解锁 mount 链路 + 完成阶段 2 验收 + 音频 / 振动 / 文件导入 / 设置 / 图标完整体验 | 🟡 |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
 
@@ -346,11 +346,11 @@
 - 验收：xcodebuildmcp 自动化或手工，从启动 → 主屏 → 选 N95 → Mount → `set_device(0)` → reset → ROM 映射 → ROM chunk → kernel-data chunk → dispatcher 初始化 全程不再 SIGBUS；`symsys->loop()` 真正开始驱动 winserv 心跳。
 
 #### 3.2 阶段 2 验收最后一公里 🟡
-- 3.1 + 3.2.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 **ZipManager**（替换原计划的 Calculator —— N95 ROM 里 Calculator 启动后会卡在 EikSrvUi 的初始化，跟 host arch 无关，先用 ZipManager 走"应用窗口能上屏"这一步）→ 等渲染面出非清屏色 → 截屏归档。
+- 3.1 + 3.2.1 通畅后，xcodebuildmcp 自动化跑：booted iPhone 16 Pro 模拟器上启动 → 进 ROM 列表 → 选 N95 → Mount → 等 applist 渲染 → 校验 entry 数 ≥ 5、能看到 Calculator / Notes / Calendar / Camera / Contacts 这类典型名字 → 点 **Calculator** → 等渲染面出非清屏色 → 单指 tap `1 + 1 =` → 截屏归档。
 - SIS 安装验证：使用 **`The Final Battle.sis`** 替换原计划的 `snakes-n95_n6trsohu.sis`（N95 ROM 上 Snake 启动到主菜单后被自身的 codeseg 兼容性 bug 卡住，与 iOS 端无关）。把 The Final Battle.sis 拷进 `Documents/sis/`，UI 上点 "Install SIS" → applist 出现新条目 → launch → 截屏归档。
 - 把这次手工验收的截屏与日志归档到 `docs/screenshots/ios-stage3/2-acceptance/`（沿用 stage-2 的 archive 结构），并把 stage 2 状态从 🟡 翻 ✅；阶段总览表 + 阶段 2 验收复选框相应更新。
 - 不要求阶段 3 端到端无人值守自动化，`scripts/build_ios.sh smoke` 仍只验 CPU smoke 不退化。
-- **当前状态（2026-05-23）**：3.1 + 3.2.1 mprotect 修复 + 3.2 EAGL layer 主线程修复（`b9e92897b`）落地后，iPhone 16 Pro 模拟器上 mount N95 → applist 62 app 完整列出 ✅；点 Calculator → 不再有 UIKit assertion，EAGL renderbuffer 正常 attach；但 guest CPU 仍走 PC=0 路径 → 渲染面停在黑色（独立 blocker 3.2.2，见下）。点 Install SIS → "Installation done!" 但 SIS payload 文件没真的写到 drive_e，applist 重扫 0 增量（独立 blocker 3.2.3，见下）。3.2 验收"渲染真帧 + SIS 安装"在 3.2.2 + 3.2.3 解决前都无法关闭。
+- **当前状态（2026-05-23）**：iPhone 16 Pro 模拟器上 mount N95 → applist 63 app 完整列出 ✅；iOS 启动时已自动复制 shader + `patch/*/group` 文件到 sandbox，并在 `initialize_user_parties()` 后按 Android 同款逻辑把 `goommonitor_general.dll` / `avkonfep_general.dll` 覆盖到 ROM raw path。点 Install SIS → The Final Battle payload 已写到 drive_e，applist 重扫出现 `Final Battle` ✅（3.2.3 关闭）。点 Calculator / Notes → 不再有 UIKit assertion，EAGL renderbuffer 正常 attach；但内建 GUI app 仍在创建窗口前返回到 `PC=0 / LR=0x803A9F89`，渲染面无真帧（独立 blocker 3.2.2，见下）。3.2 验收剩余 blocker 是 Calculator 真帧 + tap 交互。
 - 当前已可归档：mount + applist 截屏（3.2.A），用于 stage 2 部分验收证据。
 
 #### 3.2.1 app launch 后 guest "Main" 线程 PC=0 死循环 ✅（host-page 对齐后自动解决）
@@ -368,26 +368,29 @@
   3. iOS sandbox 下某条 dispatch / SVC 处理误返回 0，再被 caller 当成函数指针调用。
 - **结论（2026-05-23 跨系统对比落地）**：在 Apple Silicon Mac 上做了原生 arm64 桌面 Qt 编译，发现 macOS arm64 也复现了同样的现象（ZipManager 启动后立即 access violation writing 0x801000，进程 KERN-EXEC=3 被杀）。在 `common::commit` 里加 mprotect 失败诊断后，捕获到 `[commit-fail] ptr=0x14fabd000 size=0x1000 errno=22 (Invalid argument)` —— **真正的 root cause 是 Apple Silicon 用 16 KB host page，但 EKA2L1 memory model 用 4 KB 模拟页粒度调 mprotect，`len=0x1000` 不是 host page 整数倍被 macOS / iOS kernel 静默 EINVAL 拒绝**，对应页留在 PROT_NONE，下一次 guest 写就 SIGBUS / KERN_PROTECTION_FAILURE。3.2.1 的 PC=0 现场也是这条因果链的一种形态：caller `PUSH {r4..lr}` 把栈向下推 16 字节，所推页落在被 mprotect 拒绝的 host page 里，POP 时弹出来的是 PROT_NONE 触发的总线错误，dyncom 把后续的零字节继续往下解码就形成"PC=0 沿 page 扫描"的样子。
 - **修法落地**：在 `src/emu/common/src/virtualmem.cpp` 的 `commit / change_protection` 里把 ptr 向下、size 向上对齐到 `sysconf(_SC_PAGESIZE)`；`decommit` 反过来只 PROT_NONE 完全覆盖的 host 页。改动只对 iOS / macOS arm64 生效，桌面 x86 / Linux / Android / Windows 行为不变。同步把 macOS arm64 也纳入 `translate_protection` 的 PROT_EXEC strip（同样 W^X 硬件）。提交 `779061f27 fix(ios+macos): align mprotect ranges to host page size`。
-- macOS arm64 上验证 ZipManager 已经能正常进入；iOS 端等 3.2 走完 ZipManager + The Final Battle.sis 的双验收。
-- 当前 iOS 端已落地的诊断日志（保留为 `// TODO(ios)` gated trace）：
-  - `src/emu/kernel/src/process.cpp::create_prim_thread`：进程名 + code_addr + ep_off + stack。
-  - `src/emu/kernel/src/scheduler.cpp::switch_context`：thread name + 完整寄存器快照（pc/lr/sp/r4/cpsr/process）。
-  - `src/emu/kernel/src/kernel.cpp::cpu_exception_handler`：access violation 增加 PC / LR / process 字段，并通过 32 次 rate-limit 防止日志爆炸（之前一次 launch 失败会刷 23k 行）。
+- macOS arm64 上验证 GUI app 已经能正常进入；iOS 端等 3.2 走完 Calculator + The Final Battle.sis 的双验收。
+- 临时诊断日志已在后续清理中移除；3.2.2 的剩余问题单独记录在下一节。
 - 验收（恢复跨系统对比之后再跑）：xcodebuildmcp 自动化点 Calculator → EmulatorView 渲染面在 10s 内出现非黑像素 → 单指 tap `1`、`+`、`1`、`=` → 截屏目视 `2`。归档 `docs/screenshots/ios-stage3/2-acceptance/`，stage 2 翻 ✅。
 
-#### 3.2.2 iOS dyncom PC=0 仍在（与 3.2.1 host-page 修复独立） ⏸
-- 现象：host-page 对齐修复（`779061f27`）+ EAGL 主线程修复（`b9e92897b`）落地后，iOS 模拟器上点 Calculator：
+#### 3.2.2 iOS GUI app startup 仍返回到 PC=0（与 3.2.1 host-page 修复独立） ⏸
+- 现象：host-page 对齐修复（`779061f27`）+ EAGL 主线程修复（`b9e92897b`）+ iOS sim Dynarmic backend + ROM patch 复制/覆盖落地后，iOS 模拟器上点 Calculator：
   - **没有** `[commit-fail]` —— mprotect 全部成功（3.2.1 unblocked）。
   - **没有** UIKit assertion —— renderbuffer 正确 attach（3.2 render 路径 unblocked）。
-  - **仍然** 出现 `Access violation reading address 0x0 in thread Main (pc=0x00000000 lr=0x803A9F89 process=Calcsoft[10005902]0001)` 沿 page 扫描 0x0 → 0xFFC，dyncom block translator 把零字节解成 NON_BRANCH `ANDEQ r0,r0,r0`。
-- 关键对照：在 Apple Silicon Mac 上的原生 arm64 桌面 Qt build（默认走 **dynarmic**，因为 `src/external/CMakeLists.txt` 在 iOS 才 gate 掉 dynarmic）跑同一个 N95 ROM，ZipManager 启动正常。把 `src/emu/system/src/epoc.cpp:620` 临时改成 `arm_emulator_type::dyncom`，macOS arm64 也立刻复现完全相同的 `LR=0x803A9F89` PC=0 现场。**说明这是 dyncom 自己的 bug**：某条 Thumb 指令（很可能是 `BL/BLX` 偏移计算或 PC-relative load）在 N95 ROM 的某条入口 stub 上解码错，把 BL target 算到了 ROM 中段的 `POP {r4, pc}` 上，弹出 caller `PUSH {r4,r5,r6,lr}` 留下的 `r5=0` 作为返回地址。dynarmic 实现这条指令正确，所以 macOS 上跑得过。
+  - **仍然** 出现 `Access violation reading address 0x0 in thread Main (pc=0x00000000 lr=0x803A9F89 process=Calcsoft[10005902]0001)`；Notes 也复现同一 `LR=0x803A9F89`，因此不是 Calculator 单点问题。
+- 新增结论：iOS sim 已启用 Dynarmic，`launchAppWithUID` 日志确认 backend=Dynarmic，但 Calculator / Notes 仍在 `_E32Startup` 早期清理路径返回到初始 stack metadata。SVC trace 显示退出前只有 `dll_tls(0x4E)` → `handle_close(0x6A)` → `library_detached(0xA2)` → `process_open_by_id(0x72)`；补齐 `process_open_by_id(0xFFFF8001 /* crr_thread */)` 后 `r0` 从 `KErrNotFound` 变成有效 handle，但 app 仍继续返回并 `POP {r4,pc}` 到 metadata 里的 `1`，最终 PC=0。说明剩余 blocker 更像 app startup / cleanup 语义缺口，而不是 EAGL、ROM patch 或 dyncom 独立解码问题。
+- 当前保留修复：
+  1. iOS simulator 允许构建并默认使用 Dynarmic；device 仍保留 dyncom，等 stage 4 entitlement / MAP_JIT。
+  2. iOS 启动时复制 shader + patch 文件，并在 mount 后应用 Android 同款 ROM DLL 覆盖。
+  3. `process_open_by_id` 支持 `special_handle_type::crr_process / crr_thread`，避免把特殊句柄误当普通 process id。
+  4. CMake 在 scripting 关闭时显式写 `ENABLE_SCRIPTING=0`，避免源码树里的 `configure.h` 被 macOS 配置污染后让 iOS target include 缺失。
 - 下一步选项（按代价从低到高）：
-  1. 在 iOS sim 上启用 dynarmic 的 arm64 backend。iOS sim 是宿主 macOS 进程，MAP_JIT 在 Apple Silicon 上**没有 hardened runtime 时本来就允许**，所以不需要 `com.apple.security.cs.allow-jit` 也能工作；修改 `src/external/CMakeLists.txt` 让 `EKA2L1_IOS AND PLATFORM_HAS_JIT_BIT` 仍然 add_subdirectory(dynarmic)，sim build 应该立刻跑通 Calculator。device build 留 dyncom（stage 4 才上 entitlement）。这条路是 stage 4 的预演而不是污染，但需要小心 `arm_factory.cpp` 的 dynarmic case 在 iOS device build 仍要被 gate 掉。
-  2. 直接修 dyncom 的 Thumb 解码 bug：给 dyncom 加每条 BL/BLX 的 `PC / target / LR` trace，复跑 Calculator 锁到第一个 target 落在 ROM 函数中段的 BL，反汇编出错的 Thumb 编码，对照 ARM ARM 表查 dyncom 的 decode 路径。
-- 验收：选定方案 → iOS sim 上 Calculator/ZipManager 启动后 EmulatorView 出非黑像素 → 截屏归档 `docs/screenshots/ios-stage3/3.2.2-render/`。
-- **当前结论**：3.2.2 是 stage 3 范围内一个独立的真 bug。本轮先把 mprotect + EAGL 两条线落定，3.2.2 留作下一轮。
+  1. 对照 macOS arm64 Dynarmic 跑 **Calculator**（不是 ZipManager），确认同一 ROM 下内建 GUI app 是否也走 `_E32Startup` early cleanup。
+  2. 给 `library_detached / process_open_by_id / thread/process startup metadata` 增加最小单元复现，确认 EKA2 process startup 初始 stack metadata 与 S60v3 euser 期望是否匹配。
+  3. 若 macOS Calculator 正常，再继续收窄 iOS frontend 初始化差异（audio/sensor/null driver、AppArc/window-server startup 时序、launch command line）。
+- 验收：选定方案 → iOS sim 上 Calculator 启动后 EmulatorView 出非黑像素 → 单指 tap `1 + 1 =` 可见结果 → 截屏归档 `docs/screenshots/ios-stage3/3.2.2-render/`。
+- **当前结论**：3.2.2 是 stage 3 范围内一个独立的真 bug，也是 3.2 / stage-2 验收最后的功能 blocker。
 
-#### 3.2.3 SIS 安装在 iOS 上静默写失败 ⏸
+#### 3.2.3 SIS 安装在 iOS 上静默写失败 ✅
 - 现象：iOS 模拟器上点 The Final Battle.sis → 日志按预期打印 `[Loader]: File detected:` 列出所有 SIS 内文件 → `[Packages]: Package Final Battle registering with UID: 0xa0003c62` → `[Packages]: Installation done!` → `[Service.Applist]: Loading app registries` / `Done loading!`（增量 = 0）。但实际检查 sandbox：
   - `Documents/data/drives/c/sys/install/sisregistry/a0003c62/{00000000.reg,00000000_0000.ctl}` **已写入** —— 说明 sisregistry 路径正常。
   - `Documents/data/drives/e/` **完全空** —— SIS payload（`FBattle.RSC` / `FBattle_reg.RSC` / `FBattle.exe` / 一堆 `.wav` `.mod`）一个文件都没落地。
@@ -396,8 +399,9 @@
   1. `io->open(...., WRITE_MODE)` 没有自动 `mkdir -p` 父目录，iOS 上 `data/drives/e/Resource/Apps/` 不存在直接 open 失败；
   2. sis_script_interpreter 把 `!:` 替换成 `e:` 后，路径生成大小写跟 sandbox 实际期望对不上（3.2 阶段已有 vfs case-insensitive read fallback，但 write 端没改）；
   3. install_drive=drive_e 在 iOS 上没真挂载成可写（看 `src/emu/ios/Bridge/IosEmulator.mm::startWithDocumentsPath:` 的 `sys->mount(drive_e, ..., io_attrib_removeable)` —— removeable + iOS sandbox 组合下 vfs 可能拒绝写）。
-- 下一步：给 `physical_file_system::open` / `make_directories_for` iOS 分支加诊断日志，记录 errno + 路径，跑一次 The Final Battle.sis 抓到第一个 failed write，再决定改 vfs 还是改 io_system 还是改 install 路径。
-- 验收：iOS sim 上跑 The Final Battle.sis 安装 → `drives/e/Resource/Apps/FBattle.RSC` 真的存在 → applist 重扫出 `Final Battle` 条目 → 截屏归档 `docs/screenshots/ios-stage3/3.2.3-sis-install/`。
+- 根因：`sis_script_interpreter` 在 case-sensitive 平台上先用 VFS 把 `e:\...` 解析成 host 绝对路径，然后把整条 **host path** `lowercase_string`。iOS simulator app container 路径包含 `/Users/.../Library/...` 和 UUID，lowercase 后变成不存在的 `/users/...`，`wo_std_file_stream` 打不开目标；安装器没有把这个 write 失败传播出去，于是 registry 成功、payload 为空。
+- 修法：只 lower-case Symbian 虚拟路径（`e:\resource\apps\...`）再交给 `io->get_raw_path` 解析，绝不 lower-case host 绝对路径；同时 `get_raw_path` 失败时返回 interpret false，避免以后继续出现"安装成功但文件为空"的假阳性。
+- 验收：iOS sim 上跑 The Final Battle.sis 安装 → `drives/e/resource/apps/fbattle.rsc` / `drives/e/sys/bin/fbattle.exe` / `drives/e/private/10003a3f/import/apps/fbattle_reg.rsc` 均存在 → applist 重扫出 `Final Battle, uid=0xA0003C62`。
 
 #### 3.3 `common::virtualmem` 与 mem 模块的 iOS 落实
 - 3.1 在 mem 路径上打的 iOS 守护代码沉淀到 `common::virtualmem` 的稳定 API 上：明确 "非可执行内存" 与 "可执行内存" 分双 API，前者在阶段 3 完成，后者（`map_executable` / `jit_write_protect`）骨架留给阶段 4 填实现。
@@ -510,8 +514,10 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 | 2026-05-22 | 阶段 3.2 部分推进：在 `physical_file_system::get_real_physical_path` iOS 分支末尾加 case-insensitive 路径解析，修掉了 ROM 内混合大小写文件（首发证据是 `Wsini.ini`）在 iOS sandbox 下读不到导致的 `Loading wsini file broke with code -1`。剩余阻塞：点击 GUI app 后 guest "Main" 线程进 PC=0 access-violation 死循环（详见 3.2.1）—— stage 2 acceptance（render 真帧 + 1+1= + SIS 安装）在 3.2.1 落地前无法关闭，stage 2 状态仍为 🟡。 |
 | 2026-05-22 | 阶段 3.2.1 调查暂停（待跨系统对比）：在 `process::create_prim_thread` / `scheduler::switch_context` / `cpu_exception_handler` 加 iOS 诊断 log + xcodebuildmcp 自动化，定位出 PC=0 直接来源是 caller `PUSH {r4,r5,r6,lr}` 后某个 BL 跳到 ROM 中段（`0x803A9F88` 处的 `POP {r4,pc}`），把栈上 `r5=0` 当作返回地址弹给 PC；dyncom block translator 把后续 0 字节解成 NON_BRANCH `ANDEQ r0,r0,r0`，于是 fault 沿 page 扫描而不是真死循环。继续推进需要桌面 Qt 同 ROM 对比或加 BL 追踪 —— 用户指示本轮在此暂停。 |
 | 2026-05-23 | 阶段 3.2.1 关闭（host-page 对齐 root cause）：在 Apple Silicon Mac 上做原生 arm64 桌面 Qt 编译复现，加 `common::commit` mprotect 诊断后抓到 `[commit-fail] size=0x1000 errno=22 EINVAL`。结论：Apple Silicon host page = 16 KB，EKA2L1 用 4 KB 模拟页粒度调 `mprotect`，长度非 host page 倍数被 kernel 静默拒绝；guest 写未真提权的页就 SIGBUS / KERN_PROTECTION_FAILURE，被 KERN-EXEC=3 杀线程。修法（`779061f27`）：iOS / macOS arm64 下 `common::commit / change_protection` 调 mprotect 前把 ptr 向下、size 向上对齐到 `sysconf(_SC_PAGESIZE)`；`decommit` 反向对齐只 PROT_NONE 完全覆盖的 host 页。同步把 macOS arm64 加入 `translate_protection` PROT_EXEC strip。macOS arm64 上 ZipManager 已可正常进入。 |
-| 2026-05-23 | 阶段 3.2 验收素材调整：N95 ROM 上的 Calculator 启动后会卡在 EikSrvUi 的初始化（host arch 无关），改用 ZipManager 走"应用窗口能上屏"验证；SIS 测试样本从 `snakes-n95_n6trsohu.sis` 换成 `The Final Battle.sis`，原因是 Snake 自身的 codeseg 兼容性问题与移植无关。 |
+| 2026-05-23 | 阶段 3.2 验收素材调整：验收应用恢复为 Calculator，后续不再用较难定位的 ZipManager 做 iOS 验收；SIS 测试样本从 `snakes-n95_n6trsohu.sis` 换成 `The Final Battle.sis`，原因是 Snake 自身的 codeseg 兼容性问题与移植无关。 |
+| 2026-05-23 | 阶段 3.2.3 关闭：SIS payload 未写入 drive_e 的根因是 `sis_script_interpreter` 在 case-sensitive 平台把 VFS 解析后的 host 绝对路径整体 lower-case，iOS simulator container 里的 `/Users/.../Library/...` 被改成不存在的 `/users/.../library/...`。修法是只 lower-case Symbian 虚拟路径再解析 host path，并在 `get_raw_path` 失败时返回 false；复测 The Final Battle.sis 后 `drives/e/resource/apps/fbattle.rsc`、`drives/e/sys/bin/fbattle.exe`、`drives/e/private/10003a3f/import/apps/fbattle_reg.rsc` 均存在，applist 出现 `Final Battle, uid=0xA0003C62`。 |
 | 2026-05-23 | 新增 macOS arm64 原生构建管线（`9103c2bca`）：homebrew ffmpeg@5 替换 x86_64-only 自带静态库（仅在 macOS arm64 走，未触碰 ffmpeg 子模块）；放开 `CMAKE_OSX_DEPLOYMENT_TARGET` 让 Qt6 ≥ 10.15；新增 `cmake/MacOSFinalizeBundle.cmake` post-build：修复 SDL2.framework symlink 布局、跑 macdeployqt、ad-hoc 重签，避免 Apple Silicon 拒绝加载未签 / 签名失效的 .app。 |
 | 2026-05-23 | 阶段 3.2 推进：iOS sim 上 mount N95 → applist 62 app 正常 ✅。修 `gl_context_eagl::attach_layer` 把 CAEAGLLayer 的 opaque / drawableProperties / renderbufferStorage:fromDrawable: 三处 UIKit 调用全 dispatch_sync 到主线程（提交 `b9e92897b`），跑 Calculator 不再有 UIKit assertion，EAGL renderbuffer 正确分配。同时发现两个独立的剩余 blocker：①3.2.2 dyncom 在 iOS 上跑同一个 N95 Calculator 仍出 `PC=0 / LR=0x803A9F89` 的 BL→mid-function POP 现场；在 macOS arm64 桌面 build 上把 cpu 强制改成 dyncom 也完全复现，说明这是 dyncom 自己的 Thumb 解码 bug（macOS arm64 默认走 dynarmic 所以掩盖了）。②3.2.3 SIS 安装 The Final Battle.sis 时 sisregistry 元数据写成功但 payload 文件没落到 drive_e，applist 重扫 0 增量。两个 blocker 分别建为 3.2.2 / 3.2.3 子任务，3.2 验收暂停在"渲染真帧 + SIS 安装"前，mount + applist 部分可以归档为 3.2.A。 |
+| 2026-05-23 | 阶段 3.2 继续：iOS simulator 放开并默认使用 Dynarmic，device 仍保留 dyncom；iOS 启动时复制 shader/patch 资源并按 Android 同款逻辑覆盖 `goommonitor.dll` / `avkonfep.dll`；补齐 `process_open_by_id` 特殊句柄；修正 scripting 关闭时 stale `ENABLE_SCRIPTING=1` 的 CMake 污染。xcodebuildmcp `build-and-run` 通过，The Final Battle.sis 安装闭环已通；Calculator / Notes 仍在 `_E32Startup` 早期返回到 `PC=0 / LR=0x803A9F89`，3.2 / stage-2 验收剩余 blocker 收窄为 3.2.2。 |
 | 2026-05-22 | 阶段 3 拆解：把阶段 2 验收最后一公里（kernel chunk SIGBUS）并入阶段 3 作为 3.1 解锁项，3.2 补完 stage-2 acceptance，3.3 沉淀 `common::virtualmem` 非可执行内存 API。其余 3.4–3.13 覆盖真正的 ROM 安装流程、UIDocumentPicker 导入、SVG/MIF 图标、cubeb AudioUnit、Core Haptics、多指/手势、设置面板、UIAlertController 输入、字体引导、文档收口。dynarmic / MAP_JIT / 发布通道继续保留在阶段 4。阶段总览表把阶段 2 标为 🟡（待 3.1/3.2 翻 ✅），阶段 3 进入 🟡。 | |
 | 2026-05-22 | 阶段 2 子任务 2.1–2.11 全部实现并 `scripts/build_ios.sh smoke` 双绿（simulator build PASS + 启动后 `EKA2L1_SMOKE: PASS backend=dyncom instrs=9 pc=0x00001024`）。期间打掉 10 个真实编译/链接/线程坑（见阶段 2 修复清单）。stage-2 的"实机加载 ROM、应用列表 ≥5、出一帧、触控触达 Calculator"等 acceptance 标准需要在 device 上 + 一个已 desktop-预装的 device 树才能完整跑通，落地与 stage-3 真实 ROM 安装流程一起做。 |

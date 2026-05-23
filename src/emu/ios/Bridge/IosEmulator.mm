@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include <sys/stat.h>
@@ -79,6 +80,123 @@ namespace eka2l1::ios {
         std::vector<std::size_t> screen_redraw_handles;
         int present_status = 0;
     };
+
+    static void submit_screen_frame(emulator *state, eka2l1::epoc::screen *scr) {
+        if (!state || !state->graphics_driver || !state->window) {
+            return;
+        }
+        if (!scr || !scr->screen_texture) {
+            return;
+        }
+
+        if (state->present_status == -100) {
+            state->present_status = 0;
+        } else {
+            state->graphics_driver->wait_for(&state->present_status);
+        }
+
+        eka2l1::drivers::graphics_command_builder builder;
+        const eka2l1::vec2 swapchain_size = state->window->window_fb_size();
+        builder.set_swapchain_size(swapchain_size);
+        builder.backup_state();
+        builder.bind_bitmap(0);
+        builder.set_feature(eka2l1::drivers::graphics_feature::cull, false);
+        builder.set_feature(eka2l1::drivers::graphics_feature::depth_test, false);
+        builder.set_feature(eka2l1::drivers::graphics_feature::blend, false);
+        builder.set_feature(eka2l1::drivers::graphics_feature::clipping, false);
+        builder.set_feature(eka2l1::drivers::graphics_feature::stencil_test, false);
+
+        eka2l1::rect viewport;
+        viewport.size = swapchain_size;
+        builder.set_viewport(viewport);
+        builder.clear({ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
+            eka2l1::drivers::draw_buffer_bit_color_buffer);
+
+        if (scr) {
+            auto &mode = scr->current_mode();
+            eka2l1::rect src;
+            src.size = mode.size;
+
+            float width = static_cast<float>(swapchain_size.x);
+            float height = mode.size.y * width / mode.size.x;
+            if (height > swapchain_size.y) {
+                height = static_cast<float>(swapchain_size.y);
+                width = mode.size.x * height / mode.size.y;
+            }
+
+            eka2l1::rect dest;
+            dest.top.x = static_cast<int>((swapchain_size.x - width) / 2.0f);
+            dest.top.y = static_cast<int>((swapchain_size.y - height) / 2.0f);
+            dest.size.x = static_cast<int>(width);
+            dest.size.y = static_cast<int>(height);
+
+            const float scale_x = width / static_cast<float>(mode.size.x);
+            const float scale_y = height / static_cast<float>(mode.size.y);
+            scr->set_native_scale_factor(state->graphics_driver.get(), scale_x, scale_y);
+            scr->absolute_pos = dest.top;
+
+            eka2l1::drivers::advance_draw_pos_around_origin(dest, scr->ui_rotation);
+            if (scr->ui_rotation % 180 != 0) {
+                std::swap(dest.size.x, dest.size.y);
+                std::swap(src.size.x, src.size.y);
+            }
+            src.size *= scr->display_scale_factor;
+
+            std::uint32_t flags = 0;
+            if (scr->flags_ & eka2l1::epoc::screen::FLAG_SCREEN_UPSCALE_FACTOR_LOCK) {
+                flags |= eka2l1::drivers::bitmap_draw_flag_use_upscale_shader;
+            }
+
+            if (scr->screen_texture) {
+                builder.set_texture_filter(scr->screen_texture, true, eka2l1::drivers::filter_option::linear);
+                builder.set_texture_filter(scr->screen_texture, false, eka2l1::drivers::filter_option::linear);
+                builder.draw_bitmap(scr->screen_texture, 0, dest, src, eka2l1::vec2(0, 0),
+                    static_cast<float>(scr->ui_rotation), flags);
+            }
+        }
+
+        builder.load_backup_state();
+        state->present_status = -100;
+        builder.present(&state->present_status);
+        eka2l1::drivers::command_list commands = builder.retrieve_command_list();
+        state->graphics_driver->submit_command_list(commands);
+    }
+
+    static void install_required_rom_patches(emulator *state) {
+        if (!state || !state->symsys) {
+            return;
+        }
+
+        auto *io = state->symsys->get_io_system();
+        const std::string patch_dir = eka2l1::add_path(state->documents_root, "data/patch");
+        const std::vector<std::tuple<std::u16string, std::string, epocver>> dlls_need_to_copy = {
+            { u"Z:\\sys\\bin\\goommonitor.dll", "goommonitor_general.dll", epocver::epoc94 },
+            { u"Z:\\sys\\bin\\avkonfep.dll", "avkonfep_general.dll", epocver::epoc93fp1 }
+        };
+
+        for (const auto &entry : dlls_need_to_copy) {
+            if (state->symsys->get_symbian_version_use() < std::get<2>(entry)) {
+                continue;
+            }
+
+            auto destination = io->get_raw_path(std::get<0>(entry));
+            if (!destination.has_value()) {
+                continue;
+            }
+
+            const std::string source = eka2l1::add_path(patch_dir, std::get<1>(entry));
+            const std::string dest = common::ucs2_to_utf8(destination.value());
+            if (!common::exists(source)) {
+                continue;
+            }
+
+            const std::string backup = dest + ".bak";
+            if (common::exists(dest) && !common::exists(backup)) {
+                common::move_file(dest, backup);
+            }
+            common::copy_file(source, dest, true);
+        }
+    }
 }
 
 @implementation EKA2L1Emulator {
@@ -124,6 +242,37 @@ namespace eka2l1::ios {
         [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
+    NSString *bundleShaders = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"resources"];
+    NSString *dataShaders = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"resources"];
+    NSString *sourceShaders = [[[@(__FILE__) stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../../drivers/resources/gles"] stringByStandardizingPath];
+    NSString *shaderSource = [fm fileExistsAtPath:bundleShaders] ? bundleShaders : sourceShaders;
+    if ([fm fileExistsAtPath:shaderSource]) {
+        [fm removeItemAtPath:dataShaders error:nil];
+        [fm copyItemAtPath:shaderSource toPath:dataShaders error:nil];
+    }
+
+    NSString *dataPatch = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"patch"];
+    NSString *sourcePatch = [[[@(__FILE__) stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../../../patch"] stringByStandardizingPath];
+    if ([fm fileExistsAtPath:sourcePatch]) {
+        [fm removeItemAtPath:dataPatch error:nil];
+        [fm createDirectoryAtPath:dataPatch withIntermediateDirectories:YES attributes:nil error:nil];
+        NSDirectoryEnumerator<NSString *> *patchEnum = [fm enumeratorAtPath:sourcePatch];
+        for (NSString *relative in patchEnum) {
+            if (![relative containsString:@"/group/"]) {
+                continue;
+            }
+            NSString *name = relative.lastPathComponent;
+            if (![name hasSuffix:@".map"] && ![name hasSuffix:@"_general.dll"]) {
+                continue;
+            }
+            NSString *src = [sourcePatch stringByAppendingPathComponent:relative];
+            NSString *dst = [dataPatch stringByAppendingPathComponent:name];
+            [fm copyItemAtPath:src toPath:dst error:nil];
+        }
+    }
+
     // Run the emulator with cwd = Documents/data so the config / drive paths
     // resolve into the sandbox rather than the (read-only) bundle.
     NSString *dataRoot = [documentsPath stringByAppendingPathComponent:@"data"];
@@ -135,6 +284,7 @@ namespace eka2l1::ios {
 
     _state->conf.deserialize();
     _state->conf.storage = dataRoot.UTF8String;
+    _state->conf.cpu_load_save = false;
     _state->settings = std::make_unique<eka2l1::config::app_settings>(&_state->conf);
 
     eka2l1::system_create_components comp;
@@ -175,7 +325,6 @@ namespace eka2l1::ios {
             LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver creation failed");
             return;
         }
-        state->symsys->set_graphics_driver(state->graphics_driver.get());
 
         state->window->surface_change_hook = [state](void *new_surface) {
             state->graphics_driver->update_surface(new_surface);
@@ -333,6 +482,9 @@ namespace eka2l1::ios {
     sys = _state->symsys.get();
 
     sys->startup();
+    if (_state->graphics_driver) {
+        sys->set_graphics_driver(_state->graphics_driver.get());
+    }
     if (sys->get_device_manager()->total() == 0) {
         return NO;
     }
@@ -346,13 +498,21 @@ namespace eka2l1::ios {
         io_attrib_internal | io_attrib_write_protected);
 
     sys->initialize_user_parties();
+    eka2l1::ios::install_required_rom_patches(_state.get());
+    sys->get_packages()->load_registries();
+    sys->get_packages()->migrate_legacy_registries();
 
     auto *kern = sys->get_kernel_system();
     _state->winserv = reinterpret_cast<eka2l1::window_server *>(
         kern->get_by_name<eka2l1::service::server>(
-            eka2l1::get_winserv_name_by_epocver(sys->get_symbian_version_use())));
+            eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
 
     _state->mounted = true;
+    if (_state->winserv && _state->graphics_driver) {
+        for (eka2l1::epoc::screen *scr = _state->winserv->get_screens(); scr; scr = scr->next) {
+            scr->set_screen_mode(_state->winserv, _state->graphics_driver.get(), scr->crr_mode);
+        }
+    }
 
     // Register a per-screen redraw callback so each frame produced by the
     // Symbian window server triggers a swap on the EAGL context. The
@@ -364,17 +524,12 @@ namespace eka2l1::ios {
         eka2l1::epoc::screen *screens = _state->winserv->get_screens();
         while (screens) {
             std::size_t handle = screens->add_screen_redraw_callback(state,
-                [](void *userdata, eka2l1::epoc::screen * /*scr*/, const bool /*is_dsa*/) {
+                [](void *userdata, eka2l1::epoc::screen *scr, const bool /*is_dsa*/) {
                     auto *st = reinterpret_cast<eka2l1::ios::emulator *>(userdata);
                     if (!st->graphics_driver) {
                         return;
                     }
-                    st->graphics_driver->wait_for(&st->present_status);
-                    eka2l1::drivers::graphics_command_builder builder;
-                    st->present_status = -100;
-                    builder.present(&st->present_status);
-                    eka2l1::drivers::command_list retrieved = builder.retrieve_command_list();
-                    st->graphics_driver->submit_command_list(retrieved);
+                    eka2l1::ios::submit_screen_frame(st, scr);
                 });
             _state->screen_redraw_handles.push_back(handle);
             screens = screens->next;
@@ -431,9 +586,48 @@ namespace eka2l1::ios {
     eka2l1::epoc::apa::command_line cmdline;
     cmdline.launch_cmd_ = eka2l1::epoc::apa::command_create;
 
+    eka2l1::kernel::uid launched_thread_id = 0;
     kern->lock();
-    bool launched = alserv->launch_app(*reg, cmdline, nullptr, nullptr);
+    bool launched = alserv->launch_app(*reg, cmdline, &launched_thread_id, nullptr);
+    if (launched) {
+        kern->stop_cores_idling();
+    }
     kern->unlock();
+    if (!_state->winserv) {
+        _state->winserv = reinterpret_cast<eka2l1::window_server *>(
+            kern->get_by_name<eka2l1::service::server>(
+                eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+    }
+    if (launched && _state->winserv) {
+        auto *state = _state.get();
+        eka2l1::epoc::screen *immediate_scr = state->winserv ? state->winserv->get_screens() : nullptr;
+        if (immediate_scr && !immediate_scr->screen_texture && state->graphics_driver) {
+            immediate_scr->set_screen_mode(state->winserv, state->graphics_driver.get(), immediate_scr->crr_mode);
+        }
+        eka2l1::ios::submit_screen_frame(state, immediate_scr);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(0.5 * NSEC_PER_SEC)),
+            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
+                if (scr && !scr->screen_texture && state->graphics_driver) {
+                    scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
+                }
+                if (scr && state->graphics_driver) {
+                    scr->redraw(state->graphics_driver.get());
+                }
+                eka2l1::ios::submit_screen_frame(state, scr);
+            });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1.5 * NSEC_PER_SEC)),
+            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
+                if (scr && !scr->screen_texture && state->graphics_driver) {
+                    scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
+                }
+                if (scr && state->graphics_driver) {
+                    scr->redraw(state->graphics_driver.get());
+                }
+                eka2l1::ios::submit_screen_frame(state, scr);
+            });
+    }
     return launched ? YES : NO;
 }
 

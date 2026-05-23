@@ -28,6 +28,17 @@ option(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE "Enable support for Discord Rich Pres
 # These are silently overridden so a user passing -DEKA2L1_BUILD_TESTS=ON for
 # another platform does not have to special-case iOS in their scripts.
 if (EKA2L1_IOS)
+    set(EKA2L1_IOS_SIMULATOR OFF)
+    if (CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]honeSimulator")
+        set(EKA2L1_IOS_SIMULATOR ON)
+    endif()
+    option(EKA2L1_IOS_SIMULATOR_DYNARMIC "Enable Dynarmic for iOS simulator builds" ${EKA2L1_IOS_SIMULATOR})
+    if (EKA2L1_IOS_SIMULATOR_DYNARMIC)
+        add_compile_definitions(EKA2L1_IOS_SIMULATOR_DYNARMIC=1)
+        add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1)
+        message(STATUS "iOS simulator build: Dynarmic backend enabled")
+    endif()
+
     set(EKA2L1_BUILD_TOOLS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_BUILD_TESTS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_ENABLE_SCRIPTING_ABILITY OFF CACHE BOOL "Disabled on iOS" FORCE)
@@ -69,6 +80,8 @@ endif()
 
 if (EKA2L1_ENABLE_SCRIPTING_ABILITY)
     set (ENABLE_SCRIPTING 1)
+else()
+    set (ENABLE_SCRIPTING 0)
 endif(EKA2L1_ENABLE_SCRIPTING_ABILITY)
 
 if (CI)

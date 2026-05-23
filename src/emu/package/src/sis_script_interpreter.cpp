@@ -544,7 +544,16 @@ namespace eka2l1 {
 
                 if (file->target.unicode_string.length() > 0) {
                     install_path = get_install_path(file->target.unicode_string, install_drive);
-                    raw_path = common::ucs2_to_utf8(*(io->get_raw_path(common::utf8_to_ucs2(install_path))));
+                    if (common::is_platform_case_sensitive()) {
+                        install_path = common::lowercase_string(install_path);
+                    }
+
+                    const std::optional<std::u16string> raw_path_opt = io->get_raw_path(common::utf8_to_ucs2(install_path));
+                    if (!raw_path_opt) {
+                        LOG_ERROR(PACKAGE, "Unable to resolve SIS install target: {}", install_path);
+                        return false;
+                    }
+                    raw_path = common::ucs2_to_utf8(*raw_path_opt);
                 }
 
                 switch (file->op) {
@@ -600,13 +609,6 @@ namespace eka2l1 {
                             break;
                         }
 
-                        bool lowered = false;
-
-                        if (common::is_platform_case_sensitive()) {
-                            raw_path = common::lowercase_string(raw_path);
-                            lowered = true;
-                        }
-
                         if (!install_data->data_units.fields.empty()) {
                             extract_target_info info;
                             info.file_path_ = raw_path;
@@ -617,11 +619,8 @@ namespace eka2l1 {
                             extract_target_accumulated_size += file->uncompressed_len;
                         }
 
-                        if (!lowered) {
-                            raw_path = common::lowercase_string(raw_path);
-                        }
-
-                        if (FOUND_STR(raw_path.find(".sis")) || FOUND_STR(raw_path.find(".sisx"))) {
+                        const std::string raw_path_lower = common::lowercase_string(raw_path);
+                        if (FOUND_STR(raw_path_lower.find(".sis")) || FOUND_STR(raw_path_lower.find(".sisx"))) {
                             if (!install_data->data_units.fields.empty() && (loader::identify_sis_type(raw_path).has_value())) {
                                 LOG_INFO(PACKAGE, "Detected an SmartInstaller SIS, path at: {}", raw_path);
                                 gathered_sis_paths.push_back(common::utf8_to_ucs2(raw_path));
