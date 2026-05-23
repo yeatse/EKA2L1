@@ -122,11 +122,12 @@ namespace eka2l1::ios {
             return;
         }
 
-        if (state->present_status == -100) {
-            state->present_status = 0;
-        } else {
-            state->graphics_driver->wait_for(&state->present_status);
-        }
+        // Same semantics as the Qt / Android frontends: wait_for blocks
+        // while present_status == -100 (in-flight) and returns immediately
+        // once the driver thread has called finish(). Initial 0 also
+        // returns immediately. Only set -100 right before submitting the
+        // next present.
+        state->graphics_driver->wait_for(&state->present_status);
 
         eka2l1::drivers::graphics_command_builder builder;
         const eka2l1::vec2 swapchain_size = state->window->window_fb_size();

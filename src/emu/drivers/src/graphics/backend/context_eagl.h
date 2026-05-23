@@ -50,6 +50,10 @@ namespace eka2l1::drivers::graphics {
         // by SwiftUI on a navigation transition).
         void update_surface(void *new_surface) override;
 
+        unsigned int swapchain_framebuffer() const override {
+            return m_framebuffer;
+        }
+
     private:
         bool attach_layer(CAEAGLLayer *layer);
         void release_renderbuffers();

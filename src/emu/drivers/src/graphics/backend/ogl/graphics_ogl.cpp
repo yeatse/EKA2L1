@@ -432,7 +432,10 @@ namespace eka2l1::drivers {
             new_surface_size_ = { -1, -1 };
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // On iOS, there is no default framebuffer; the EAGL context owns the
+        // FBO whose color attachment is the CAEAGLLayer drawable. Bind that
+        // instead of 0 so the rendered frame actually lands in the layer.
+        glBindFramebuffer(GL_FRAMEBUFFER, context_ ? context_->swapchain_framebuffer() : 0);
     }
 
     void ogl_graphics_driver::update_surface(void *new_surface_set) {
@@ -1603,7 +1606,10 @@ namespace eka2l1::drivers {
         drivers::framebuffer_bind_type bind_type = static_cast<drivers::framebuffer_bind_type>(cmd.data_[1]);
 
         if (h == 0) {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            // Handle 0 = "the swapchain". Most platforms get the window's
+            // default framebuffer (FBO 0); iOS GLES has none, so route to
+            // the EAGL-owned FBO instead.
+            glBindFramebuffer(GL_FRAMEBUFFER, context_ ? context_->swapchain_framebuffer() : 0);
             return;
         }
 
