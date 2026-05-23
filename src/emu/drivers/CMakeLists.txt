@@ -4,17 +4,16 @@ if (BUILD_WITH_VULKAN)
             src/graphics/backend/vulkan/graphics_vulkan.cpp)
 endif ()
 
-# Audio / video / camera backends that rely on external libraries which are
-# not (yet) wired up for the iOS stage-0 build. Task 0.5 lists cubeb and
-# ffmpeg as deferred dependencies; until they have proper iOS builds the
-# backend sources are excluded so the headers are not pulled in.
-if (NOT EKA2L1_IOS)
-    set(DRIVERS_CUBEB_SRC
-            include/drivers/audio/backend/cubeb/audio_cubeb.h
-            include/drivers/audio/backend/cubeb/stream_cubeb.h
-            src/audio/backend/cubeb/audio_cubeb.cpp
-            src/audio/backend/cubeb/stream_cubeb.cpp)
+# cubeb is now built for iOS too (task 3.7, AudioUnit RemoteIO backend).
+# ffmpeg stays disabled — its bundled binaries are not cross-compiled for
+# iOS, so DSP out-streams / video player remain nullptr on this platform.
+set(DRIVERS_CUBEB_SRC
+        include/drivers/audio/backend/cubeb/audio_cubeb.h
+        include/drivers/audio/backend/cubeb/stream_cubeb.h
+        src/audio/backend/cubeb/audio_cubeb.cpp
+        src/audio/backend/cubeb/stream_cubeb.cpp)
 
+if (NOT EKA2L1_IOS)
     set(DRIVERS_FFMPEG_SRC
             include/drivers/audio/backend/ffmpeg/dsp_ffmpeg.h
             include/drivers/audio/backend/ffmpeg/player_ffmpeg.h
@@ -203,14 +202,19 @@ target_link_libraries(miniBAE_EMU PRIVATE common)
 
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)
-    # glad / SDL2 are not linked on iOS. The ogl backend compiles against
-    # OpenGLES.framework via ios_gl_loader.h (task 2.1). cubeb and ffmpeg
-    # remain unlinked per task 0.5.
+    # glad is not linked on iOS — the ogl backend compiles against
+    # OpenGLES.framework via ios_gl_loader.h (task 2.1). cubeb is now in
+    # play for the AudioUnit backend (task 3.7); ffmpeg still stays out
+    # (its bundled binaries aren't cross-built for iOS).
     target_link_libraries(drivers PRIVATE
+        cubeb
         "-framework OpenGLES"
         "-framework QuartzCore"
         "-framework Foundation"
-        "-framework UIKit")
+        "-framework UIKit"
+        "-framework AVFoundation"
+        "-framework AudioToolbox"
+        "-framework CoreAudio")
 else()
     target_link_libraries(drivers PRIVATE cubeb ffmpeg glad)
 endif()

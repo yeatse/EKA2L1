@@ -3,6 +3,7 @@
 
 #import "IosEmulator.h"
 
+#import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
 #include <atomic>
@@ -28,6 +29,9 @@
 #include <common/version.h>
 #include <config/app_settings.h>
 #include <config/config.h>
+#include <drivers/audio/audio.h>
+#include <drivers/audio/dsp.h>
+#include <drivers/audio/player.h>
 #include <drivers/graphics/backend/emu_window_ios.h>
 #include <drivers/graphics/graphics.h>
 #include <drivers/input/common.h>
@@ -245,6 +249,7 @@ namespace eka2l1::ios {
         std::unique_ptr<config::app_settings> settings;
         std::unique_ptr<drivers::emu_window_ios> window;
         drivers::graphics_driver_ptr graphics_driver;
+        std::unique_ptr<drivers::audio_driver> audio_driver;
 
         config::state conf;
         window_server *winserv = nullptr;
@@ -514,8 +519,29 @@ namespace eka2l1::ios {
     _state->conf.cpu_load_save = false;
     _state->settings = std::make_unique<eka2l1::config::app_settings>(&_state->conf);
 
+    // 3.7: instantiate the cubeb iOS AudioUnit (RemoteIO) backend up front so
+    // services that fan out audio_driver at startup (KeySound, MediaClient,
+    // DSP shared streams) get a real instance instead of the nullptr the
+    // stage-2 sandbox used. cubeb_init -> audiounit_init in the iOS shim
+    // configures AVAudioSession (Playback category, mix-with-others) on the
+    // first call.
+    eka2l1::drivers::player_type midi_be = eka2l1::drivers::player_type_tsf;
+    _state->audio_driver = eka2l1::drivers::make_audio_driver(
+        eka2l1::drivers::audio_driver_backend::cubeb,
+        _state->conf.audio_master_volume,
+        midi_be);
+    if (_state->audio_driver) {
+        _state->audio_driver->set_bank_path(eka2l1::drivers::MIDI_BANK_TYPE_HSB,
+            _state->conf.hsb_bank_path);
+        _state->audio_driver->set_bank_path(eka2l1::drivers::MIDI_BANK_TYPE_SF2,
+            _state->conf.sf2_bank_path);
+    } else {
+        LOG_WARN(eka2l1::FRONTEND_CMDLINE,
+            "iOS audio: cubeb_audio_driver instance is null; services will fall back to silence");
+    }
+
     eka2l1::system_create_components comp;
-    comp.audio_ = nullptr;
+    comp.audio_ = _state->audio_driver.get();
     comp.graphics_ = nullptr;
     comp.conf_ = &_state->conf;
     comp.settings_ = _state->settings.get();
@@ -610,6 +636,7 @@ namespace eka2l1::ios {
     }
     _state->graphics_driver.reset();
     _state->symsys.reset();
+    _state->audio_driver.reset();
     _state->window.reset();
     _state->settings.reset();
     _state.reset();
@@ -748,7 +775,7 @@ namespace eka2l1::ios {
     [yaml writeToFile:yamlPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 
     eka2l1::system_create_components comp;
-    comp.audio_ = nullptr;
+    comp.audio_ = _state->audio_driver.get();
     comp.graphics_ = nullptr;
     comp.conf_ = &_state->conf;
     comp.settings_ = _state->settings.get();
@@ -770,6 +797,9 @@ namespace eka2l1::ios {
 
     if (_state->graphics_driver) {
         sys->set_graphics_driver(_state->graphics_driver.get());
+    }
+    if (_state->audio_driver) {
+        sys->set_audio_driver(_state->audio_driver.get());
     }
     sys->initialize_user_parties();
     if (_state->graphics_driver) {
@@ -951,11 +981,30 @@ namespace eka2l1::ios {
 - (void)pause {
     if (!_state) return;
     _state->paused = true;
+    // 3.7: drop the AVAudioSession activation while we're in the background
+    // so the system can route audio to whatever's actually frontmost. The
+    // session reactivates on resume below; the AURemoteIO units themselves
+    // are left untouched — the data callback simply stops being invoked
+    // until the session is active again.
+    NSError *err = nil;
+    [[AVAudioSession sharedInstance] setActive:NO
+        withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+              error:&err];
+    if (err) {
+        LOG_WARN(eka2l1::FRONTEND_CMDLINE, "iOS audio: setActive:NO failed: {}",
+            err.localizedDescription.UTF8String ?: "unknown");
+    }
 }
 
 - (void)resume {
     if (!_state) return;
     _state->paused = false;
+    NSError *err = nil;
+    [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    if (err) {
+        LOG_WARN(eka2l1::FRONTEND_CMDLINE, "iOS audio: setActive:YES failed: {}",
+            err.localizedDescription.UTF8String ?: "unknown");
+    }
 }
 
 - (void)submitPointerEventAtX:(CGFloat)x

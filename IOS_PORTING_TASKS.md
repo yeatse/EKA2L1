@@ -433,12 +433,14 @@
 - ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：mount N95 → AppList 出 Help (?)、Messaging (信封)、Voice recorder (麦克风)、Settings (扳手)、Call mailbox、Profiles、Calendar (30)、Calculator 等真实 S60 图标。截屏 `docs/screenshots/ios-stage3/3.6-icons/applist-with-real-icons.jpg`。
 - 字体缺失时 SVG 文本会失败 → 3.12 字体引导覆盖。
 
-#### 3.7 cubeb iOS AudioUnit 后端
-- `src/external/CMakeLists.txt`：iOS 下重新 `add_subdirectory(cubeb)`（阶段 0 跳过名单里移除 cubeb）。验证 cubeb 自带的 `cubeb_audiounit` 在 iOS 18 / Xcode 26 SDK 下编得过；编不过就给 cubeb 打最小 patch（CMake 检测 + AVAudioSession 配置）。
-- `src/emu/drivers/CMakeLists.txt` + `audio.cpp` / `dsp.cpp`：撤掉阶段 0 在 iOS 下对 cubeb 工厂 case 的 `#if !EKA2L1_PLATFORM(IOS)` 守护，重新让 `audio_driver_backend::cubeb` 在 iOS 落到 cubeb_audiounit。
-- 配 `AVAudioSession`：`category=playback` + `mode=default`，App 切后台时调 `setActive:NO`，回前台 `setActive:YES`；与阶段 2 的 scenePhase 钩子共用。
-- ffmpeg 仍然跳过；dsp out-stream / video player 在 iOS 继续 nullptr，由阶段 3 验收里 "声音能听到" 覆盖到一个不依赖 ffmpeg 的应用即可。
-- 验收：一个公开的 Symbian 小游戏或自带 BGM 的内建应用（候选：Music Player / 一个有 SFX 的免费 N-Gage demo）能听见声音；后台/前台切换不打嗝、不 crash。
+#### 3.7 cubeb iOS AudioUnit 后端 🟡
+- ✅ `src/external/CMakeLists.txt`：iOS 重新 `add_subdirectory(cubeb)`（阶段 0 跳过名单里移除 cubeb），ffmpeg 继续 skip（bundled binary 没 iOS cross-build）。
+- 🟡 cubeb 自带的 `cubeb_audiounit.cpp` 在 iOS 上编不过 —— `TARGET_OS_IPHONE` 覆盖不完整，大量 file-scope `AudioObjectPropertyAddress` 常量 / 后续 `AudioObjectID`/`AudioDeviceID`/`AudioObjectPropertyListenerProc` 等 HAL 类型在 guard 外被引用，patch 起来动几百行。曾试 fetch `mozilla/cubeb` upstream，HEAD 仍是同样写法。结论：**绕开**，新增 `src/external/cubeb/src/cubeb_audiounit_ios.mm` 提供最小 cubeb_ops 实现（AVAudioSession Playback + mix-with-others / `kAudioUnitSubType_RemoteIO` + AURenderCallback / `AudioOutputUnitStart/Stop` / soft-volume），仅覆盖 EKA2L1 用到的 API 表（`init/get_backend_id/get_min_latency/get_preferred_sample_rate/destroy/stream_init/stream_destroy/stream_start/stream_stop/stream_get_position/stream_set_volume`），其它 `cubeb_ops` 槽位 = nullptr。`cubeb/CMakeLists.txt` 在 iOS / tvOS / watchOS 分支下用 iOS shim 替换 `cubeb_audiounit.cpp` + 跳过 `cubeb_osx_run_loop.cpp`，并把 `-framework AudioUnit / CoreServices` 换成 `AudioToolbox + AVFoundation`（AudioUnit 在 iOS 已折进 AudioToolbox）。cubeb 其它便携源（cubeb.c / mixer / resampler / ring）保持不变。
+- ✅ `src/emu/drivers/CMakeLists.txt`：撤掉 iOS 下对 `DRIVERS_CUBEB_SRC` / cubeb 工厂 case 的 `#if !EKA2L1_PLATFORM(IOS)` 守护；iOS drivers target 链 `cubeb` + 系统 `AudioToolbox`/`CoreAudio`/`AVFoundation`。`audio.cpp::make_audio_driver(audio_driver_backend::cubeb, ...)` 在 iOS 真返回 `cubeb_audio_driver` 实例。
+- ✅ `IosEmulator::startWithDocumentsPath:`：调 `make_audio_driver(cubeb, conf.audio_master_volume, player_type_tsf)`，喂 `set_bank_path(HSB/SF2)`，把指针塞进 `system_create_components.audio_`；`mountRomNamed:` rebuild system 时同样传，并在 mount 末尾 `sys->set_audio_driver(...)`。
+- ✅ AVAudioSession：iOS shim 的 `audiounit_init` 在 `dispatch_once` 里 `[AVAudioSession setCategory:AVAudioSessionCategoryPlayback mode:Default options:MixWithOthers]` + `setActive:YES`。`IosEmulator -pause` / `-resume` 走 `setActive:NO withOptions:NotifyOthersOnDeactivation` / `setActive:YES`，跟着 SwiftUI scenePhase 已有的 pause/resume 钩子。
+- ✅ xcodebuildmcp 验证（iPhone 16 Pro / iOS 26.5 sim）：build SUCCEEDED；mount N95 后日志出现 `Using general DLL mediaclientaudiostream_general.dll as patch DLL`、`mediaclientaudio_general.dll`、`audiooutputrouting_general.dll` 等加载（先前 audio=nullptr 时这些 codeseg 从来不会被拉起），applist 比之前增到 64 app（系统识别出 Audio message uid=0x1020745A），无新 `.ips`，Calculator UI 渲染稳定。截屏 `docs/screenshots/ios-stage3/3.7-audio/calculator-with-audio-backend.jpg`。
+- 🟡 剩余 follow-up：①真的"能听见声音"要选一个会出声的 ROM 应用（候选：N-Gage demo / Music Player / 一段 SIS 带 BGM 的小游戏），跑起来人耳确认 —— 不能用 xcodebuildmcp 自动断言；②后台/前台切换路径建议在 scenePhase observer 里把 `[pause]` / `[resume]` 与 AVAudioSession 解耦确认（目前合在一起）；③MIDI 用 TSF 后端走 file-based bank，HSB/SF2 路径默认空，sandbox 里没把 `defaultbank.hsb` / `defaultbank.sf2` 拷过去（先前没人需要），有需要时和字体一样在 startup 里复制。
 
 #### 3.8 振动：Core Haptics
 - 新建 `src/emu/drivers/src/hwrm/backend/vibration_ios.{h,mm}`：iOS 14+ 用 `CHHapticEngine` + `CHHapticPattern` 把 duration / intensity / sharpness 映射到一次连续振动；iOS 12/13 fallback 到 `UIImpactFeedbackGenerator`。

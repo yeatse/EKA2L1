@@ -171,11 +171,7 @@ option (BUILD_TESTS "Build cubeb tests" OFF)
 # Forcefully disable AAudio (we build with API target 21 minimum)
 set (USE_AAUDIO FALSE CACHE INTERNAL "" FORCE)
 
-if (NOT EKA2L1_IOS)
-    # cubeb supports iOS via AudioUnit, but the bundled CMake submodule has
-    # not been verified for the iOS toolchain yet. Stage 3 wires it back in.
-    add_subdirectory(cubeb)
-endif()
+add_subdirectory(cubeb)
 
 
 # FFMPEG
