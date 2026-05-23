@@ -59,8 +59,10 @@ target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     drivers
     epoc
     epockern
+    epocloader
     epocpkg
     epocservs
+    lunasvg
     sqlite3
     yaml-cpp)
 

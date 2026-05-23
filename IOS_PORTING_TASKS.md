@@ -426,10 +426,12 @@
 - ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：build SUCCEEDED → launch → 主页右上 **Import** 按钮可见 → tap 弹出系统 UIDocumentPickerViewController（"最近项目" / "共享" / "浏览" 三个 tab，"最近项目"为空）。截屏 `docs/screenshots/ios-stage3/3.5-import/{rom-list-with-import-button,document-picker-presented}.jpg`。
 - 🟡 剩余 follow-up：①ZIP unzip 走 miniz（与 3.4 第二个 follow-up 项一起）；②"Share to EKA2L1" extension（外部应用 Share 菜单直接送进来）推迟到 stage 3 收尾或更后；③`scripts/seed_ios_simulator_documents.sh` 继续保留为开发期复跑捷径，不进 release 路径。
 
-#### 3.6 AppList 图标（SVG / MIF 解码）
-- 在 IosEmulator 侧给 `EKA2L1AppEntry` 加 `iconPNGData: NSData?` 字段；后端遍历 registration 时调 applist server 取 icon（复用 Qt / Android 的解码路径），mif 走 mif decoder、svg 走 lunasvg，统一光栅化到 64×64 RGBA，编码 PNG 后跨 ARC 边界传给 Swift。
-- AppListView 用 `Image(uiImage:)` 异步渲染；解码放后台 queue，主线程只赋值。
-- 字体缺失时 SVG 文本会失败，3.12 的引导覆盖这种情况。
+#### 3.6 AppList 图标（SVG / MIF 解码）✅
+- ✅ `EKA2L1Emulator` 新增 `iconPNGDataForUID:sizePx:`，按 Android 同款顺序尝试解码：①`.mif` → `loader::mif_file` + `convert_svgb_to_svg` / `convert_nvg_to_svg` debinarize 到 `Documents/data/cache/icons/debinarized_<sanitized-name>.svg`（带 mtime cache）→ `lunasvg::Document` 光栅化到内置 width/height；②`.mbm` → `loader::mbm_file` + `epoc::convert_to_rgba8888(fbsserv, ..., 0, dst)`；③其它/失败 fallback → `alserv->get_icon(*reg, 0)` 取 `bitwise_bitmap` pair + `convert_to_rgba8888(fbsserv, bitmap, dst)`。
+- ✅ 解码出的 RGBA 走 `CGBitmapContext + CGContextDrawImage` 缩放到调用方请求的方形尺寸（默认 72px，给 SwiftUI 一份 stable 画布），再 `UIImagePNGRepresentation` 编 PNG 返回 `NSData`。
+- ✅ SwiftUI `AppRow` 在 `.onAppear` 把解码 dispatch 到 `DispatchQueue.global(qos: .userInitiated)`，回主线程赋 `@State`；解码失败 fallback 到 `Image(systemName: "app.dashed")` 占位。CMake 给 iOS target 加 `epocloader` / `lunasvg` 链接依赖。
+- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：mount N95 → AppList 出 Help (?)、Messaging (信封)、Voice recorder (麦克风)、Settings (扳手)、Call mailbox、Profiles、Calendar (30)、Calculator 等真实 S60 图标。截屏 `docs/screenshots/ios-stage3/3.6-icons/applist-with-real-icons.jpg`。
+- 字体缺失时 SVG 文本会失败 → 3.12 字体引导覆盖。
 
 #### 3.7 cubeb iOS AudioUnit 后端
 - `src/external/CMakeLists.txt`：iOS 下重新 `add_subdirectory(cubeb)`（阶段 0 跳过名单里移除 cubeb）。验证 cubeb 自带的 `cubeb_audiounit` 在 iOS 18 / Xcode 26 SDK 下编得过；编不过就给 cubeb 打最小 patch（CMake 检测 + AVAudioSession 配置）。

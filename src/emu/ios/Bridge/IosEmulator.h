@@ -70,6 +70,13 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
                         phase:(EKA2L1PointerPhase)phase
                     pointerId:(uintptr_t)pointerId;
 
+// 3.6: decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)
+// and return a square RGBA PNG sized `sizePx` per side. Returns nil if
+// the registration has no icon or all decode attempts fail. Safe to
+// call from a background queue; SwiftUI consumes the NSData via
+// `UIImage(data:)`.
+- (nullable NSData *)iconPNGDataForUID:(uint32_t)uid sizePx:(NSUInteger)sizePx;
+
 @end
 
 NS_ASSUME_NONNULL_END

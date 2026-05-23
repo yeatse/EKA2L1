@@ -127,11 +127,7 @@ struct AppListView: View {
             Section("Apps (\(apps.count))") {
                 ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
-                        VStack(alignment: .leading) {
-                            Text(app.name)
-                            Text(String(format: "uid=0x%08X", app.uid))
-                                .font(.caption2.monospaced()).foregroundColor(.secondary)
-                        }
+                        AppRow(uid: app.uid, name: app.name)
                     }
                 }
             }
@@ -183,6 +179,57 @@ struct AppListView: View {
         let full = (docs as NSString).appendingPathComponent("sis/\(filename)")
         _ = EKA2L1Emulator.shared().installSis(atPath: full)
         apps = EKA2L1Emulator.shared().rescanApps()
+    }
+}
+
+// 3.6: lazily decode the registered icon (MIF/MBM/SVGB/NVG → RGBA → PNG)
+// off the main queue so scrolling the AppList stays smooth. The bridge
+// returns nil for apps without a usable icon, which falls back to a
+// generic SF Symbol placeholder.
+struct AppRow: View {
+    let uid: UInt32
+    let name: String
+
+    @State private var icon: UIImage?
+    @State private var attempted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                if let icon {
+                    Image(uiImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 36, height: 36)
+                } else {
+                    Image(systemName: "app.dashed")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 26, height: 26)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(width: 40, height: 40)
+            VStack(alignment: .leading) {
+                Text(name)
+                Text(String(format: "uid=0x%08X", uid))
+                    .font(.caption2.monospaced()).foregroundColor(.secondary)
+            }
+        }
+        .onAppear(perform: loadIcon)
+    }
+
+    private func loadIcon() {
+        guard !attempted else { return }
+        attempted = true
+        let uid = self.uid
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = EKA2L1Emulator.shared().iconPNGData(forUID: uid, sizePx: 72)
+            let image = data.flatMap { UIImage(data: $0) }
+            DispatchQueue.main.async {
+                self.icon = image
+            }
+        }
     }
 }
 
