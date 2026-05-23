@@ -4,16 +4,26 @@ if (BUILD_WITH_VULKAN)
             src/graphics/backend/vulkan/graphics_vulkan.cpp)
 endif ()
 
-# cubeb is now built for iOS too (task 3.7, AudioUnit RemoteIO backend).
-# ffmpeg stays disabled — its bundled binaries are not cross-compiled for
-# iOS, so DSP out-streams / video player remain nullptr on this platform.
-set(DRIVERS_CUBEB_SRC
-        include/drivers/audio/backend/cubeb/audio_cubeb.h
-        include/drivers/audio/backend/cubeb/stream_cubeb.h
-        src/audio/backend/cubeb/audio_cubeb.cpp
-        src/audio/backend/cubeb/stream_cubeb.cpp)
+# Audio backends. iOS uses a native AURemoteIO / AVAudioSession driver
+# (task 3.7) instead of cubeb — cubeb's macOS AudioUnit code path leaks
+# CoreAudio HAL types that the iOS SDK doesn't ship, so a direct
+# implementation is both smaller and easier to keep in sync with the iOS
+# audio APIs. Desktop / Android continue to use cubeb. ffmpeg stays
+# disabled on iOS — its bundled binaries aren't cross-built — so DSP
+# out-streams / video player remain nullptr there.
+if (EKA2L1_IOS)
+    set(DRIVERS_AUDIOUNIT_IOS_SRC
+            include/drivers/audio/backend/audiounit_ios/audio_audiounit_ios.h
+            include/drivers/audio/backend/audiounit_ios/stream_audiounit_ios.h
+            src/audio/backend/audiounit_ios/audio_audiounit_ios.mm
+            src/audio/backend/audiounit_ios/stream_audiounit_ios.mm)
+else()
+    set(DRIVERS_CUBEB_SRC
+            include/drivers/audio/backend/cubeb/audio_cubeb.h
+            include/drivers/audio/backend/cubeb/stream_cubeb.h
+            src/audio/backend/cubeb/audio_cubeb.cpp
+            src/audio/backend/cubeb/stream_cubeb.cpp)
 
-if (NOT EKA2L1_IOS)
     set(DRIVERS_FFMPEG_SRC
             include/drivers/audio/backend/ffmpeg/dsp_ffmpeg.h
             include/drivers/audio/backend/ffmpeg/player_ffmpeg.h
@@ -101,6 +111,7 @@ add_library(drivers
         src/sensor/backend/null/sensor_null.cpp
         src/sensor/sensor.cpp
         src/video/video.cpp
+        ${DRIVERS_AUDIOUNIT_IOS_SRC}
         ${DRIVERS_CUBEB_SRC}
         ${DRIVERS_FFMPEG_SRC}
         ${DRIVERS_OGL_SRC}
@@ -203,11 +214,10 @@ target_link_libraries(miniBAE_EMU PRIVATE common)
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)
     # glad is not linked on iOS — the ogl backend compiles against
-    # OpenGLES.framework via ios_gl_loader.h (task 2.1). cubeb is now in
-    # play for the AudioUnit backend (task 3.7); ffmpeg still stays out
-    # (its bundled binaries aren't cross-built for iOS).
+    # OpenGLES.framework via ios_gl_loader.h (task 2.1). Audio goes
+    # through the native AURemoteIO driver (DRIVERS_AUDIOUNIT_IOS_SRC,
+    # task 3.7 follow-up); cubeb / ffmpeg are not linked.
     target_link_libraries(drivers PRIVATE
-        cubeb
         "-framework OpenGLES"
         "-framework QuartzCore"
         "-framework Foundation"

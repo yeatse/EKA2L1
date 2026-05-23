@@ -171,7 +171,12 @@ option (BUILD_TESTS "Build cubeb tests" OFF)
 # Forcefully disable AAudio (we build with API target 21 minimum)
 set (USE_AAUDIO FALSE CACHE INTERNAL "" FORCE)
 
-add_subdirectory(cubeb)
+if (NOT EKA2L1_IOS)
+    # iOS uses a native AURemoteIO audio_driver (see
+    # src/emu/drivers/.../audiounit_ios). cubeb's bundled cubeb_audiounit.cpp
+    # targets macOS CoreAudio HAL and doesn't cleanly compile on the iOS SDK.
+    add_subdirectory(cubeb)
+endif()
 
 
 # FFMPEG

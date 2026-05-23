@@ -1,0 +1,102 @@
+/*
+ * Copyright (c) 2026 EKA2L1 Team.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+#pragma once
+
+#include <drivers/audio/stream.h>
+
+#include <atomic>
+#include <cstdint>
+#include <vector>
+
+#ifdef __OBJC__
+@class NSObject;
+#endif
+
+#if defined(__OBJC__)
+#import <AudioToolbox/AudioToolbox.h>
+#else
+struct OpaqueAudioComponentInstance;
+using AudioUnit = struct OpaqueAudioComponentInstance *;
+#endif
+
+namespace eka2l1::drivers {
+    // Common bits used by output and input AURemoteIO streams.
+    struct audiounit_ios_stream_base {
+    protected:
+        AudioUnit unit_ = nullptr;
+        data_callback callback_;
+
+        std::uint32_t sample_rate_;
+        std::uint8_t channels_;
+        bool is_input_;
+
+        std::atomic<bool> running_{false};
+        std::atomic<std::uint64_t> position_frames_{0};
+        std::atomic<std::uint64_t> idle_frames_{0};
+
+        // The data_callback contract is signed-16-bit interleaved; the
+        // AURemoteIO buffer points straight at it so no scratch buffer is
+        // needed.
+
+    public:
+        audiounit_ios_stream_base(const std::uint32_t sample_rate,
+            const std::uint8_t channels, data_callback callback, bool is_input);
+        virtual ~audiounit_ios_stream_base();
+
+        std::size_t call_callback(std::int16_t *buffer, const long frames);
+
+    protected:
+        virtual bool should_idle() = 0;
+
+        bool create_unit();
+        bool start_unit();
+        bool stop_unit();
+    };
+
+    struct audiounit_ios_output_stream final : public audio_output_stream,
+                                               public audiounit_ios_stream_base {
+    public:
+        audiounit_ios_output_stream(audio_driver *driver, const std::uint32_t sample_rate,
+            const std::uint8_t channels, data_callback callback);
+        ~audiounit_ios_output_stream() override;
+
+        bool start() override;
+        bool stop() override;
+        void pause() override;
+
+        bool is_playing() override;
+        bool is_pausing() override;
+
+        bool set_volume(const float volume) override;
+        float get_volume() const override;
+
+        bool current_frame_position(std::uint64_t *pos) override;
+
+    protected:
+        bool should_idle() override;
+
+    private:
+        std::atomic<bool> pausing_{false};
+        std::atomic<float> volume_{1.0f};
+    };
+
+    struct audiounit_ios_input_stream final : public audio_input_stream,
+                                              public audiounit_ios_stream_base {
+    public:
+        audiounit_ios_input_stream(audio_driver *driver, const std::uint32_t sample_rate,
+            const std::uint8_t channels, data_callback callback);
+        ~audiounit_ios_input_stream() override;
+
+        bool start() override;
+        bool stop() override;
+
+        bool is_recording() override;
+        bool current_frame_position(std::uint64_t *pos) override;
+
+    protected:
+        bool should_idle() override;
+    };
+}
