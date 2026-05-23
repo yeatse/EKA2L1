@@ -45,5 +45,93 @@
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
+    <!-- Stage 3.5: register the file types EKA2L1 can accept from the Files
+         app / "Open in" / "Share to". The UTI tree is:
+           public.data → com.eka2l1.sis (.sis)
+                       → com.eka2l1.sisx (.sisx)
+           public.font → public.truetype-ttf-font (.ttf)
+                       → public.opentype-font (.otf)
+           public.archive → public.zip-archive (.zip, used for ROM bundles)
+         The exported declarations let other apps know our identifiers; the
+         document-types entry says "we open these" so iOS surfaces EKA2L1 in
+         the Share / Open-in sheet. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Symbian SIS Installer</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.eka2l1.sis</string>
+                <string>com.eka2l1.sisx</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>ROM bundle (zip)</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.zip-archive</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Font (TrueType / OpenType)</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.truetype-ttf-font</string>
+                <string>public.opentype-font</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.eka2l1.sis</string>
+            <key>UTTypeDescription</key>
+            <string>Symbian SIS Installer</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sis</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.eka2l1.sisx</string>
+            <key>UTTypeDescription</key>
+            <string>Symbian Signed SISX Installer</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>sisx</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
 </dict>
 </plist>

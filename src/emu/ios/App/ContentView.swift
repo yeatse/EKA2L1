@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // Stage-2 navigation shell:
 //   1. Rom list   — picks a folder under <Documents>/roms.
@@ -7,12 +8,28 @@ import SwiftUI
 // The CPU smoke surface from stage 1 moves into Diagnostics so it stays
 // reachable but does not block the main flow.
 
+// Stage 3.5 import surface. .fileImporter wraps UIDocumentPickerViewController
+// and handles security-scoped URLs cleanly. We accept SIS / SISX / ZIP (ROM
+// bundle) / TTF / OTF — see Info.plist CFBundleDocumentTypes for the matching
+// UTI declarations.
+private let importTypes: [UTType] = {
+    var v: [UTType] = []
+    if let sis = UTType("com.eka2l1.sis") { v.append(sis) }
+    if let sisx = UTType("com.eka2l1.sisx") { v.append(sisx) }
+    v.append(.zip)
+    v.append(.font)
+    v.append(.data) // fallback so SIS files from sources without UTI hints still pick
+    return v
+}()
+
 struct ContentView: View {
     @State private var booted = false
     @State private var roms: [String] = []
     @State private var apps: [EKA2L1AppEntry] = []
     @State private var sisFiles: [String] = []
     @State private var bootError: String?
+    @State private var importBanner: String?
+    @State private var showingImporter = false
 
     var body: some View {
         NavigationStack {
@@ -20,15 +37,18 @@ struct ContentView: View {
                 if let bootError {
                     Text(bootError).foregroundColor(.red).padding()
                 }
+                if let importBanner {
+                    Text(importBanner).font(.caption).foregroundColor(.green).padding(.horizontal)
+                }
                 List {
                     Section("Documents/roms") {
                         if roms.isEmpty {
-                            Text("Drop a ROM folder into Documents/roms (Files app or scripts/seed_ios_simulator_documents.sh)")
+                            Text("Tap Import to add a ROM bundle (.zip) or SIS / font.")
                                 .font(.caption).foregroundColor(.secondary)
                         }
                         ForEach(roms, id: \.self) { name in
                             NavigationLink(name) {
-                                AppListView(romName: name, apps: $apps, sisFiles: $sisFiles)
+                                AppListView(romName: name, apps: $apps, sisFiles: $sisFiles, importBanner: $importBanner)
                             }
                         }
                     }
@@ -39,10 +59,25 @@ struct ContentView: View {
             }
             .navigationTitle("EKA2L1")
             .toolbar {
+                Button("Import") { showingImporter = true }
                 Button("Rescan", action: refresh)
+            }
+            .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
+                handleImport(result)
             }
         }
         .onAppear(perform: bootIfNeeded)
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            importBanner = "Import failed: \(err.localizedDescription)"
+        case .success(let urls):
+            let outcome = ImportRouter.shared.ingest(urls: urls)
+            importBanner = outcome
+            refresh()
+        }
     }
 
     private func bootIfNeeded() {
@@ -71,9 +106,11 @@ struct AppListView: View {
     let romName: String
     @Binding var apps: [EKA2L1AppEntry]
     @Binding var sisFiles: [String]
+    @Binding var importBanner: String?
 
     @State private var mountedRom: String?
     @State private var mountError: String?
+    @State private var showingImporter = false
 
     var body: some View {
         List {
@@ -100,7 +137,7 @@ struct AppListView: View {
             }
             Section("Install SIS") {
                 if sisFiles.isEmpty {
-                    Text("Drop a .sis into Documents/sis to install.")
+                    Text("Tap Import to add a .sis / .sisx file.")
                         .font(.caption).foregroundColor(.secondary)
                 }
                 ForEach(sisFiles, id: \.self) { name in
@@ -109,6 +146,27 @@ struct AppListView: View {
             }
         }
         .navigationTitle(romName)
+        .toolbar {
+            Button("Import") { showingImporter = true }
+        }
+        .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
+            switch result {
+            case .failure(let err):
+                importBanner = "Import failed: \(err.localizedDescription)"
+            case .success(let urls):
+                importBanner = ImportRouter.shared.ingest(urls: urls)
+                refreshSisFiles()
+            }
+        }
+    }
+
+    private func refreshSisFiles() {
+        let fm = FileManager.default
+        let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
+        let sisDir = (docs as NSString).appendingPathComponent("sis")
+        sisFiles = ((try? fm.contentsOfDirectory(atPath: sisDir)) ?? []).filter {
+            $0.lowercased().hasSuffix(".sis") || $0.lowercased().hasSuffix(".sisx")
+        }
     }
 
     private func mount() {

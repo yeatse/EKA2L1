@@ -415,11 +415,16 @@
 - ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：fresh sandbox → mount N95 → `drives/z/rm-320` 是真目录（不是 symlink）、`roms/rm-320/SYM.ROM` link-count = 2 hardlink → applist 63 → Calculator 真实 UI 渲染稳定。
 - 🟡 剩余 follow-up：①裸 ROM 镜像（没有 desktop device tree 的 .rom 文件）→ 自动生成 minimal device tree 的路径还没做，要和 3.5 UIDocumentPicker ZIP/ROM 导入流程一起 land；②空白 sandbox + UI 全程导入 + applist 出 Snakes 的端到端验收要等 3.5 做完才能跑。
 
-#### 3.5 UIDocumentPicker 文件导入
-- Info.plist 加 UTType / `CFBundleDocumentTypes` / `LSItemContentTypes`：`com.symbian.sis` / `com.symbian.sisx` / `public.zip-archive`（ROM）/ `public.truetype-ttf-font`（字体）。
-- ROM 列表页 + AppList 页加导入按钮 → `UIDocumentPickerViewController(forOpeningContentTypes:)`；选完后 IosEmulator 按 UTType 分发到对应处理器（ROM 解压 / SIS 走 3.4 的 install_package / 字体落 `data/fonts/`）。
-- "Share to EKA2L1" extension 留作未来工作，阶段 3 只做 in-app picker。
-- 阶段 2 留下的 `scripts/seed_ios_simulator_documents.sh` 仍保留，作为开发期复跑捷径，不进 release 路径。
+#### 3.5 UIDocumentPicker 文件导入 🟡
+- ✅ Info.plist：新增 `CFBundleDocumentTypes` 三条（SIS/SISX viewer-owner、ROM zip viewer-alt、TTF/OTF viewer-alt）+ `UTExportedTypeDeclarations`（`com.eka2l1.sis` / `com.eka2l1.sisx` conform 到 `public.data` + `.sis` / `.sisx` extension tag）。`UIFileSharingEnabled` 与 `LSSupportsOpeningDocumentsInPlace` 已经在阶段 0 打开，保持不变。
+- ✅ SwiftUI：`ContentView` / `AppListView` 顶 toolbar 加 **Import** 按钮，触发 `.fileImporter(... allowedContentTypes: [com.eka2l1.sis, com.eka2l1.sisx, .zip, .font, .data] ...)`（`.data` 兜底，应对 source 没塞 UTI 提示的 .sis 文件）。
+- ✅ 新建 `src/emu/ios/App/ImportRouter.swift`：负责安全作用域 URL pair（`startAccessingSecurityScopedResource` / `stopAccessing...`，少了这步 sandbox 拷贝直接 EPERM），按扩展名分发：
+  - `.sis` / `.sisx` → `Documents/sis/<name>`（后续走原本的 `installSisAtPath:` 路径）。
+  - `.ttf` / `.otf` → `Documents/data/fonts/<name>`（3.12 引导用同一目录）。
+  - `.zip` → 暂返回明确错误 "ROM .zip 导入交给 3.5 follow-up"（miniz 已经 link 进 common，但需要在 Obj-C++ 侧暴露解压 API，给 3.5 收尾或并到 3.4 的"裸 ROM 装 device tree"那一步）。
+  - `*.rom` → `Documents/roms/<basename>/data/roms/<lowercased>/SYM.ROM`（裸 ROM；自动生成 minimal device tree 仍待 3.4 follow-up）。
+- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：build SUCCEEDED → launch → 主页右上 **Import** 按钮可见 → tap 弹出系统 UIDocumentPickerViewController（"最近项目" / "共享" / "浏览" 三个 tab，"最近项目"为空）。截屏 `docs/screenshots/ios-stage3/3.5-import/{rom-list-with-import-button,document-picker-presented}.jpg`。
+- 🟡 剩余 follow-up：①ZIP unzip 走 miniz（与 3.4 第二个 follow-up 项一起）；②"Share to EKA2L1" extension（外部应用 Share 菜单直接送进来）推迟到 stage 3 收尾或更后；③`scripts/seed_ios_simulator_documents.sh` 继续保留为开发期复跑捷径，不进 release 路径。
 
 #### 3.6 AppList 图标（SVG / MIF 解码）
 - 在 IosEmulator 侧给 `EKA2L1AppEntry` 加 `iconPNGData: NSData?` 字段；后端遍历 registration 时调 applist server 取 icon（复用 Qt / Android 的解码路径），mif 走 mif decoder、svg 走 lunasvg，统一光栅化到 64×64 RGBA，编码 PNG 后跨 ARC 边界传给 Swift。
