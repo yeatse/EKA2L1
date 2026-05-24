@@ -74,7 +74,7 @@ private struct VirtualKeypad: View {
 
     private func keyButton(_ label: String, scan: UInt32) -> some View {
         Button {
-            EKA2L1Emulator.shared().tapRawKey(scan)
+            EKA2L1Bridge.shared.tapRawKey(scan)
         } label: {
             Text(label)
                 .font(.system(size: 15, weight: .semibold, design: .rounded))
@@ -85,7 +85,7 @@ private struct VirtualKeypad: View {
 
     private func iconButton(_ symbol: String, scan: UInt32) -> some View {
         Button {
-            EKA2L1Emulator.shared().tapRawKey(scan)
+            EKA2L1Bridge.shared.tapRawKey(scan)
         } label: {
             Image(systemName: symbol)
                 .frame(width: 44, height: 36)

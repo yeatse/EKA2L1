@@ -25,7 +25,7 @@ private let importTypes: [UTType] = {
 struct ContentView: View {
     @State private var booted = false
     @State private var roms: [String] = []
-    @State private var apps: [EKA2L1AppEntry] = []
+    @State private var apps: [EKA2L1AppItem] = []
     @State private var sisFiles: [String] = []
     @State private var bootError: String?
     @State private var importBanner: String?
@@ -94,7 +94,7 @@ struct ContentView: View {
     private func bootIfNeeded() {
         guard !booted else { return }
         let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-        if EKA2L1Emulator.shared().start(withDocumentsPath: docs) {
+        if EKA2L1Bridge.shared.start(documentsPath: docs) {
             booted = true
             refresh()
         } else {
@@ -103,7 +103,7 @@ struct ContentView: View {
     }
 
     private func refresh() {
-        roms = EKA2L1Emulator.shared().availableRoms()
+        roms = EKA2L1Bridge.shared.availableRoms()
         let fm = FileManager.default
         let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
         let sisDir = (docs as NSString).appendingPathComponent("sis")
@@ -115,7 +115,7 @@ struct ContentView: View {
 
 struct AppListView: View {
     let romName: String
-    @Binding var apps: [EKA2L1AppEntry]
+    @Binding var apps: [EKA2L1AppItem]
     @Binding var sisFiles: [String]
     @Binding var importBanner: String?
 
@@ -181,9 +181,9 @@ struct AppListView: View {
     }
 
     private func mount() {
-        if EKA2L1Emulator.shared().mountRomNamed(romName) {
+        if EKA2L1Bridge.shared.mountRom(named: romName) {
             mountedRom = romName
-            apps = EKA2L1Emulator.shared().rescanApps()
+            apps = EKA2L1Bridge.shared.rescanApps()
         } else {
             mountError = "Mount failed (no device installed under this ROM folder?)"
         }
@@ -192,8 +192,8 @@ struct AppListView: View {
     private func install(_ filename: String) {
         let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
         let full = (docs as NSString).appendingPathComponent("sis/\(filename)")
-        _ = EKA2L1Emulator.shared().installSis(atPath: full)
-        apps = EKA2L1Emulator.shared().rescanApps()
+        _ = EKA2L1Bridge.shared.installSis(atPath: full)
+        apps = EKA2L1Bridge.shared.rescanApps()
     }
 }
 
@@ -239,7 +239,7 @@ struct AppRow: View {
         attempted = true
         let uid = self.uid
         DispatchQueue.global(qos: .userInitiated).async {
-            let data = EKA2L1Emulator.shared().iconPNGData(forUID: uid, sizePx: 72)
+            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 72)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
                 self.icon = image
@@ -249,7 +249,7 @@ struct AppRow: View {
 }
 
 struct DiagnosticsView: View {
-    @State private var dyncomResult: EKA2L1CpuSmokeResult?
+    @State private var dyncomResult: CpuSmokeReport?
     @State private var running = false
 
     var body: some View {
@@ -268,7 +268,7 @@ struct DiagnosticsView: View {
                 Button(running ? "Running…" : "Run dyncom smoke") {
                     running = true
                     DispatchQueue.global(qos: .userInitiated).async {
-                        let r = EKA2L1CpuSmokeBridge.run(with: .dyncom)
+                        let r = EKA2L1Bridge.runSmoke(backend: .dyncom)
                         DispatchQueue.main.async {
                             dyncomResult = r
                             running = false

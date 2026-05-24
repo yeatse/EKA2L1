@@ -28,7 +28,9 @@ set(EKA2L1_IOS_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Bridge")
 set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/EKA2L1App.swift"
     "${EKA2L1_IOS_APP_DIR}/ContentView.swift"
+    "${EKA2L1_IOS_APP_DIR}/EKA2L1Bridge.swift"
     "${EKA2L1_IOS_APP_DIR}/EmulatorView.swift"
+    "${EKA2L1_IOS_APP_DIR}/EmulatorViewController.swift"
     "${EKA2L1_IOS_APP_DIR}/ImportRouter.swift"
     "${EKA2L1_IOS_APP_DIR}/SettingsView.swift"
     "${EKA2L1_IOS_BRIDGE_DIR}/StartupBridge.h"
@@ -38,8 +40,6 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.mm"
-    "${EKA2L1_IOS_BRIDGE_DIR}/EmulatorViewController.h"
-    "${EKA2L1_IOS_BRIDGE_DIR}/EmulatorViewController.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
     "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
@@ -48,6 +48,7 @@ set(EKA2L1_IOS_SOURCES
 add_executable(${EKA2L1_IOS_APP} MACOSX_BUNDLE ${EKA2L1_IOS_SOURCES})
 
 target_include_directories(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}")
+target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE GLES_SILENCE_DEPRECATION)
 
 # Link the headline emu static libraries so the build graph is exercised
 # end to end. We mirror the Android JNI bridge link line (see
@@ -73,7 +74,7 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${EKA2L1_IOS_BUNDLE_ID}"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"
-    XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+    XCODE_ATTRIBUTE_SWIFT_VERSION "6.0"
     XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     # Xcode 26's swift driver rejects the bare -stdlib=libc++ that CMake's
     # Xcode generator otherwise pushes into OTHER_SWIFT_FLAGS for mixed
@@ -82,7 +83,7 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     # the Obj-C++ bridge through plain Obj-C, so C++ interop on the Swift
     # side stays disabled.
     XCODE_ATTRIBUTE_SWIFT_OBJC_INTEROP_MODE "objc"
-    XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "$(inherited)"
+    XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "$(inherited) -Xcc -DGLES_SILENCE_DEPRECATION"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${EKA2L1_IOS_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
     # Stage-0 builds are unsigned. Developers can flip these via -D overrides

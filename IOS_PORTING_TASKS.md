@@ -252,15 +252,16 @@
 - [x] simulator build 通过；运行时是否能真正拉起一个 GUI 应用要等任务 2.7 / 2.9 装好渲染管线后才能验证，stage-2 验收阶段最后跑 manual 走查。
 
 #### 2.7 SwiftUI 外壳与 EAGL 视图
-- [x] 重写 `src/emu/ios/App/ContentView.swift`：`NavigationStack` 三屏 — ROM 列表（`Documents/roms` 一级目录）→ App 列表（`mountRomNamed:` + `rescanApps` + "Install SIS" 列出 `Documents/sis/` 下 `.sis/.sisx`）→ EmulatorView。原 CPU smoke UI 移到 "Diagnostics" 二级页（保留 `EKA2L1CpuSmokeBridge` 入口）。booting 时调 `EKA2L1Emulator.shared().start(documentsPath:)`，失败展示 banner。
-- [x] 新建 `src/emu/ios/App/EmulatorView.swift`：`UIViewControllerRepresentable`，把 UID 透到 `EmulatorViewController`。
-- [x] 新建 `src/emu/ios/Bridge/EmulatorViewController.{h,mm}`：内部 `EAGL2L1View : UIView`，`+layerClass = CAEAGLLayer`，`contentScaleFactor = UIScreen.mainScreen.nativeScale`，`opaque = YES`；`layoutSubviews` 算出像素尺寸后 `attachLayer:pixelSize:scale:` 推回 IosEmulator。`viewDidAppear` 在 layer ready 后 `launchAppWithUID:` + `resume`；`viewWillDisappear` `pause`。
-- [x] Bridging header 加入 `EmulatorViewController.h`；CMake bundle 编进 `EmulatorView.swift` + `EmulatorViewController.{h,mm}`；simulator build 通过。
+- [x] 重写 `src/emu/ios/App/ContentView.swift`：`NavigationStack` 三屏 — ROM 列表（`Documents/roms` 一级目录）→ App 列表（`mountRomNamed:` + `rescanApps` + "Install SIS" 列出 `Documents/sis/` 下 `.sis/.sisx`）→ EmulatorView。原 CPU smoke UI 移到 "Diagnostics" 二级页。booting 时调 Swift facade `EKA2L1Bridge.shared.start(documentsPath:)`，失败展示 banner。
+- [x] 新建 `src/emu/ios/App/EKA2L1Bridge.swift`：Swift 6 前端 facade，集中封装 `EKA2L1Emulator` / `EKA2L1CpuSmokeBridge` / config / haptics / input / icon / smoke 调用；SwiftUI 层只依赖 Swift value types（`EKA2L1AppItem` / `CpuSmokeReport`），ObjC 只保留 C++ 桥接边界。
+- [x] 新建 `src/emu/ios/App/EmulatorView.swift`：`UIViewControllerRepresentable`，把 UID 透到 Swift `EmulatorViewController`。
+- [x] `src/emu/ios/App/EmulatorViewController.swift` 替换旧 `Bridge/EmulatorViewController.{h,mm}`：内部 `EKA2L1RenderView : UIView`，`layerClass = CAEAGLLayer`，`contentScaleFactor = UIScreen.main.nativeScale`，`isOpaque = true`；`layoutSubviews` 算出像素尺寸后通过 `EKA2L1Bridge.attach(layer:pixelSize:scale:)` 推回 IosEmulator。`viewDidAppear` 在 layer ready 后 `launchApp(uid:)` + `resume`；`viewWillDisappear` `pause`。
+- [x] Bridging header 不再暴露 UIKit 控制器；CMake bundle 编进 Swift bridge / Swift controller，并设置 `SWIFT_VERSION=6.0`。`IosEmulator.h` 给 Swift 调用面补 `NS_SWIFT_NAME`，避免 Swift 侧依赖 ObjC selector 细节。
 - [x] 单指触控派发到 `EKA2L1Emulator::submitPointerEventAtX:y:phase:pointerId:`（任务 2.8 的派发链路在这里就位，IosEmulator 内部转发到 window_server 也在 2.8 完成）。
 
 #### 2.8 输入：触控 → pointer_event
-- [x] `EAGL2L1View` 重写 `touchesBegan/Moved/Ended/Cancelled`：对每个 `UITouch` 抽 `locationInView:`，乘 `contentScaleFactor` 转 framebuffer 像素，phase 映射 `UITouchPhase → EKA2L1PointerPhase`，`pointerId = (uintptr_t)touch` 单调可比，调 `EKA2L1Emulator::submitPointerEventAtX:y:phase:pointerId:`。
-- [x] `multipleTouchEnabled = NO`（stage-2 验收只要求单指）；多指 / 长按 / 拖拽手势识别留给阶段 3。
+- [x] Swift `EKA2L1RenderView` 重写 `touchesBegan/Moved/Ended/Cancelled`：对每个 `UITouch` 抽 `location(in:)`，乘 `contentScaleFactor` 转 framebuffer 像素，phase 映射 `UITouch.Phase → EKA2L1PointerPhase`，`pointerId = ObjectIdentifier(touch)` 单调可比，调 `EKA2L1Bridge.submitPointer(x:y:phase:pointerId:)`。
+- [x] 阶段 2 初始只要求单指；阶段 3 已把 `isMultipleTouchEnabled = true`、长按、pinch 与虚拟键盘接到 Swift 控制器。
 - [x] `IosEmulator::submitPointerEventAtX:...` 构造 `drivers::input_event{ type_=touch, mouse_=…, raw_screen_pos_=true, mouse_id=pointerId&0xFFFFFFFF }`，phase 映射 `mouse_action_press/repeat/release`，调 `_state->winserv->queue_input_from_driver(evt)`。`winserv` 句柄是任务 2.6 `mountRomNamed:` 时从 `kern->get_by_name<service::server>(get_winserv_name_by_epocver(...))` 拿到的，未挂 ROM 时 silently drop。
 - [x] 不接键盘 / 物理键盘 / 游戏手柄；阶段 4 与发布通道一起做。simulator build 通过。
 
@@ -461,11 +462,11 @@
 - ✅ `SettingsView` 暴露 **Test vibration** 手动触发 180ms haptic，方便真机验收。模拟器上 Core Haptics 不可用属于平台限制。
 
 #### 3.9 多指 / 手势 🟡
-- ✅ `EAGL2L1View.multipleTouchEnabled = YES`，现有 `touchesBegan/Moved/Ended/Cancelled` 已对 `NSSet<UITouch *>` 逐个转发，pointerId 继续使用 `UITouch*` hash。
-- ✅ `EAGL2L1View` 加 `UILongPressGestureRecognizer`：长按映射为 `std_key_device_3`（window server 已把它折算成 select/enter）。
+- ✅ `EKA2L1RenderView.isMultipleTouchEnabled = true`，现有 `touchesBegan/Moved/Ended/Cancelled` 已对 `Set<UITouch>` 逐个转发，pointerId 继续使用 touch object identity。
+- ✅ `EKA2L1RenderView` 加 `UILongPressGestureRecognizer`：长按映射为 `std_key_device_3`（window server 已把它折算成 select/enter）。
 - ✅ `UIPinchGestureRecognizer`：pinch end 时按 scale 映射成 up/down raw key，作为 S60 列表和菜单的轻量手势入口。
-- ✅ `EmulatorView` 增加可隐藏的虚拟键盘 overlay：方向键、select、左右软键、0-9、`*`、`#` 都走 `EKA2L1Emulator::tapRawKey` → `drivers::input_event_type::key_raw` → window server。数字键/`*` 对齐 Android 现有虚拟键盘，发送 ASCII `'0'..'9'` / `'*'`；`#` 发送 `0x7f`。
-- ✅ `EAGL2L1View` 同步接入外接键盘 `UIPress`：数字键/`*`/`#`、方向键、Return/Escape 映射到 raw key。手柄仍推迟到阶段 4。
+- ✅ `EmulatorView` 增加可隐藏的虚拟键盘 overlay：方向键、select、左右软键、0-9、`*`、`#` 都走 `EKA2L1Bridge.tapRawKey` → `EKA2L1Emulator::tapRawKey` → `drivers::input_event_type::key_raw` → window server。数字键/`*` 对齐 Android 现有虚拟键盘，发送 ASCII `'0'..'9'` / `'*'`；`#` 发送 `0x7f`。
+- ✅ `EKA2L1RenderView` 同步接入外接键盘 `UIPress`：数字键/`*`/`#`、方向键、Return/Escape 映射到 raw key。手柄仍推迟到阶段 4。
 - ✅ 运行验证：iPhone 16 Pro / iOS 26.5 模拟器 build-and-run → mount N95 → 打开 `Final Battle` → 语言菜单按虚拟键 `1` 进入主菜单，确认 Final Battle 不再黑屏且数字键路径可用。
 
 #### 3.10 设置面板 ✅
@@ -530,6 +531,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-05-24 | iOS 实现层代码熵清理：Swift target 切到 Swift 6；新增 `EKA2L1Bridge.swift` 作为 Swift facade，SwiftUI / UIKit Swift 控制器不再直接散落调用 ObjC facade；`EmulatorViewController` 从 ObjC++ 迁到 Swift，ObjC/ObjC++ 仅保留 `StartupBridge` / `CpuSmokeBridge` / `IosEmulator` 这类 C++ 桥接边界；bridging header 移除 UIKit 控制器导入，`IosEmulator.h` 补 `NS_SWIFT_NAME` 稳定 Swift API。回归验证：`scripts/build_ios.sh simulator` / `scripts/build_ios.sh smoke` 通过；xcodebuildmcp 复验 Calculator 与 Final Battle。 |
 | 2026-05-24 | 推进阶段 3.8–3.11：iOS HWRM 振动接 Core Haptics；EmulatorView 增加多指/长按/pinch 与虚拟 S60 键盘，数字键对齐 Android 的 ASCII raw key；xcodebuildmcp 验证 Final Battle 语言菜单按虚拟键 `1` 可进入主菜单；新增 SwiftUI SettingsView 并通过 `IosEmulator` snapshot/apply 序列化到 `config.yml`；iOS input dialog no-op 替换为 UIAlertController 实现。 |
 | 2026-05-24 | iOS simulator 路径回接 FFmpeg：新增 out-of-tree FFmpeg iOS 构建脚本，`build_ios.sh` 自动先产出 simulator/device 对应 static libs；CMake 在 iOS 下恢复 `ffmpeg` target，drivers 重新编入 DSP/audio/video FFmpeg backend。`scripts/build_ios.sh simulator` 通过，符号检查确认 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 已进入 `libdrivers.a`。 |
 | 2026-05-24 | 修复 iOS AppList 滚动到空格 caption 应用时的 `pystr::rstrip()` hardening abort，并给 MIF icon cache name 加 UID fallback 与图标解码串行化；修复 Final Battle 黑屏的直接原因：iOS DSP out stream 因 FFmpeg skip 返回空，当前先接 PCM16/PCM8-only fallback，游戏可进入语言选择界面。文档新增 3.7.1 iOS DSP / FFmpeg 回接计划。 |

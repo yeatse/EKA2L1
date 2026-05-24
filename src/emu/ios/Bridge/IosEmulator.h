@@ -51,7 +51,7 @@ NS_ASSUME_NONNULL_BEGIN
 // viewDidLayoutSubviews so re-orientation is handled.
 - (void)attachLayer:(CAEAGLLayer *)layer
          pixelSize:(CGSize)pixelSize
-              scale:(CGFloat)scale;
+              scale:(CGFloat)scale NS_SWIFT_NAME(attach(layer:pixelSize:scale:));
 
 - (void)pause;
 - (void)resume;
@@ -68,7 +68,7 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 - (void)submitPointerEventAtX:(CGFloat)x
 	                            y:(CGFloat)y
 	                        phase:(EKA2L1PointerPhase)phase
-	                    pointerId:(uintptr_t)pointerId;
+	                    pointerId:(uintptr_t)pointerId NS_SWIFT_NAME(submitPointer(x:y:phase:pointerId:));
 
 - (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed;
 - (void)tapRawKey:(uint32_t)scanCode;

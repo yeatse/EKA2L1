@@ -15,7 +15,7 @@ struct EKA2L1App: App {
         // EKA2L1_SMOKE marker on stdout. Keep firing the dyncom check at
         // launch so the CI signal survives the stage-2 UI restructure.
         DispatchQueue.global(qos: .background).async {
-            let r = EKA2L1CpuSmokeBridge.run(with: .dyncom)
+            let r = EKA2L1Bridge.runSmoke(backend: .dyncom)
             let backend = r.resolvedBackend == .dyncom ? "dyncom" : "dynarmic"
             if r.pass {
                 NSLog("EKA2L1_SMOKE: PASS backend=\(backend) instrs=\(r.instructionsExecuted) pc=0x%08X", r.pc)
@@ -32,9 +32,9 @@ struct EKA2L1App: App {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
-                EKA2L1Emulator.shared().resume()
+                EKA2L1Bridge.shared.resume()
             case .inactive, .background:
-                EKA2L1Emulator.shared().pause()
+                EKA2L1Bridge.shared.pause()
             @unknown default:
                 break
             }

@@ -36,7 +36,7 @@ struct SettingsView: View {
             Section("Input") {
                 Toggle("Virtual keypad", isOn: $showVirtualKeypad)
                 Button("Test vibration") {
-                    EKA2L1Emulator.shared().testVibration()
+                    EKA2L1Bridge.shared.testVibration()
                 }
             }
             Section("Runtime") {
@@ -59,7 +59,7 @@ struct SettingsView: View {
     }
 
     private func load() {
-        let snapshot = EKA2L1Emulator.shared().currentConfigSnapshot()
+        let snapshot = EKA2L1Bridge.shared.currentConfigSnapshot()
         if let volume = snapshot["audioMasterVolume"] as? NSNumber {
             audioMasterVolume = Double(truncating: volume)
         }
@@ -97,6 +97,6 @@ struct SettingsView: View {
             "deviceDisplayName": deviceDisplayName,
             "logFilter": logFilter
         ]
-        _ = EKA2L1Emulator.shared().applyConfigSnapshot(snapshot)
+        _ = EKA2L1Bridge.shared.applyConfigSnapshot(snapshot)
     }
 }
