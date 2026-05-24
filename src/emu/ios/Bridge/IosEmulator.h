@@ -8,7 +8,7 @@
 // in IosEmulator.mm.
 
 #import <Foundation/Foundation.h>
-#import <QuartzCore/CAEAGLLayer.h>
+#import <QuartzCore/CALayer.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -47,9 +47,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)installSisAtPath:(NSString *)sisPath;
 
 // Render surface / lifecycle ----------------------------------------------
-// Frontend hands the EAGLView's CAEAGLLayer here. Called from
-// viewDidLayoutSubviews so re-orientation is handled.
-- (void)attachLayer:(CAEAGLLayer *)layer
+// Frontend hands the render CALayer here. Called from viewDidLayoutSubviews so
+// re-orientation is handled; the iOS graphics context accepts CAMetalLayer by
+// default and CAEAGLLayer when the fallback setting is disabled.
+- (void)attachLayer:(CALayer *)layer
          pixelSize:(CGSize)pixelSize
               scale:(CGFloat)scale NS_SWIFT_NAME(attach(layer:pixelSize:scale:));
 

@@ -563,8 +563,8 @@ namespace eka2l1::ios {
 
     auto *state = _state.get();
     _state->graphics_thread = std::make_unique<std::thread>([state]() {
-        // Wait for the EAGLView to publish its CAEAGLLayer; the EAGL context
-        // can't be created without a drawable. attachLayer:pixelSize:scale:
+        // Wait for the render view to publish its CALayer; the graphics
+        // context can't be created without a drawable. attachLayer:pixelSize:scale:
         // flips layer_dirty under layer_mutex.
         std::unique_lock<std::mutex> lock(state->layer_mutex);
         state->layer_cv.wait(lock, [state]() {
@@ -963,7 +963,7 @@ namespace eka2l1::ios {
     return result == eka2l1::package::installation_result_success ? YES : NO;
 }
 
-- (void)attachLayer:(CAEAGLLayer *)layer
+- (void)attachLayer:(CALayer *)layer
          pixelSize:(CGSize)pixelSize
               scale:(CGFloat)scale {
     if (!_state) {

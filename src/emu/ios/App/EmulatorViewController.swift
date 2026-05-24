@@ -1,16 +1,10 @@
 import QuartzCore
 import UIKit
 
-private final class EKA2L1RenderView: UIView {
+private class EKA2L1RenderView: UIView {
     var surfaceReady = false
 
-    override class var layerClass: AnyClass {
-        CAEAGLLayer.self
-    }
-
-    private var eaglLayer: CAEAGLLayer {
-        layer as! CAEAGLLayer
-    }
+    var renderLayer: CALayer { layer }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -18,7 +12,7 @@ private final class EKA2L1RenderView: UIView {
         isMultipleTouchEnabled = true
         isOpaque = true
         backgroundColor = .black
-        eaglLayer.isOpaque = true
+        configureLayer()
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPress.minimumPressDuration = 0.45
@@ -42,6 +36,14 @@ private final class EKA2L1RenderView: UIView {
         becomeFirstResponder()
     }
 
+    func configureLayer() {
+        renderLayer.isOpaque = true
+    }
+
+    func updateDrawableSize(_ pixelSize: CGSize, scale: CGFloat) {
+        renderLayer.contentsScale = scale
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
 
@@ -49,7 +51,8 @@ private final class EKA2L1RenderView: UIView {
         let pixels = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         guard pixels.width > 0, pixels.height > 0 else { return }
 
-        EKA2L1Bridge.shared.attach(layer: eaglLayer, pixelSize: pixels, scale: scale)
+        updateDrawableSize(pixels, scale: scale)
+        EKA2L1Bridge.shared.attach(layer: renderLayer, pixelSize: pixels, scale: scale)
         surfaceReady = true
     }
 
@@ -163,6 +166,49 @@ private final class EKA2L1RenderView: UIView {
     }
 }
 
+private final class EKA2L1MetalRenderView: EKA2L1RenderView {
+    override class var layerClass: AnyClass {
+        CAMetalLayer.self
+    }
+
+    private var metalLayer: CAMetalLayer {
+        layer as! CAMetalLayer
+    }
+
+    override var renderLayer: CALayer { metalLayer }
+
+    override func configureLayer() {
+        super.configureLayer()
+        metalLayer.framebufferOnly = false
+        metalLayer.pixelFormat = .bgra8Unorm
+    }
+
+    override func updateDrawableSize(_ pixelSize: CGSize, scale: CGFloat) {
+        super.updateDrawableSize(pixelSize, scale: scale)
+        metalLayer.drawableSize = pixelSize
+    }
+}
+
+private final class EKA2L1EAGLRenderView: EKA2L1RenderView {
+    override class var layerClass: AnyClass {
+        CAEAGLLayer.self
+    }
+
+    private var eaglLayer: CAEAGLLayer {
+        layer as! CAEAGLLayer
+    }
+
+    override var renderLayer: CALayer { eaglLayer }
+
+    override func configureLayer() {
+        super.configureLayer()
+        eaglLayer.drawableProperties = [
+            kEAGLDrawablePropertyRetainedBacking: false,
+            kEAGLDrawablePropertyColorFormat: kEAGLColorFormatRGBA8,
+        ]
+    }
+}
+
 final class EmulatorViewController: UIViewController {
     private let uid: UInt32
     private var gameView: EKA2L1RenderView {
@@ -180,7 +226,13 @@ final class EmulatorViewController: UIViewController {
     }
 
     override func loadView() {
-        let renderView = EKA2L1RenderView(frame: UIScreen.main.bounds)
+        let key = "ios.useMetalRenderer"
+        let useMetal = UserDefaults.standard.object(forKey: key) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: key)
+        let renderView: EKA2L1RenderView = useMetal
+            ? EKA2L1MetalRenderView(frame: UIScreen.main.bounds)
+            : EKA2L1EAGLRenderView(frame: UIScreen.main.bounds)
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view = renderView
     }

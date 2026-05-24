@@ -61,7 +61,7 @@ final class EKA2L1Bridge {
         emulator.installSis(atPath: path)
     }
 
-    func attach(layer: CAEAGLLayer, pixelSize: CGSize, scale: CGFloat) {
+    func attach(layer: CALayer, pixelSize: CGSize, scale: CGFloat) {
         emulator.attach(layer: layer, pixelSize: pixelSize, scale: scale)
     }
 

@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
     @AppStorage("ios.orientation") private var orientation = "auto"
+    @AppStorage("ios.useMetalRenderer") private var useMetalRenderer = true
 
     @State private var audioMasterVolume = 100.0
     @State private var integerScaling = true
@@ -24,6 +25,7 @@ struct SettingsView: View {
                 }
             }
             Section("Graphics") {
+                Toggle("Metal renderer", isOn: $useMetalRenderer)
                 Toggle("Integer scaling", isOn: $integerScaling)
                 Toggle("Nearest filtering", isOn: $nearestNeighborFiltering)
             }

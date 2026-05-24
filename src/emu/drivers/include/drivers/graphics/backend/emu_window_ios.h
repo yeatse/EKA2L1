@@ -10,10 +10,10 @@
 #include <cstdint>
 
 namespace eka2l1::drivers {
-    // iOS-side analogue of emu_window_android: holds the CAEAGLLayer pointer
-    // owned by the frontend's EAGLView and the current framebuffer geometry,
-    // so window_system_info::render_surface can be threaded into the EAGL
-    // graphics context. The frontend updates dimensions from
+    // iOS-side analogue of emu_window_android: holds the render CALayer pointer
+    // owned by the frontend's render view and the current framebuffer geometry,
+    // so window_system_info::render_surface can be threaded into the graphics
+    // context. The frontend updates dimensions from
     // viewDidLayoutSubviews; pointer events bypass emu_window and go through
     // IosEmulator directly (task 2.8).
     class emu_window_ios final : public emu_window {
@@ -21,9 +21,9 @@ namespace eka2l1::drivers {
         emu_window_ios();
 
         // Frontend hooks ----------------------------------------------------
-        // Called by EAGLView whenever the bound CAEAGLLayer is created or
-        // recreated. `layer` is a CAEAGLLayer* (kept opaque so this header
-        // stays pure C++).
+        // Called by the render view whenever the bound CALayer is created or
+        // recreated. `layer` is a CAMetalLayer* or CAEAGLLayer* (kept opaque
+        // so this header stays pure C++).
         void surface_changed(void *layer, int pixel_width, int pixel_height, float scale);
 
         // emu_window interface ---------------------------------------------

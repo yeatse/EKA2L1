@@ -165,9 +165,8 @@ if(WIN32)
 
     target_link_libraries(drivers PRIVATE opengl32.lib Mfuuid.lib Propsys.lib)
 elseif (EKA2L1_IOS)
-    # EAGL-backed GLES3 context (task 2.2) plus emu_window_ios (task 2.3).
-    # The frontend's EAGLView hands a CAEAGLLayer in via emu_window_ios, which
-    # surfaces it on window_system_info::render_surface for the context.
+    # iOS GLES context (task 2.2) plus emu_window_ios (task 2.3). The frontend
+    # hands a CAMetalLayer by default, with CAEAGLLayer retained as a fallback.
     target_sources(drivers PRIVATE
         src/graphics/backend/context_eagl.h
         src/graphics/backend/context_eagl.mm
@@ -223,6 +222,7 @@ if (EKA2L1_IOS)
     # OpenGLES.framework via ios_gl_loader.h (task 2.1). Audio goes
     # through the native AURemoteIO driver (DRIVERS_AUDIOUNIT_IOS_SRC).
     target_link_libraries(drivers PRIVATE
+        "-framework Metal"
         "-framework OpenGLES"
         "-framework QuartzCore"
         "-framework Foundation"

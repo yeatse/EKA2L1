@@ -6,22 +6,27 @@
 #if defined(__OBJC__)
 #import <Foundation/Foundation.h>
 @class EAGLContext;
+@class CALayer;
 @class CAEAGLLayer;
+@class CAMetalLayer;
 #else
 struct EAGLContext;
+struct CALayer;
 struct CAEAGLLayer;
+struct CAMetalLayer;
 #endif
 
 #include <drivers/graphics/context.h>
 
+#include <cstdint>
+#include <vector>
+
 namespace eka2l1::drivers::graphics {
     // EAGL-backed GLES3 context for the iOS frontend.
     //
-    // Constructed with `window_system_info::render_surface` pointing at a
-    // CAEAGLLayer (set up by the iOS frontend's EAGLView in task 2.7). The
-    // class owns the EAGLContext, a framebuffer-object, and the colour /
-    // depth-stencil renderbuffers bound to that layer; swap_buffers presents
-    // the colour renderbuffer to the layer's drawable.
+    // The frontend normally provides a CAMetalLayer, so swap_buffers reads the
+    // GLES framebuffer and presents it through Metal. The old CAEAGLLayer path
+    // stays available for the Settings fallback switch.
     class gl_context_eagl final : public gl_context {
     public:
         gl_context_eagl() = default;
@@ -46,7 +51,7 @@ namespace eka2l1::drivers::graphics {
         void pause();
         void resume();
 
-        // Replace the bound CAEAGLLayer (e.g. after the EAGLView is recreated
+        // Replace the bound render CALayer (e.g. after the view is recreated
         // by SwiftUI on a navigation transition).
         void update_surface(void *new_surface) override;
 
@@ -55,15 +60,33 @@ namespace eka2l1::drivers::graphics {
         }
 
     private:
-        bool attach_layer(CAEAGLLayer *layer);
+        enum class surface_backend {
+            none,
+            eagl,
+            metal,
+        };
+
+        bool attach_surface(CALayer *layer);
+        bool attach_eagl_layer(CAEAGLLayer *layer);
+        bool attach_metal_layer(CAMetalLayer *layer);
+        bool create_offscreen_buffers(std::uint32_t width, std::uint32_t height);
+        void present_metal();
         void release_renderbuffers();
+        void release_metal_objects();
 
         EAGLContext *m_context = nullptr;
-        CAEAGLLayer *m_layer = nullptr;
+        CALayer *m_layer = nullptr;
+        CAMetalLayer *m_metal_layer = nullptr;
+        void *m_metal_device = nullptr;
+        void *m_metal_queue = nullptr;
 
         unsigned int m_framebuffer = 0;
         unsigned int m_colorbuffer = 0;
         unsigned int m_depthbuffer = 0;
+
+        surface_backend m_surface_backend = surface_backend::none;
+        std::vector<std::uint8_t> m_readback_rgba;
+        std::vector<std::uint8_t> m_upload_bgra;
 
         bool m_paused = false;
     };
