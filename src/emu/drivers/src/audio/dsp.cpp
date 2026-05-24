@@ -28,6 +28,48 @@
 #endif
 
 namespace eka2l1::drivers {
+#if EKA2L1_PLATFORM(IOS)
+    struct dsp_output_stream_pcm final : public dsp_output_stream_shared {
+        explicit dsp_output_stream_pcm(drivers::audio_driver *aud)
+            : dsp_output_stream_shared(aud) {
+            format(PCM16_FOUR_CC_CODE);
+        }
+
+        bool decode_data(std::vector<std::uint8_t> &dest) override {
+            dest.clear();
+            return false;
+        }
+
+        void queue_data_decode(const std::uint8_t *original, const std::size_t original_size) override {
+            if (format_ == PCM8_FOUR_CC_CODE) {
+                std::vector<std::int16_t> converted(original_size);
+                for (std::size_t i = 0; i < original_size; ++i) {
+                    converted[i] = static_cast<std::int16_t>(
+                        static_cast<std::int8_t>(original[i])) << 8;
+                }
+                buffer_.push(reinterpret_cast<const std::uint16_t *>(converted.data()), converted.size());
+                return;
+            }
+
+            buffer_.push(reinterpret_cast<const std::uint16_t *>(original), (original_size + 1) / 2);
+        }
+
+        bool format(const four_cc fmt) override {
+            if ((fmt != PCM16_FOUR_CC_CODE) && (fmt != PCM8_FOUR_CC_CODE)) {
+                LOG_WARN(DRIVER_AUD, "iOS DSP output only supports PCM formats for now");
+                return false;
+            }
+
+            format_ = fmt;
+            return true;
+        }
+
+        void get_supported_formats(std::vector<four_cc> &cc_list) override {
+            cc_list = { PCM16_FOUR_CC_CODE, PCM8_FOUR_CC_CODE };
+        }
+    };
+#endif
+
     dsp_stream::dsp_stream()
         : samples_played_(0)
         , samples_copied_(0)
@@ -89,7 +131,10 @@ namespace eka2l1::drivers {
 
     std::unique_ptr<dsp_stream> new_dsp_out_stream(drivers::audio_driver *aud, const dsp_stream_backend dsp_backend) {
         switch (dsp_backend) {
-#if !EKA2L1_PLATFORM(IOS)
+#if EKA2L1_PLATFORM(IOS)
+        case dsp_stream_backend_ffmpeg:
+            return std::make_unique<dsp_output_stream_pcm>(aud);
+#else
         case dsp_stream_backend_ffmpeg:
             return std::make_unique<dsp_output_stream_ffmpeg>(aud);
 #endif

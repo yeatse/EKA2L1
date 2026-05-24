@@ -10,9 +10,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -129,7 +131,12 @@ namespace eka2l1::ios {
 
         const std::string app_name = eka2l1::common::ucs2_to_utf8(
             reg->mandatory_info.long_caption.to_std_string(nullptr));
-        const std::string sanitized = eka2l1::common::pystr(app_name).strip_reserverd().strip().std_str();
+        std::string sanitized = eka2l1::common::pystr(app_name).strip_reserverd().strip().std_str();
+        if (sanitized.empty()) {
+            std::ostringstream uid_name;
+            uid_name << "uid_" << std::hex << std::uppercase << reg->mandatory_info.uid;
+            sanitized = uid_name.str();
+        }
         const std::string cached_path = cache_dir + "/debinarized_" + sanitized + ".svg";
         const std::uint64_t mif_last_modified = file_route->last_modify_since_0ad();
 
@@ -276,6 +283,7 @@ namespace eka2l1::ios {
         std::uint32_t pending_height = 0;
         float pending_scale = 1.0f;
 
+        std::mutex icon_mutex;
         std::vector<std::size_t> screen_redraw_handles;
         int present_status = 0;
     };
@@ -1038,6 +1046,7 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys || sizePx == 0) {
         return nil;
     }
+    std::lock_guard<std::mutex> icon_lock(_state->icon_mutex);
     auto *kern = _state->symsys->get_kernel_system();
     if (!kern) return nil;
     auto *alserv = reinterpret_cast<eka2l1::applist_server *>(

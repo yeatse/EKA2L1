@@ -431,6 +431,7 @@
 - ✅ 解码出的 RGBA 走 `CGBitmapContext + CGContextDrawImage` 缩放到调用方请求的方形尺寸（默认 72px，给 SwiftUI 一份 stable 画布），再 `UIImagePNGRepresentation` 编 PNG 返回 `NSData`。
 - ✅ SwiftUI `AppRow` 在 `.onAppear` 把解码 dispatch 到 `DispatchQueue.global(qos: .userInitiated)`，回主线程赋 `@State`；解码失败 fallback 到 `Image(systemName: "app.dashed")` 占位。CMake 给 iOS target 加 `epocloader` / `lunasvg` 链接依赖。
 - ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：mount N95 → AppList 出 Help (?)、Messaging (信封)、Voice recorder (麦克风)、Settings (扳手)、Call mailbox、Profiles、Calendar (30)、Calculator 等真实 S60 图标。截屏 `docs/screenshots/ios-stage3/3.6-icons/applist-with-real-icons.jpg`。
+- ✅ 2026-05-24 追加稳定性修复：N95 applist 里存在 caption 为空格的条目（`uid=0x101F4CD2`），滚动触发图标懒加载时 MIF cache name sanitize 成空串，`pystr::strip/rstrip` 在空 string 上调用 `back()` 被 libc++ hardening abort。修法：`pystr::{lstrip,rstrip}` 空串 guard；MIF cache 文件名空时 fallback 到 `uid_<UID>`；iOS 图标解码入口加 mutex 串行化 applist/fbs/io 访问。验证：iPhone 16 Pro 模拟器连续滚动到中后段和底部，无新 `EKA2L1-*.ips`。
 - 字体缺失时 SVG 文本会失败 → 3.12 字体引导覆盖。
 
 #### 3.7 iOS 原生 AudioUnit 后端 🟡
@@ -438,6 +439,7 @@
   - `src/external/CMakeLists.txt`：iOS 重新走 `if (NOT EKA2L1_IOS)` 跳过 `add_subdirectory(cubeb)`。
   - cubeb 子模块回退到上游 `d512bfa07` 干净 SHA（删除 shim 文件 + CMake patch），不再 dirty。
   - ffmpeg 继续 skip（bundled binary 没 iOS cross-build）。
+  - 2026-05-24 临时恢复 DSP out：iOS target 仍未接回 FFmpeg headers/libs，直接打开 `dsp_output_stream_ffmpeg` 会在 `libavcodec/avcodec.h` 缺失处编译失败；当前先提供 iOS PCM16/PCM8-only `dsp_output_stream_pcm`，让已解码 PCM 的 DSP out stream 能创建并走 AudioUnit。
 - ✅ 新增 `src/emu/drivers/{include,src}/drivers/audio/backend/audiounit_ios/`：
   - `audio_audiounit_ios.{h,mm}` —— `audiounit_ios_audio_driver : public audio_driver`，构造时 `dispatch_once` 配 `AVAudioSession.Playback + MixWithOthers + setActive:YES`，`native_sample_rate()` 直接读 `[AVAudioSession sharedInstance].sampleRate`。
   - `stream_audiounit_ios.{h,mm}` —— `audiounit_ios_stream_base` 持 `AudioUnit`(RemoteIO)，`AudioComponentFindNext + AudioComponentInstanceNew + AudioUnitSetProperty(StreamFormat S16LE interleaved, mChannelsPerFrame=channels, mBitsPerChannel=16) + AURenderCallback + AudioUnitInitialize`；output 用 bus 0 input scope，input 启用 bus 1 + enable IO 1 / 0；`AudioOutputUnitStart/Stop` 走运行控制。`audiounit_ios_output_stream` / `audiounit_ios_input_stream` 是 final 子类，加上 `pause / volume / current_frame_position` 等接口，soft volume + idle-frames 处理与 cubeb 老路径一致（避免 DSP 时间戳跳变）。
@@ -446,6 +448,12 @@
 - ✅ `IosEmulator`：未改动 —— 仍按 3.7 一版调 `make_audio_driver(cubeb, master_vol, player_type_tsf)`、`set_bank_path(HSB/SF2)`、塞进 `system_create_components.audio_`，mount 后 `sys->set_audio_driver(...)`；`-pause` / `-resume` 仍 `AVAudioSession setActive:NO/YES`，但 session 配置现在由 audio_driver 构造统一负责，避免两边重复 `dispatch_once`。
 - ✅ xcodebuildmcp 验证（iPhone 16 Pro / iOS 26.5 sim）：cubeb 不再编入；build SUCCEEDED；mount N95 → 日志仍出 `mediaclientaudiostream_general.dll` / `mediaclientaudio_general.dll` / `audiooutputrouting_general.dll` 三个 audio patch DLL（证明 services 拿到了真 audio_driver）；applist 64 app；Calculator UI 渲染稳定 ≥10s，无新 `.ips`。截屏 `docs/screenshots/ios-stage3/3.7-audio/calculator-native-audiounit.jpg`。
 - 🟡 剩余 follow-up：①真的"能听见声音"要选一个会出声的 ROM 应用（候选：N-Gage demo / Music Player / 一段 SIS 带 BGM 的小游戏），跑起来人耳确认 —— 不能用 xcodebuildmcp 自动断言；②MIDI 用 TSF 后端走 file-based bank，HSB/SF2 路径默认空，sandbox 里没把 `defaultbank.hsb` / `defaultbank.sf2` 拷过去（先前没人需要），有需要时和字体一样在 startup 里复制；③Audio input（mic）路径已经接好但未实测，3.x 没有需要录音的功能流程。
+
+#### 3.7.1 iOS DSP / FFmpeg 回接 🟡
+- 当前状态：iOS 已有原生 AudioUnit backend，且 `dsp_stream_backend_ffmpeg` 在 iOS 上临时落到 PCM16/PCM8-only DSP out fallback。Final Battle 不再黑屏，已能进入语言选择界面。
+- 根本限制：iOS target 仍排除了 bundled FFmpeg；直接让 iOS 编 `dsp_output_stream_ffmpeg` 会因为 `libavcodec/avcodec.h` 缺失失败。现有 PCM fallback 只能覆盖 guest 已给 PCM 的路径，不能解 AMR/MP3/AAC 等压缩 DSP format，也不能恢复 `video_player_ffmpeg`。
+- 回接方案：明确 iOS FFmpeg 来源（优先 vendored cross-built XCFramework/static libs；或用 CMake toolchain 从源码裁剪构建），只在 iOS 分支接 include/lib 路径和 `avcodec/avformat/avutil/swresample/swscale` 依赖；恢复 iOS 使用 `dsp_output_stream_ffmpeg`；保留 PCM fallback 作为 FFmpeg 不可用时的降级。
+- 验证标准：`scripts/build_ios.sh simulator` 通过；Final Battle 仍进入语言选择界面；至少一个压缩 DSP sample 或使用 MP3/AMR 的 Symbian 应用能创建 stream 并播放/推进；日志中无 `Unable to create new DSP out stream!`、`KERN-EXEC`、`Access violation`。
 
 #### 3.8 振动：Core Haptics
 - 新建 `src/emu/drivers/src/hwrm/backend/vibration_ios.{h,mm}`：iOS 14+ 用 `CHHapticEngine` + `CHHapticPattern` 把 duration / intensity / sharpness 映射到一次连续振动；iOS 12/13 fallback 到 `UIImpactFeedbackGenerator`。
@@ -484,6 +492,8 @@
 0. （占位，按出现顺序往下编号） **OGL 后端 `bind_swapchain_framebuf` / `bind_framebuffer(0)` 在 iOS 静默绑空 FBO 导致整屏洋红**（关闭 3.2.2，详见上文）。修法在 `gl_context` 基类加 `swapchain_framebuffer()` 虚函数（桌面默认 0），iOS 的 `gl_context_eagl` 返回内部 m_framebuffer（attach_layer 已把 EAGL drawable colorbuffer + depth/stencil 挂到该 FBO）；ogl 后端两处硬编码 FBO 0 改成走 `context_->swapchain_framebuffer()`。同时 `IosEmulator::submit_screen_frame` 的反向 `wait_for(&present_status)` 改回 Qt/Android 同款 `wait_for → set -100 → present`。仅影响 iOS，桌面 / Android 行为不变。
 1. **`prot_read_write_exec` 在 iOS sandbox 下 `mprotect` 静默丢 W**：阶段 2 #14 的 SIGBUS 根因。崩溃 IPS 显示在 `std::fill(base, base+0x4000, 0)` 写第一个字节就 `KERN_PROTECTION_FAILURE` (`Data Abort byte write Translation fault`)，栈顶是 `kernel::chunk::chunk` → `dispatcher::dispatcher`（创建 "DispatcherTrampolines" chunk，`prot_read_write_exec`，4 KB）。原因：iOS arm64 sandbox 强制 W^X，`mprotect(PROT_READ|PROT_WRITE|PROT_EXEC)` 返回 0（成功）但实际页是 RX（PROT_WRITE 被静默剥离），随后写入触发 KERN_PROTECTION_FAILURE。dyncom 路径下 host 永远不真正执行 guest 页（dyncom 是解释器），PROT_EXEC 对 host_base 是纯冗余。修法：`src/emu/common/src/types.cpp::translate_protection` 在 iOS 分支末尾统一剥 PROT_EXEC（若结果为 0 回落 PROT_READ），并加 `// TODO(ios)` 说明 stage 4 引入 `map_executable` / MAP_JIT 时替换。此改动只影响 iOS，POSIX / Win32 / Android / macOS 桌面不变。验证：xcodebuildmcp 自动化 Mount N95 ROM 后 UI 显示 `Mounted: N95 8GB (S60v3 - FP1)` + `Apps (18)`，进程不再 SIGBUS。截屏 `docs/screenshots/ios-stage3/3.1-mount-unblocked/applist-18-apps.jpg`。
 2. **iOS sandbox 内 vfs 路径解析 case-sensitive，碰到混合大小写的 ROM 文件名失败**：3.1 修复 SIGBUS 后第一次跑 mount，启动日志看到 `[Service.Window]: Loading wsini file broke with code -1`，path 是 `data/drives/z/rm-320/system/data/wsini.ini`（全小写），但 host 真实文件名是 `Wsini.ini`。stage 2 #13 已经统一了顶层目录大小写，但 ROM tree 里很多文件（如 `Wsini.ini` / `SkinExclusions.ini` / `Iva_base.dof`）保留了原始混合大小写。`physical_file_system::get_real_physical_path` 走 `is_system_case_insensitive()` 的桌面默认值在 iOS 下返回 false → 整条路径被 `lowercase_ucs2_string` 强制小写 → host 那侧（iOS sim app 进程视角 = case-sensitive）找不到。修法：在 `src/emu/vfs/src/vfs.cpp::get_real_physical_path` 末尾、iOS 分支下，若 lowercased path 不存在，则从 mount root 开始逐级用 `make_directory_iterator` + `compare_ignore_case` 把每一段解析回真实大小写，再返回新的 final_path。只在 iOS 触发，桌面/Android/Win32 行为完全不变。验证：再跑 mount，`Loading wsini file broke` 日志消失。后续残留的 `Fail to load languages.txt`、`Failed to open thread panic blacklist file` 走的是裸 `dynamic_ifile`/`ro_std_file_stream` 直读 host 路径（不经 vfs），二者本身都是路径合法但 host 文件不存在的"信息缺失"类，不属于本条修复范围。
+3. **AppList 滚动到空格 caption 应用时必现 crash**：N95 applist 中 `uid=0x101F4CD2` 的 caption 是空格，图标懒加载走 MIF debinarize cache 时 `strip_reserverd().strip()` 产出空串，`pystr::rstrip()` 对空 string 调 `back()` 被 libc++ hardening abort。修法：`pystr::lstrip/rstrip` 加 empty guard；MIF cache 文件名为空时改用 `uid_<UID>`；iOS 图标解码入口加 mutex，避免滚动时多条 SwiftUI row 并发触碰 applist/fbs/io。验证：iPhone 16 Pro 模拟器上连续滚动 N95 AppList 到中后段和底部，无新 crash report。
+4. **Final Battle 从列表底部打开黑屏**：Final Battle 进程启动后创建 DSP out stream，iOS 因为 FFmpeg 被 skip 而 `new_dsp_out_stream()` 返回空，日志出现 `Unable to create new DSP out stream!`，随后 `hssSDthread` 以 `KERN-EXEC` / access violation 退出，画面保持黑屏。阶段性修法：iOS 下先给 `dsp_stream_backend_ffmpeg` 返回 PCM16/PCM8-only `dsp_output_stream_pcm`，让 PCM DSP 输出能走 AudioUnit；FFmpeg 压缩格式完整恢复见 3.7.1。验证：安装/打开 `Final Battle, uid=0xA0003C62` 后显示语言选择界面（English / Ελληνικά / Русско / Deutsch / Italiano），日志无上述 DSP/KERN/access violation 错误。
 
 ### 阶段 3 已知风险
 - **iOS sandbox 下 mmap / mprotect 行为差异是 3.1 的关键变量**：模拟器（Apple Silicon host）与真机的 sandbox 配额不完全一致，3.1 修完后必须在真机上至少跑一次 mount，不能只靠 booted 模拟器。
@@ -519,6 +529,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-05-24 | 修复 iOS AppList 滚动到空格 caption 应用时的 `pystr::rstrip()` hardening abort，并给 MIF icon cache name 加 UID fallback 与图标解码串行化；修复 Final Battle 黑屏的直接原因：iOS DSP out stream 因 FFmpeg skip 返回空，当前先接 PCM16/PCM8-only fallback，游戏可进入语言选择界面。文档新增 3.7.1 iOS DSP / FFmpeg 回接计划。 |
 | 2026-05-20 | 初版：拆完阶段 0，其余阶段仅列目标 |
 | 2026-05-20 | 阶段 0 全部子任务（0.1–0.7）落地：iOS toolchain、emu 分支化、drivers / cpu 移除桌面/JIT 依赖、外部库审计、SwiftUI 骨架、构建脚本。等待 submodule init 后跑实际构建确认。 |
 | 2026-05-20 | submodule init 后实际跑 `scripts/build_ios.sh device` 通过，产物：arm64 iOS `EKA2L1.app`。期间打掉 12 个真实编译/链接问题（见 0.7 子任务）。capstone / fmt 留下 dirty submodule patch 待后续 fork 收尾。 |
