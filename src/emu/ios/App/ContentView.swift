@@ -59,8 +59,19 @@ struct ContentView: View {
             }
             .navigationTitle("EKA2L1")
             .toolbar {
-                Button("Import") { showingImporter = true }
-                Button("Rescan", action: refresh)
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                Button {
+                    showingImporter = true
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                Button(action: refresh) {
+                    Image(systemName: "arrow.clockwise")
+                }
             }
             .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
                 handleImport(result)
@@ -143,7 +154,11 @@ struct AppListView: View {
         }
         .navigationTitle(romName)
         .toolbar {
-            Button("Import") { showingImporter = true }
+            Button {
+                showingImporter = true
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+            }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
             switch result {

@@ -31,7 +31,6 @@ common_configure_flags=(
     --disable-ffplay
     --disable-ffprobe
     --disable-ffmpeg
-    --disable-examples
     --enable-zlib
     --enable-decoder=h264
     --enable-decoder=mpeg4

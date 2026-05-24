@@ -7,6 +7,7 @@
 #import <UIKit/UIKit.h>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -38,6 +39,7 @@
 #include <drivers/graphics/graphics.h>
 #include <drivers/input/common.h>
 #include <drivers/itc.h>
+#include <drivers/hwrm/vibration.h>
 #include <services/window/screen.h>
 #include <kernel/kernel.h>
 #include <loader/mbm.h>
@@ -1040,6 +1042,94 @@ namespace eka2l1::ios {
         case EKA2L1PointerPhaseCancelled: evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
     }
     _state->winserv->queue_input_from_driver(evt);
+}
+
+- (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed {
+    if (!_state || !_state->winserv) {
+        return;
+    }
+    eka2l1::drivers::input_event evt;
+    evt.type_ = eka2l1::drivers::input_event_type::key_raw;
+    evt.time_ = 0;
+    evt.key_.code_ = static_cast<int>(scanCode);
+    evt.key_.state_ = pressed ? eka2l1::drivers::key_state::pressed : eka2l1::drivers::key_state::released;
+    _state->winserv->queue_input_from_driver(evt);
+}
+
+- (void)tapRawKey:(uint32_t)scanCode {
+    [self submitRawKey:scanCode pressed:YES];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(60 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        [self submitRawKey:scanCode pressed:NO];
+    });
+}
+
+- (NSDictionary<NSString *, id> *)currentConfigSnapshot {
+    if (!_state) {
+        return @{};
+    }
+    return @{
+        @"audioMasterVolume": @(_state->conf.audio_master_volume),
+        @"integerScaling": @(_state->conf.integer_scaling),
+        @"nearestNeighborFiltering": @(_state->conf.nearest_neighbor_filtering),
+        @"hideSystemApps": @(_state->conf.hide_system_apps),
+        @"extensiveLogging": @(_state->conf.extensive_logging),
+        @"cpuBackend": [NSString stringWithUTF8String:_state->conf.cpu_backend.c_str()],
+        @"deviceDisplayName": [NSString stringWithUTF8String:_state->conf.device_display_name.c_str()],
+        @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()]
+    };
+}
+
+- (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot {
+    if (!_state) {
+        return NO;
+    }
+
+    NSNumber *volume = snapshot[@"audioMasterVolume"];
+    if (volume) {
+        _state->conf.audio_master_volume = std::clamp(volume.intValue, 0, 100);
+        if (_state->audio_driver) {
+            _state->audio_driver->master_volume(_state->conf.audio_master_volume);
+        }
+    }
+    NSNumber *integerScaling = snapshot[@"integerScaling"];
+    if (integerScaling) {
+        _state->conf.integer_scaling = integerScaling.boolValue;
+    }
+    NSNumber *nearest = snapshot[@"nearestNeighborFiltering"];
+    if (nearest) {
+        _state->conf.nearest_neighbor_filtering = nearest.boolValue;
+    }
+    NSNumber *hideSystemApps = snapshot[@"hideSystemApps"];
+    if (hideSystemApps) {
+        _state->conf.hide_system_apps = hideSystemApps.boolValue;
+    }
+    NSNumber *extensive = snapshot[@"extensiveLogging"];
+    if (extensive) {
+        _state->conf.extensive_logging = extensive.boolValue;
+    }
+    NSString *cpuBackend = snapshot[@"cpuBackend"];
+    if ([cpuBackend isKindOfClass:NSString.class]) {
+        _state->conf.cpu_backend = cpuBackend.UTF8String;
+    }
+    NSString *deviceDisplayName = snapshot[@"deviceDisplayName"];
+    if ([deviceDisplayName isKindOfClass:NSString.class]) {
+        _state->conf.device_display_name = deviceDisplayName.UTF8String;
+    }
+    NSString *logFilter = snapshot[@"logFilter"];
+    if ([logFilter isKindOfClass:NSString.class]) {
+        _state->conf.log_filter = logFilter.UTF8String;
+    }
+
+    _state->conf.serialize();
+    return YES;
+}
+
+- (void)testVibration {
+    auto vibrator = eka2l1::drivers::hwrm::make_suitable_vibrator();
+    if (vibrator) {
+        vibrator->vibrate(180, 70);
+    }
 }
 
 - (nullable NSData *)iconPNGDataForUID:(uint32_t)uid sizePx:(NSUInteger)sizePx {

@@ -455,28 +455,29 @@
 - ✅ 验证：`scripts/build_ios.sh simulator` 通过；Xcode build 中 drivers 编译 `video_player_ffmpeg.cpp`，最终 app link line 包含五个 iOS FFmpeg static libs；`nm` 确认 `libdrivers.a` 内已有 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 符号。
 - 🟡 剩余：device 路径使用同一脚本支持 `iphoneos`，但本轮尚未跑 `scripts/build_ios.sh device`；运行时还需要用压缩 DSP sample 或 MP3/AMR 应用验证真实解码，并复测 Final Battle 无 `Unable to create new DSP out stream!` / `KERN-EXEC` / `Access violation`。
 
-#### 3.8 振动：Core Haptics
-- 新建 `src/emu/drivers/src/hwrm/backend/vibration_ios.{h,mm}`：iOS 14+ 用 `CHHapticEngine` + `CHHapticPattern` 把 duration / intensity / sharpness 映射到一次连续振动；iOS 12/13 fallback 到 `UIImpactFeedbackGenerator`。
-- CMake iOS 分支链 `CoreHaptics` / `UIKit`；`vibration.cpp` 工厂在 iOS 走 `vibration_ios` 替换 stage-0 的 `vibration_null`。
-- 验收：找一个触发振动的应用（或写一个临时 dispatcher hook 在 tap 时强制振动一下）能感受到反馈。
+#### 3.8 振动：Core Haptics ✅
+- ✅ 新建 `src/emu/drivers/{include,src}/hwrm/backend/vibration_ios.{h,mm}`：iOS 18+ 直接用 `CHHapticEngine` + continuous `CHHapticEvent`，把 HWRM `millisecs/intensity` 映射为 duration/intensity/sharpness；不再维护 iOS 18 以下 fallback。
+- ✅ CMake iOS 分支链 `CoreHaptics`；`vibration.cpp` 工厂在 iOS 走 `vibrator_ios` 替换 stage-0 的 `vibrator_null`。
+- ✅ `SettingsView` 暴露 **Test vibration** 手动触发 180ms haptic，方便真机验收。模拟器上 Core Haptics 不可用属于平台限制。
 
-#### 3.9 多指 / 手势
-- `EAGL2L1View.multipleTouchEnabled = YES`，`touchesBegan/Moved/Ended/Cancelled` 已经是数组迭代，扩 pointerId 上限即可。
-- 双指缩放（pinch）+ 长按（long press）做成 `UIGestureRecognizer`，事件转换为 `drivers::input_event` 中的 `keyboard_input`（虚拟方向键 / select）或 `mouse_action` 长按语义。具体语义对照 Android 前端的 `gesture_dispatcher` 写。
-- 物理键盘 / 手柄推迟到阶段 4。
+#### 3.9 多指 / 手势 🟡
+- ✅ `EAGL2L1View.multipleTouchEnabled = YES`，现有 `touchesBegan/Moved/Ended/Cancelled` 已对 `NSSet<UITouch *>` 逐个转发，pointerId 继续使用 `UITouch*` hash。
+- ✅ `EAGL2L1View` 加 `UILongPressGestureRecognizer`：长按映射为 `std_key_device_3`（window server 已把它折算成 select/enter）。
+- ✅ `UIPinchGestureRecognizer`：pinch end 时按 scale 映射成 up/down raw key，作为 S60 列表和菜单的轻量手势入口。
+- ✅ `EmulatorView` 增加可隐藏的虚拟键盘 overlay：方向键、select、左右软键、0-9、`*`、`#` 都走 `EKA2L1Emulator::tapRawKey` → `drivers::input_event_type::key_raw` → window server。数字键/`*` 对齐 Android 现有虚拟键盘，发送 ASCII `'0'..'9'` / `'*'`；`#` 发送 `0x7f`。
+- ✅ `EAGL2L1View` 同步接入外接键盘 `UIPress`：数字键/`*`/`#`、方向键、Return/Escape 映射到 raw key。手柄仍推迟到阶段 4。
+- ✅ 运行验证：iPhone 16 Pro / iOS 26.5 模拟器 build-and-run → mount N95 → 打开 `Final Battle` → 语言菜单按虚拟键 `1` 进入主菜单，确认 Final Battle 不再黑屏且数字键路径可用。
 
-#### 3.10 设置面板
-- SwiftUI 设置页（`SettingsView`）+ `IosEmulator` 暴露 `-currentConfig` / `-applyConfigChanges:`；改动序列化回 `Documents/data/config.yml`。
-- 字段：device 选择、屏幕方向（auto / portrait / landscape）、上采样倍率、主音量、按键映射（虚拟方向键 / 软键盘开关）、日志等级、JIT 开关（占位，文案标注 "阶段 4 启用"）。
-- 入口放在 ROM 列表页右上角 gear icon。
+#### 3.10 设置面板 ✅
+- ✅ 新建 SwiftUI `SettingsView`，首页 toolbar 右上 gear 进入。
+- ✅ `IosEmulator` 暴露 `currentConfigSnapshot` / `applyConfigSnapshot`，设置页可读写并 `config::state::serialize()` 回 `Documents/data/config.yml`。
+- ✅ 已接字段：device display name、orientation（iOS 前端 `AppStorage`）、integer scaling、nearest filtering、master volume、virtual keypad、hide system apps、extensive logging、CPU backend、log filter、JIT stage-4 占位。
+- 🟡 多数 emulator/service 级设置仍需重启或重新 mount 才完全生效；UI 即时保存配置，运行中即时生效只覆盖 master volume 与前端 overlay。
 
-#### 3.11 UIAlertController 输入对话框
-- 替换 `src/emu/drivers/src/ui/input_dialog_ios.cpp` 的 no-op：
-  - `open_input_view(title, current_text, max_len)`：弹 `UIAlertController(.alert)` + `addTextField`，回调写回 `drivers::ui::input_dialog_result`。
-  - `close_input_view`：dismiss。
-  - `show_yes_no_dialog`：两按钮 alert，return 阻塞或异步看 dispatcher 期望。
-- 必须在主线程上推 ViewController，跨线程信号用 `dispatch_async(dispatch_get_main_queue(), ...)` 推入。
-- 验收：触发一个需要文本输入的 Symbian 对话（如 Notes 创建条目），能输入文字并提交回模拟器。
+#### 3.11 UIAlertController 输入对话框 ✅
+- ✅ `src/emu/drivers/src/ui/input_dialog_ios.cpp` 替换为 Objective-C++ `input_dialog_ios.mm`：`open_input_view` 在主线程弹 `UIAlertController(.alert)` + `UITextField`，提交时按 `max_len` 截断并回调 `std::u16string`。
+- ✅ `close_input_view` dismiss 当前 alert；`show_yes_no_dialog` 弹两按钮 alert，button1/button2 分别回调 0/1。
+- ✅ iOS simulator 编译链路已接好；Notes 等真实文本输入流程还需要后续运行时样本验证。
 
 #### 3.12 字体导入引导
 - 启动时检测 `data/fonts/` 是否为空且 ROM 字体缺失（freetype 无 face 时由 services/fbs 给信号）；若缺，AppList 顶部出现一条引导横幅 → 点击触发 3.5 的 DocumentPicker（限制为 `public.truetype-ttf-font` / `org.openfontformat.otf`）。
@@ -529,6 +530,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-05-24 | 推进阶段 3.8–3.11：iOS HWRM 振动接 Core Haptics；EmulatorView 增加多指/长按/pinch 与虚拟 S60 键盘，数字键对齐 Android 的 ASCII raw key；xcodebuildmcp 验证 Final Battle 语言菜单按虚拟键 `1` 可进入主菜单；新增 SwiftUI SettingsView 并通过 `IosEmulator` snapshot/apply 序列化到 `config.yml`；iOS input dialog no-op 替换为 UIAlertController 实现。 |
 | 2026-05-24 | iOS simulator 路径回接 FFmpeg：新增 out-of-tree FFmpeg iOS 构建脚本，`build_ios.sh` 自动先产出 simulator/device 对应 static libs；CMake 在 iOS 下恢复 `ffmpeg` target，drivers 重新编入 DSP/audio/video FFmpeg backend。`scripts/build_ios.sh simulator` 通过，符号检查确认 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 已进入 `libdrivers.a`。 |
 | 2026-05-24 | 修复 iOS AppList 滚动到空格 caption 应用时的 `pystr::rstrip()` hardening abort，并给 MIF icon cache name 加 UID fallback 与图标解码串行化；修复 Final Battle 黑屏的直接原因：iOS DSP out stream 因 FFmpeg skip 返回空，当前先接 PCM16/PCM8-only fallback，游戏可进入语言选择界面。文档新增 3.7.1 iOS DSP / FFmpeg 回接计划。 |
 | 2026-05-20 | 初版：拆完阶段 0，其余阶段仅列目标 |

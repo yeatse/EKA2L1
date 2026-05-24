@@ -21,6 +21,8 @@
 #include <drivers/hwrm/backend/vibration_null.h>
 #if EKA2L1_PLATFORM(ANDROID)
 #include <drivers/hwrm/backend/vibration_jdk.h>
+#elif EKA2L1_PLATFORM(IOS)
+#include <drivers/hwrm/backend/vibration_ios.h>
 #elif !EKA2L1_PLATFORM(IOS)
 #include <drivers/hwrm/backend/vibration_sdl2.h>
 #endif
@@ -30,8 +32,7 @@ namespace eka2l1::drivers::hwrm {
 #if EKA2L1_PLATFORM(ANDROID)
         return std::make_unique<vibrator_jdk>();
 #elif EKA2L1_PLATFORM(IOS)
-        // Stage-0 iOS has no SDL2 haptic; phase 3 will plug Core Haptics in.
-        return std::make_unique<vibrator_null>();
+        return std::make_unique<vibrator_ios>();
 #else
         return std::make_unique<vibrator_sdl2>();
 #endif

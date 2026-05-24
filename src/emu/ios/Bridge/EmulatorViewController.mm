@@ -25,14 +25,31 @@
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
-    if (self) {
-        self.contentScaleFactor = UIScreen.mainScreen.nativeScale;
-        self.multipleTouchEnabled = NO; // single-touch for stage 2 scope
-        self.opaque = YES;
-        self.backgroundColor = UIColor.blackColor;
-        self.eaglLayer.opaque = YES;
-    }
-    return self;
+	    if (self) {
+	        self.contentScaleFactor = UIScreen.mainScreen.nativeScale;
+	        self.multipleTouchEnabled = YES;
+	        self.opaque = YES;
+	        self.backgroundColor = UIColor.blackColor;
+	        self.eaglLayer.opaque = YES;
+	        UILongPressGestureRecognizer *longPress =
+	            [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handleLongPress:)];
+	        longPress.minimumPressDuration = 0.45;
+	        [self addGestureRecognizer:longPress];
+
+	        UIPinchGestureRecognizer *pinch =
+	            [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(handlePinch:)];
+	        [self addGestureRecognizer:pinch];
+	    }
+	    return self;
+	}
+
+- (BOOL)canBecomeFirstResponder {
+    return YES;
+}
+
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [self becomeFirstResponder];
 }
 
 - (void)layoutSubviews {
@@ -72,6 +89,59 @@
                                                      y:point.y * scale
                                                  phase:[self phaseForTouchPhase:touch.phase]
                                              pointerId:(uintptr_t)touch];
+	    }
+	}
+
+- (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        [[EKA2L1Emulator shared] tapRawKey:0xA7]; // std_key_device_3, treated as select/enter.
+    }
+}
+
+- (void)handlePinch:(UIPinchGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) {
+        return;
+    }
+    [[EKA2L1Emulator shared] tapRawKey:(gesture.scale >= 1.0) ? 0x10 : 0x11];
+}
+
+- (uint32_t)scanCodeForPress:(UIPress *)press {
+    NSString *chars = press.key.charactersIgnoringModifiers.lowercaseString;
+    if (chars.length == 1) {
+        unichar ch = [chars characterAtIndex:0];
+        if (ch >= '0' && ch <= '9') {
+            return ch;
+        }
+        if (ch == '*') return '*';
+        if (ch == '#') return 0x7f;
+    }
+
+    switch (press.key.keyCode) {
+        case UIKeyboardHIDUsageKeyboardUpArrow: return 0x10;
+        case UIKeyboardHIDUsageKeyboardDownArrow: return 0x11;
+        case UIKeyboardHIDUsageKeyboardLeftArrow: return 0x0e;
+        case UIKeyboardHIDUsageKeyboardRightArrow: return 0x0f;
+        case UIKeyboardHIDUsageKeyboardReturnOrEnter: return 0xA7;
+        case UIKeyboardHIDUsageKeyboardEscape: return 0xA5;
+        default: return 0;
+    }
+}
+
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    for (UIPress *press in presses) {
+        uint32_t scan = [self scanCodeForPress:press];
+        if (scan) {
+            [[EKA2L1Emulator shared] submitRawKey:scan pressed:YES];
+        }
+    }
+}
+
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    for (UIPress *press in presses) {
+        uint32_t scan = [self scanCodeForPress:press];
+        if (scan) {
+            [[EKA2L1Emulator shared] submitRawKey:scan pressed:NO];
+        }
     }
 }
 

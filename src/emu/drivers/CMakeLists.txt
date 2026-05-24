@@ -17,6 +17,9 @@ if (EKA2L1_IOS)
             include/drivers/audio/backend/audiounit_ios/stream_audiounit_ios.h
             src/audio/backend/audiounit_ios/audio_audiounit_ios.mm
             src/audio/backend/audiounit_ios/stream_audiounit_ios.mm)
+    set(DRIVERS_HWRM_IOS_SRC
+            include/drivers/hwrm/backend/vibration_ios.h
+            src/hwrm/backend/vibration_ios.mm)
 else()
     set(DRIVERS_CUBEB_SRC
             include/drivers/audio/backend/cubeb/audio_cubeb.h
@@ -116,6 +119,7 @@ add_library(drivers
         ${DRIVERS_AUDIOUNIT_IOS_SRC}
         ${DRIVERS_CUBEB_SRC}
         ${DRIVERS_FFMPEG_SRC}
+        ${DRIVERS_HWRM_IOS_SRC}
         ${DRIVERS_OGL_SRC}
         ${DRIVERS_VULKAN_SRC})
 if (ANDROID)
@@ -169,7 +173,7 @@ elseif (EKA2L1_IOS)
         src/graphics/backend/context_eagl.mm
         include/drivers/graphics/backend/emu_window_ios.h
         src/graphics/backend/emu_window_ios.mm
-        src/ui/input_dialog_ios.cpp
+        src/ui/input_dialog_ios.mm
     )
 elseif(APPLE)
     target_sources(drivers PRIVATE
@@ -225,7 +229,8 @@ if (EKA2L1_IOS)
         "-framework UIKit"
         "-framework AVFoundation"
         "-framework AudioToolbox"
-        "-framework CoreAudio")
+        "-framework CoreAudio"
+        "-framework CoreHaptics")
 else()
     target_link_libraries(drivers PRIVATE cubeb glad)
 endif()

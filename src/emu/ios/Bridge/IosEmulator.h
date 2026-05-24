@@ -66,9 +66,16 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 };
 
 - (void)submitPointerEventAtX:(CGFloat)x
-                            y:(CGFloat)y
-                        phase:(EKA2L1PointerPhase)phase
-                    pointerId:(uintptr_t)pointerId;
+	                            y:(CGFloat)y
+	                        phase:(EKA2L1PointerPhase)phase
+	                    pointerId:(uintptr_t)pointerId;
+
+- (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed;
+- (void)tapRawKey:(uint32_t)scanCode;
+
+- (NSDictionary<NSString *, id> *)currentConfigSnapshot;
+- (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
+- (void)testVibration;
 
 // 3.6: decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)
 // and return a square RGBA PNG sized `sizePx` per side. Returns nil if

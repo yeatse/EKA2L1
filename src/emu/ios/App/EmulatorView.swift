@@ -1,9 +1,32 @@
 import SwiftUI
 import UIKit
 
-// SwiftUI wrapper around EmulatorViewController. Push onto the navigation
-// stack from AppListView; pop to tear the running app down.
-struct EmulatorView: UIViewControllerRepresentable {
+struct EmulatorView: View {
+    let uid: UInt32
+
+    @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            EmulatorControllerView(uid: uid)
+                .ignoresSafeArea(edges: .bottom)
+            if showVirtualKeypad {
+                VirtualKeypad()
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+            }
+        }
+        .toolbar {
+            Button {
+                showVirtualKeypad.toggle()
+            } label: {
+                Image(systemName: showVirtualKeypad ? "keyboard.chevron.compact.down" : "keyboard")
+            }
+        }
+    }
+}
+
+private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
 
     func makeUIViewController(context: Context) -> EmulatorViewController {
@@ -11,4 +34,80 @@ struct EmulatorView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {}
+}
+
+private struct VirtualKeypad: View {
+    private let columns = Array(repeating: GridItem(.fixed(44), spacing: 8), count: 3)
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 14) {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    keyButton("LS", scan: 0xA4)
+                    keyButton("RS", scan: 0xA5)
+                }
+                HStack(spacing: 8) {
+                    Spacer().frame(width: 44)
+                    iconButton("chevron.up", scan: 0x10)
+                    Spacer().frame(width: 44)
+                }
+                HStack(spacing: 8) {
+                    iconButton("chevron.left", scan: 0x0e)
+                    iconButton("circle", scan: 0xA7)
+                    iconButton("chevron.right", scan: 0x0f)
+                }
+                HStack(spacing: 8) {
+                    Spacer().frame(width: 44)
+                    iconButton("chevron.down", scan: 0x11)
+                    Spacer().frame(width: 44)
+                }
+            }
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"], id: \.self) { label in
+                    keyButton(label, scan: scanCode(for: label))
+                }
+            }
+        }
+        .padding(10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func keyButton(_ label: String, scan: UInt32) -> some View {
+        Button {
+            EKA2L1Emulator.shared().tapRawKey(scan)
+        } label: {
+            Text(label)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .frame(width: 44, height: 36)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func iconButton(_ symbol: String, scan: UInt32) -> some View {
+        Button {
+            EKA2L1Emulator.shared().tapRawKey(scan)
+        } label: {
+            Image(systemName: symbol)
+                .frame(width: 44, height: 36)
+        }
+        .buttonStyle(.bordered)
+    }
+
+    private func scanCode(for label: String) -> UInt32 {
+        switch label {
+        case "1": return 0x31
+        case "2": return 0x32
+        case "3": return 0x33
+        case "4": return 0x34
+        case "5": return 0x35
+        case "6": return 0x36
+        case "7": return 0x37
+        case "8": return 0x38
+        case "9": return 0x39
+        case "0": return 0x30
+        case "*": return 0x2a
+        case "#": return 0x7f
+        default: return 0
+        }
+    }
 }
