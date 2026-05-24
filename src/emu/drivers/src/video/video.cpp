@@ -21,18 +21,17 @@
 
 #include <common/platform.h>
 
-#if !EKA2L1_PLATFORM(IOS)
+#if EKA2L1_HAS_FFMPEG
 #include <drivers/video/backend/ffmpeg/video_player_ffmpeg.h>
 #endif
 
 namespace eka2l1::drivers {
     video_player_instance new_best_video_player(audio_driver *drv) {
-#if EKA2L1_PLATFORM(IOS)
-        // Stage-0 iOS build has no video backend wired up yet; see task 0.5.
+#if EKA2L1_HAS_FFMPEG
+        return std::make_unique<video_player_ffmpeg>(drv);
+#else
         (void)drv;
         return nullptr;
-#else
-        return std::make_unique<video_player_ffmpeg>(drv);
 #endif
     }
 }

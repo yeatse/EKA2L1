@@ -23,12 +23,12 @@
 #include <common/log.h>
 #include <common/platform.h>
 
-#if !EKA2L1_PLATFORM(IOS)
+#if EKA2L1_HAS_FFMPEG
 #include <drivers/audio/backend/ffmpeg/dsp_ffmpeg.h>
 #endif
 
 namespace eka2l1::drivers {
-#if EKA2L1_PLATFORM(IOS)
+#if EKA2L1_PLATFORM(IOS) && !EKA2L1_HAS_FFMPEG
     struct dsp_output_stream_pcm final : public dsp_output_stream_shared {
         explicit dsp_output_stream_pcm(drivers::audio_driver *aud)
             : dsp_output_stream_shared(aud) {
@@ -131,12 +131,13 @@ namespace eka2l1::drivers {
 
     std::unique_ptr<dsp_stream> new_dsp_out_stream(drivers::audio_driver *aud, const dsp_stream_backend dsp_backend) {
         switch (dsp_backend) {
-#if EKA2L1_PLATFORM(IOS)
         case dsp_stream_backend_ffmpeg:
+#if EKA2L1_HAS_FFMPEG
+            return std::make_unique<dsp_output_stream_ffmpeg>(aud);
+#elif EKA2L1_PLATFORM(IOS)
             return std::make_unique<dsp_output_stream_pcm>(aud);
 #else
-        case dsp_stream_backend_ffmpeg:
-            return std::make_unique<dsp_output_stream_ffmpeg>(aud);
+            break;
 #endif
 
         default:

@@ -8,9 +8,9 @@ endif ()
 # (task 3.7) instead of cubeb — cubeb's macOS AudioUnit code path leaks
 # CoreAudio HAL types that the iOS SDK doesn't ship, so a direct
 # implementation is both smaller and easier to keep in sync with the iOS
-# audio APIs. Desktop / Android continue to use cubeb. ffmpeg stays
-# disabled on iOS — its bundled binaries aren't cross-built — so DSP
-# out-streams / video player remain nullptr there.
+# audio APIs. Desktop / Android continue to use cubeb. FFmpeg is built
+# separately for iOS by scripts/build_ios_ffmpeg.sh, then linked here when
+# EKA2L1_HAVE_FFMPEG is enabled by src/external.
 if (EKA2L1_IOS)
     set(DRIVERS_AUDIOUNIT_IOS_SRC
             include/drivers/audio/backend/audiounit_ios/audio_audiounit_ios.h
@@ -23,7 +23,9 @@ else()
             include/drivers/audio/backend/cubeb/stream_cubeb.h
             src/audio/backend/cubeb/audio_cubeb.cpp
             src/audio/backend/cubeb/stream_cubeb.cpp)
+endif()
 
+if (EKA2L1_HAVE_FFMPEG)
     set(DRIVERS_FFMPEG_SRC
             include/drivers/audio/backend/ffmpeg/dsp_ffmpeg.h
             include/drivers/audio/backend/ffmpeg/player_ffmpeg.h
@@ -215,8 +217,7 @@ target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)
     # glad is not linked on iOS — the ogl backend compiles against
     # OpenGLES.framework via ios_gl_loader.h (task 2.1). Audio goes
-    # through the native AURemoteIO driver (DRIVERS_AUDIOUNIT_IOS_SRC,
-    # task 3.7 follow-up); cubeb / ffmpeg are not linked.
+    # through the native AURemoteIO driver (DRIVERS_AUDIOUNIT_IOS_SRC).
     target_link_libraries(drivers PRIVATE
         "-framework OpenGLES"
         "-framework QuartzCore"
@@ -226,7 +227,11 @@ if (EKA2L1_IOS)
         "-framework AudioToolbox"
         "-framework CoreAudio")
 else()
-    target_link_libraries(drivers PRIVATE cubeb ffmpeg glad)
+    target_link_libraries(drivers PRIVATE cubeb glad)
+endif()
+if (EKA2L1_HAVE_FFMPEG)
+    target_link_libraries(drivers PRIVATE ffmpeg)
+    target_compile_definitions(drivers PRIVATE EKA2L1_HAS_FFMPEG=1)
 endif()
 if (ANDROID)
     target_link_libraries(drivers PRIVATE android)

@@ -38,6 +38,8 @@ build_one() {
     local sdk="$3"
     local build_dir="build/ios-${label}"
 
+    scripts/build_ios_ffmpeg.sh "${label}"
+
     echo "==> Configuring ${label} (PLATFORM=${platform}, sdk=${sdk})"
     # CMake 4.x dropped compatibility with cmake_minimum_required < 3.5, and
     # several bundled submodules (glm, ext-boost, ...) still declare older
@@ -49,6 +51,8 @@ build_one() {
         -DPLATFORM="${platform}" \
         -DDEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
         -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
+        -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
+        -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     echo "==> Building ${label}"

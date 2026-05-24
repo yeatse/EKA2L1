@@ -180,8 +180,38 @@ endif()
 
 
 # FFMPEG
-if (NOT EKA2L1_IOS)
-    # ffmpeg's bundled build is not yet cross-compiled for iOS; see task 0.5.
+if (EKA2L1_IOS)
+    option(EKA2L1_IOS_ENABLE_FFMPEG "Link iOS builds against a prebuilt bundled FFmpeg output" OFF)
+    set(EKA2L1_IOS_FFMPEG_ROOT "" CACHE PATH "Path to an iOS FFmpeg install prefix with include/ and lib/")
+
+    if (EKA2L1_IOS_ENABLE_FFMPEG)
+        if (NOT EXISTS "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libavcodec.a")
+            message(FATAL_ERROR
+                "EKA2L1_IOS_ENABLE_FFMPEG=ON needs EKA2L1_IOS_FFMPEG_ROOT "
+                "to point at an iOS FFmpeg install prefix. Run "
+                "`scripts/build_ios_ffmpeg.sh simulator` or `scripts/build_ios_ffmpeg.sh device` first.")
+        endif()
+
+        add_library(ffmpeg INTERFACE)
+        target_include_directories(ffmpeg INTERFACE
+            "${EKA2L1_IOS_FFMPEG_ROOT}/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include")
+        target_link_libraries(ffmpeg INTERFACE
+            "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libavformat.a"
+            "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libavcodec.a"
+            "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libswscale.a"
+            "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libavutil.a"
+            "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libswresample.a"
+            "z" "iconv"
+            "-framework CoreVideo"
+            "-framework VideoToolbox"
+            "-framework CoreMedia")
+        set(EKA2L1_HAVE_FFMPEG ON CACHE INTERNAL "FFmpeg is available for this build" FORCE)
+    else()
+        set(EKA2L1_HAVE_FFMPEG OFF CACHE INTERNAL "FFmpeg is available for this build" FORCE)
+    endif()
+else()
+    set(EKA2L1_HAVE_FFMPEG ON CACHE INTERNAL "FFmpeg is available for this build" FORCE)
     if (APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
         # The bundled `src/external/ffmpeg` ships only x86_64 static libs for
         # macOS, and the ABI matches ffmpeg 5.x. On Apple Silicon link against

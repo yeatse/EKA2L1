@@ -18,7 +18,7 @@
  */
 
 #include <common/platform.h>
-#if !EKA2L1_PLATFORM(IOS)
+#if EKA2L1_HAS_FFMPEG
 #include <drivers/audio/backend/ffmpeg/player_ffmpeg.h>
 #endif
 #include <drivers/audio/backend/minibae/player_minibae.h>
@@ -62,7 +62,7 @@ namespace eka2l1::drivers {
         case player_type_tsf:
             return std::make_unique<player_tsf>(aud);
 
-#if !EKA2L1_PLATFORM(IOS)
+#if EKA2L1_HAS_FFMPEG
         case player_type_ffmpeg:
             return std::make_unique<player_ffmpeg>(aud);
 #endif

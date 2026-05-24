@@ -450,10 +450,10 @@
 - 🟡 剩余 follow-up：①真的"能听见声音"要选一个会出声的 ROM 应用（候选：N-Gage demo / Music Player / 一段 SIS 带 BGM 的小游戏），跑起来人耳确认 —— 不能用 xcodebuildmcp 自动断言；②MIDI 用 TSF 后端走 file-based bank，HSB/SF2 路径默认空，sandbox 里没把 `defaultbank.hsb` / `defaultbank.sf2` 拷过去（先前没人需要），有需要时和字体一样在 startup 里复制；③Audio input（mic）路径已经接好但未实测，3.x 没有需要录音的功能流程。
 
 #### 3.7.1 iOS DSP / FFmpeg 回接 🟡
-- 当前状态：iOS 已有原生 AudioUnit backend，且 `dsp_stream_backend_ffmpeg` 在 iOS 上临时落到 PCM16/PCM8-only DSP out fallback。Final Battle 不再黑屏，已能进入语言选择界面。
-- 根本限制：iOS target 仍排除了 bundled FFmpeg；直接让 iOS 编 `dsp_output_stream_ffmpeg` 会因为 `libavcodec/avcodec.h` 缺失失败。现有 PCM fallback 只能覆盖 guest 已给 PCM 的路径，不能解 AMR/MP3/AAC 等压缩 DSP format，也不能恢复 `video_player_ffmpeg`。
-- 回接方案：明确 iOS FFmpeg 来源（优先 vendored cross-built XCFramework/static libs；或用 CMake toolchain 从源码裁剪构建），只在 iOS 分支接 include/lib 路径和 `avcodec/avformat/avutil/swresample/swscale` 依赖；恢复 iOS 使用 `dsp_output_stream_ffmpeg`；保留 PCM fallback 作为 FFmpeg 不可用时的降级。
-- 验证标准：`scripts/build_ios.sh simulator` 通过；Final Battle 仍进入语言选择界面；至少一个压缩 DSP sample 或使用 MP3/AMR 的 Symbian 应用能创建 stream 并播放/推进；日志中无 `Unable to create new DSP out stream!`、`KERN-EXEC`、`Access violation`。
+- ✅ 2026-05-24 simulator 路径已回接：新增 `scripts/build_ios_ffmpeg.sh`，用 bundled FFmpeg source out-of-tree 构建 iOS static libs 到 `build/ios-<device|simulator>/ios-ffmpeg`，不 dirty `src/external/ffmpeg` 子模块；`scripts/build_ios.sh` 在配置 iOS 前自动构建对应 FFmpeg 产物，并传 `EKA2L1_IOS_ENABLE_FFMPEG=ON` / `EKA2L1_IOS_FFMPEG_ROOT=...`。
+- ✅ CMake 回接：`src/external/CMakeLists.txt` 在 iOS 下把 `libavformat/libavcodec/libswscale/libavutil/libswresample` 暴露成 `ffmpeg` interface target；`drivers` 在 `EKA2L1_HAVE_FFMPEG` 时编回 `dsp_ffmpeg.cpp` / `player_ffmpeg.cpp` / `video_player_ffmpeg.cpp`，并定义 `EKA2L1_HAS_FFMPEG=1`。如果显式关闭 FFmpeg，iOS 仍保留 PCM16/PCM8-only fallback，避免回到空 stream。
+- ✅ 验证：`scripts/build_ios.sh simulator` 通过；Xcode build 中 drivers 编译 `video_player_ffmpeg.cpp`，最终 app link line 包含五个 iOS FFmpeg static libs；`nm` 确认 `libdrivers.a` 内已有 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 符号。
+- 🟡 剩余：device 路径使用同一脚本支持 `iphoneos`，但本轮尚未跑 `scripts/build_ios.sh device`；运行时还需要用压缩 DSP sample 或 MP3/AMR 应用验证真实解码，并复测 Final Battle 无 `Unable to create new DSP out stream!` / `KERN-EXEC` / `Access violation`。
 
 #### 3.8 振动：Core Haptics
 - 新建 `src/emu/drivers/src/hwrm/backend/vibration_ios.{h,mm}`：iOS 14+ 用 `CHHapticEngine` + `CHHapticPattern` 把 duration / intensity / sharpness 映射到一次连续振动；iOS 12/13 fallback 到 `UIImpactFeedbackGenerator`。
@@ -529,6 +529,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-05-24 | iOS simulator 路径回接 FFmpeg：新增 out-of-tree FFmpeg iOS 构建脚本，`build_ios.sh` 自动先产出 simulator/device 对应 static libs；CMake 在 iOS 下恢复 `ffmpeg` target，drivers 重新编入 DSP/audio/video FFmpeg backend。`scripts/build_ios.sh simulator` 通过，符号检查确认 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 已进入 `libdrivers.a`。 |
 | 2026-05-24 | 修复 iOS AppList 滚动到空格 caption 应用时的 `pystr::rstrip()` hardening abort，并给 MIF icon cache name 加 UID fallback 与图标解码串行化；修复 Final Battle 黑屏的直接原因：iOS DSP out stream 因 FFmpeg skip 返回空，当前先接 PCM16/PCM8-only fallback，游戏可进入语言选择界面。文档新增 3.7.1 iOS DSP / FFmpeg 回接计划。 |
 | 2026-05-20 | 初版：拆完阶段 0，其余阶段仅列目标 |
 | 2026-05-20 | 阶段 0 全部子任务（0.1–0.7）落地：iOS toolchain、emu 分支化、drivers / cpu 移除桌面/JIT 依赖、外部库审计、SwiftUI 骨架、构建脚本。等待 submodule init 后跑实际构建确认。 |
