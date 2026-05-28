@@ -324,11 +324,11 @@
 - [ ] **SIS 安装链路真实跑通**：通过 UIDocumentPicker 或手工放进 `Documents/sis/`，`snakes-n95_n6trsohu.sis` 装到 E 盘、出现在 applist 并能 launch 到游戏主菜单（游戏内逻辑跑不下去不计入失败）。
 - [ ] **音频**：cubeb iOS AudioUnit 后端在 iOS 重新进 build graph，`make_audio_driver` 返回真实实例；一个带 BGM 或 SFX 的 ROM 应用（候选：N-Gage 试玩 / 一个有声音的 Symbian 小游戏）能听见声音。
 - [ ] **振动**：`drivers::vibration` 在 iOS 下走 `CHHapticEngine`（或 `UIImpactFeedbackGenerator` fallback），有一个触发振动的应用能感受到反馈，无 crash。
-- [ ] **文件导入**：`UIDocumentPickerViewController` + Info.plist 文件关联（`.sis` / `.sisx` / `.zip`-ROM / `.ttf`-字体）打通；从 Files App "Share to EKA2L1" 把上述四类资源送进 sandbox 对应目录，前端 UI 上即时刷新。
+- [x] **文件导入**：`.fileImporter`（UIDocumentPicker）+ Info.plist 文件关联打通；SIS 经 `ImportRouter` 落 `Documents/sis/`、ROM/RPKG 经 `ImportDeviceView` 走真实安装（详见 3.5 / 3.4），前端 UI 即时刷新。"Share to EKA2L1" extension 推迟（见 3.5 follow-up）。
 - [ ] **AppList 图标**：applist 显示真实 SVG/MIF 图标（解码走 lunasvg / mif decoder），不再是占位。
 - [ ] **设置面板**：SwiftUI 设置页覆盖 `config::state` 主要字段（device 切换、屏幕方向、上采样、音量、按键映射），改动持久化到 `config.yml`。
 - [ ] **输入对话框**：阶段 2 留下的 `input_dialog_ios.cpp` no-op 替换为真实 `UIAlertController` 实现（包括 `open_input_view` / `close_input_view` / `show_yes_no_dialog`）。
-- [ ] **真正的 ROM 安装流程**：取消阶段 2 mount 用的 "目录 symlink graft + 期望 desktop 预装 device tree" 权宜方案，iOS 端自管 `devices.yml` 生成 / device 注册 / 资源拷贝；同时由本阶段引入的 chunk 修复保证 `rescan_devices` 即使误删也不会跟随 symlink 删用户原始 ROM。
+- [x] **真正的 ROM 安装流程**：取消 symlink / hardlink graft + 期望 desktop 预装 device tree 的权宜方案，改走 Android / macOS 同款 `install_rom` / `install_rpkg` + `save_devices()`（详见 3.4）。
 - [ ] **字体导入引导**：检测到 ROM 缺字体时，UI 引导用户通过 DocumentPicker 添加 `.ttf`，拷到 `data/fonts/` 并被 freetype 拾取。
 - [ ] **多指 / 手势**：`multipleTouchEnabled = YES`，至少跑通双指（用于 launcher 缩放或屏幕键盘场景）和长按手势。
 - [ ] 阶段 3 修复清单按出现顺序登记（同 0.7 / 1.x / 2.x 体例）。
@@ -410,22 +410,24 @@
 - ✅ `src/emu/common/src/virtualmem.cpp` 的 iOS / macOS arm64 `commit()` / `change_protection()` 16 KB host-page 对齐分支加 `// TODO(ios)` 注释，引用 3.2.1 的来历；清理 3.2.1 阶段加的 `[commit-fail]` 调试 fprintf 与 `<cerrno>` / `<cstdio>` / `<cstring>` 包含。
 - ✅ 桌面 / Android / Win32 路径未受改动；iOS simulator build 通过（`scripts/build_ios.sh` 替代之 `xcodebuildmcp simulator build` SUCCEEDED）。
 
-#### 3.4 真正的 ROM 安装流程（取代 symlink graft）🟡
-- ✅ `mountRomNamed:` 不再用 `symlink(2)` graft drives/z firm 和 ROM 文件，改成 `NSFileManager.linkItemAtPath:toPath:`（APFS hardlink；目录级 hardlink 是 Apple FS 特有能力，TimeMachine 也用同一机制）。后果是即使将来某条代码路径误调 `common::delete_folder`（POSIX `remove(2)` 会跟着 directory symlink 递归删源文件），现在 `remove(2)` 只是 unlink hardlink name，inode 引用计数 -1，用户原 ROM 树（`roms/<rom>/data/...`）依然完整。
-- ✅ 已确认 `rescan_devices` 仍然 bypass（沿用阶段 2 #12 + 3.1 的结论），mount 直接走 `startup → set_device(0) → mount(c/d/e/z)`；任何失败的 `linkItemAtPath:` 会把整个 mount 流程 fail-fast 并返回 NO 给 SwiftUI。
-- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：fresh sandbox → mount N95 → `drives/z/rm-320` 是真目录（不是 symlink）、`roms/rm-320/SYM.ROM` link-count = 2 hardlink → applist 63 → Calculator 真实 UI 渲染稳定。
-- 🟡 剩余 follow-up：①裸 ROM 镜像（没有 desktop device tree 的 .rom 文件）→ 自动生成 minimal device tree 的路径还没做，要和 3.5 UIDocumentPicker ZIP/ROM 导入流程一起 land；②空白 sandbox + UI 全程导入 + applist 出 Snakes 的端到端验收要等 3.5 做完才能跑。
+#### 3.4 真正的 ROM 安装流程（取代 symlink / hardlink graft）✅
+- ⚠️ **hardlink graft 已废弃**：早期（3.4 第一版）`mountRomNamed:` 用 `NSFileManager.linkItemAtPath:toPath:` 把 `roms/<rom>/data/drives/z` + `data/roms/<firm>/SYM.ROM` 硬链进 sandbox，并手写 `devices.yml`。这要求 ROM 文件夹已经是 desktop 预装好的 device 树，是个权宜方案。2026-05-29 整段移除，改走与 Android / macOS 完全一致的真实安装管线。
+- ✅ 真实安装 API：Obj-C facade 把 `availableRoms` / `mountRomNamed:` 换成 `installedDevices` / `currentDeviceIndex` / `installDeviceWithRomPath:rpkgPath:` / `bootDeviceAtIndex:`。`installDeviceWithRomPath:rpkgPath:` 镜像 `launcher::install_device`：`loader::should_install_requires_additional_rpkg(rom)` 为真 → `loader::install_rpkg(dvc, rpkg, drives/z, ...)` + 把 ROM 拷成 `roms/<firm>/SYM.ROM`；为假 → `loader::install_rom(dvc, rom, roms/, drives/z, ...)`（install_rom 内部已经把 ROM 拷到 `roms/<firm>/SYM.ROM`）。完成后 `dvc->save_devices()` 落 `devices.yml`，**不再手写**。
+- ✅ `bootDeviceAtIndex:` 抽出原 mount 尾段（重建 `system` → `startup` → `set_device(idx)` → mount c/d/e/z → 绑 graphics → 注册 per-screen redraw callback），并把选中的 index 写回 `conf.device` + `serialize()`，下次启动 `startWithDocumentsPath:` 末尾自动 boot 上次设备。
+- ✅ 安装结果走新枚举 `EKA2L1InstallResult`（1:1 镜像 `device_installation_error` + iOS 专属 `NeedRpkg`），前端用从 Android `strings.xml` 移植的文案（`install_rpkg_corrupt` / `install_already_exist` / ... 见 `ImportStrings.swift`）。
+- ✅ 并发：设备安装 / 切换会重建 `symsys` 或改 `device_manager`，新增 `loop_mutex`（os_thread 每个 `symsys->loop()` tick 持有），install/boot 先翻 `mounted=false` 再抢锁排空在途 tick；安装失败时把 `mounted` 还原回原值，让原本运行的设备继续跑。重操作经 `nonisolated static` 桥接入口在后台队列跑，UI 转 spinner。
+- ✅ 端到端验证（iPhone 16 Pro / iOS 26.5 模拟器，2026-05-29）：空 sandbox → 空态 `ContentUnavailableView` → Install device → 文件选择器选 `SYM.rom`(60.6MB) + `rm-320.rpkg`(98.7MB) → "Processing…" → `install_rpkg` 成功 → 自动 boot 新设备 → 标题 "Nokia N95 (01.01)"、applist 62 app、图标正常。
+- 备注：裸 ROM（无 device tree 的 .rom）现在天然由 `install_rom` 的 ROM-dump 解析覆盖，不再需要单独的"自动生成 minimal device tree"路径。
 
 #### 3.5 UIDocumentPicker 文件导入 🟡
 - ✅ Info.plist：新增 `CFBundleDocumentTypes` 三条（SIS/SISX viewer-owner、ROM zip viewer-alt、TTF/OTF viewer-alt）+ `UTExportedTypeDeclarations`（`com.eka2l1.sis` / `com.eka2l1.sisx` conform 到 `public.data` + `.sis` / `.sisx` extension tag）。`UIFileSharingEnabled` 与 `LSSupportsOpeningDocumentsInPlace` 已经在阶段 0 打开，保持不变。
-- ✅ SwiftUI：`ContentView` / `AppListView` 顶 toolbar 加 **Import** 按钮，触发 `.fileImporter(... allowedContentTypes: [com.eka2l1.sis, com.eka2l1.sisx, .zip, .font, .data] ...)`（`.data` 兜底，应对 source 没塞 UTI 提示的 .sis 文件）。
-- ✅ 新建 `src/emu/ios/App/ImportRouter.swift`：负责安全作用域 URL pair（`startAccessingSecurityScopedResource` / `stopAccessing...`，少了这步 sandbox 拷贝直接 EPERM），按扩展名分发：
-  - `.sis` / `.sisx` → `Documents/sis/<name>`（后续走原本的 `installSisAtPath:` 路径）。
-  - `.ttf` / `.otf` → `Documents/data/fonts/<name>`（3.12 引导用同一目录）。
-  - `.zip` → 暂返回明确错误 "ROM .zip 导入交给 3.5 follow-up"（miniz 已经 link 进 common，但需要在 Obj-C++ 侧暴露解压 API，给 3.5 收尾或并到 3.4 的"裸 ROM 装 device tree"那一步）。
-  - `*.rom` → `Documents/roms/<basename>/data/roms/<lowercased>/SYM.ROM`（裸 ROM；自动生成 minimal device tree 仍待 3.4 follow-up）。
-- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：build SUCCEEDED → launch → 主页右上 **Import** 按钮可见 → tap 弹出系统 UIDocumentPickerViewController（"最近项目" / "共享" / "浏览" 三个 tab，"最近项目"为空）。截屏 `docs/screenshots/ios-stage3/3.5-import/{rom-list-with-import-button,document-picker-presented}.jpg`。
-- 🟡 剩余 follow-up：①ZIP unzip 走 miniz（与 3.4 第二个 follow-up 项一起）；②"Share to EKA2L1" extension（外部应用 Share 菜单直接送进来）推迟到 stage 3 收尾或更后；③`scripts/seed_ios_simulator_documents.sh` 继续保留为开发期复跑捷径，不进 release 路径。
+- ✅ **首页重设计（2026-05-29）**：`ContentView` 从原"ROM 列表 → AppListView → Emulator"三屏改为以设备为中心。无设备时显示 `ContentUnavailableView`（标题 No device installed + Android `no_device_installed` 文案 + "Install device" CTA）；有设备时直接进 app 列表，标题为设备名（`EKA2L1DeviceItem.displayName`，取 model 回落 firmcode），右上 `⋯` Menu 含 Settings / Devices（二级菜单切换设备，当前项带勾选）/ Install device / Diagnostics，左侧 `+` 走 `.fileImporter` 装 SIS 到当前设备。`AppListView` 整个删除。
+- ✅ **设备导入页 `ImportDeviceView`**（Form）：第一行选 ROM 文件、第二行选 RPKG 文件（可选），section footer 是 Android `install_device_note_may_need_rpkg` + `recommended_devices_to_install` 文案，底部 Install CTA。选文件时在安全作用域内把文件暂存到 `Documents/import_tmp/`（路径在 picker 关闭后失效，必须先拷），Install 时在后台队列调 `EKA2L1Bridge.installDevice(romPath:rpkgPath:)`（见 3.4），成功后清 `import_tmp` 并 boot 新设备。
+- ⚠️ **fileImporter bug 修复**：同一视图上叠加两个 `.fileImporter`（ROM + RPKG）会被 SwiftUI 丢弃其一导致点击无反应。改为单个 `.fileImporter` + `pickTarget` 枚举多路复用（`showingImporter` bool 驱动展示，`pickTarget` 在 onCompletion 里读取，不在 binding setter 里清空以免竞态读到 nil）。
+- ✅ `src/emu/ios/App/ImportRouter.swift`：仍负责 SIS 的安全作用域 URL pair（`startAccessingSecurityScopedResource` / `stopAccessing...`）+ 按扩展名分发（`.sis/.sisx → Documents/sis/`、`.ttf/.otf → Documents/data/fonts/`）。`.zip` / `*.rom` 分支保留但 SIS 导入入口的 UTI 过滤不会再走到（ROM 现在走 `ImportDeviceView` 的真实安装路径，不再落 `Documents/roms/`）。
+- ✅ Info.plist：`CFBundleDocumentTypes`（SIS/SISX viewer-owner、ROM zip、TTF/OTF）+ `UTExportedTypeDeclarations`（`com.eka2l1.sis` / `com.eka2l1.sisx`）；`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`（阶段 0 打开），所以 app 的 Documents 出现在 Files「浏览 → 我的 iPhone → EKA2L1」下，是导入 ROM/RPKG 的取文件来源之一。
+- ✅ 端到端验证（iPhone 16 Pro / iOS 26.5 模拟器，2026-05-29）：把工作区 `SYM.rom` + `rm-320.rpkg` 拷进 app Documents → 文件选择器浏览 EKA2L1 文件夹选中两文件 → Install → 安装成功进 applist（详见 3.4）。
+- 🟡 剩余 follow-up：①ZIP unzip 走 miniz 暂未做（现在 ROM 走真实 install_rom/rpkg，ZIP-bundle 导入需求降级）；②"Share to EKA2L1" extension（外部应用 Share 菜单直接送进来）推迟到 stage 3 收尾或更后；③`scripts/seed_ios_simulator_documents.sh` 继续保留为开发期复跑捷径，不进 release 路径。
 
 #### 3.6 AppList 图标（SVG / MIF 解码）✅
 - ✅ `EKA2L1Emulator` 新增 `iconPNGDataForUID:sizePx:`，按 Android 同款顺序尝试解码：①`.mif` → `loader::mif_file` + `convert_svgb_to_svg` / `convert_nvg_to_svg` debinarize 到 `Documents/data/cache/icons/debinarized_<sanitized-name>.svg`（带 mtime cache）→ `lunasvg::Document` 光栅化到内置 width/height；②`.mbm` → `loader::mbm_file` + `epoc::convert_to_rgba8888(fbsserv, ..., 0, dst)`；③其它/失败 fallback → `alserv->get_icon(*reg, 0)` 取 `bitwise_bitmap` pair + `convert_to_rgba8888(fbsserv, bitmap, dst)`。
