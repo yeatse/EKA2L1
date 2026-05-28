@@ -1,199 +1,360 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Stage-2 navigation shell:
-//   1. Rom list   — picks a folder under <Documents>/roms.
-//   2. App list   — applist_server scan + "Install SIS" affordance.
-//   3. Emulator   — full-screen UIKit/EAGL view (EmulatorView.swift).
-// The CPU smoke surface from stage 1 moves into Diagnostics so it stays
-// reachable but does not block the main flow.
+// Home surface:
+//   - No device installed → ContentUnavailableView prompting a device import
+//     (Android `no_device_installed`). The CTA opens the import Form.
+//   - One or more devices → app list for the current device. Title is the
+//     device name; the ellipsis menu holds Settings, a device switcher,
+//     "Install device" and Diagnostics; the leading "+" installs a SIS onto
+//     the running device.
 
-// Stage 3.5 import surface. .fileImporter wraps UIDocumentPickerViewController
-// and handles security-scoped URLs cleanly. We accept SIS / SISX / ZIP (ROM
-// bundle) / TTF / OTF — see Info.plist CFBundleDocumentTypes for the matching
-// UTI declarations.
-private let importTypes: [UTType] = {
+// SIS files only — device ROM / RPKG go through ImportDeviceView's own picker.
+private let sisTypes: [UTType] = {
     var v: [UTType] = []
     if let sis = UTType("com.eka2l1.sis") { v.append(sis) }
     if let sisx = UTType("com.eka2l1.sisx") { v.append(sisx) }
-    v.append(.zip)
-    v.append(.font)
-    v.append(.data) // fallback so SIS files from sources without UTI hints still pick
+    v.append(.data) // fallback so SIS files without UTI hints still pick
     return v
 }()
 
+private func documentsRoot() -> String {
+    NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
+}
+
 struct ContentView: View {
     @State private var booted = false
-    @State private var roms: [String] = []
+    @State private var devices: [EKA2L1DeviceItem] = []
+    @State private var currentIndex: Int = -1
     @State private var apps: [EKA2L1AppItem] = []
-    @State private var sisFiles: [String] = []
     @State private var bootError: String?
-    @State private var importBanner: String?
-    @State private var showingImporter = false
+    @State private var banner: String?
+    @State private var switching = false
+
+    @State private var showingImportDevice = false
+    @State private var showingSisImporter = false
+    @State private var showingSettings = false
+    @State private var showingDiagnostics = false
+
+    private var currentDevice: EKA2L1DeviceItem? {
+        devices.first { $0.index == currentIndex } ?? devices.first
+    }
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading) {
+            Group {
                 if let bootError {
-                    Text(bootError).foregroundColor(.red).padding()
-                }
-                if let importBanner {
-                    Text(importBanner).font(.caption).foregroundColor(.green).padding(.horizontal)
-                }
-                List {
-                    Section("Documents/roms") {
-                        if roms.isEmpty {
-                            Text("Tap Import to add a ROM bundle (.zip) or SIS / font.")
-                                .font(.caption).foregroundColor(.secondary)
-                        }
-                        ForEach(roms, id: \.self) { name in
-                            NavigationLink(name) {
-                                AppListView(romName: name, apps: $apps, sisFiles: $sisFiles, importBanner: $importBanner)
-                            }
-                        }
-                    }
-                    Section("Diagnostics") {
-                        NavigationLink("CPU smoke (stage 1)") { DiagnosticsView() }
-                    }
+                    ContentUnavailableView("Emulator failed to initialise",
+                                           systemImage: "exclamationmark.triangle",
+                                           description: Text(bootError))
+                } else if devices.isEmpty {
+                    emptyState
+                } else {
+                    appList
                 }
             }
-            .navigationTitle("EKA2L1")
-            .toolbar {
-                NavigationLink {
-                    SettingsView()
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                Button {
-                    showingImporter = true
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                Button(action: refresh) {
-                    Image(systemName: "arrow.clockwise")
+            .navigationTitle(currentDevice?.displayName ?? "EKA2L1")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { toolbarContent }
+            .navigationDestination(isPresented: $showingSettings) { SettingsView() }
+            .navigationDestination(isPresented: $showingDiagnostics) { DiagnosticsView() }
+            .sheet(isPresented: $showingImportDevice) {
+                ImportDeviceView { installed in
+                    if installed { bootNewestDevice() }
                 }
             }
-            .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
-                handleImport(result)
-            }
+            .fileImporter(isPresented: $showingSisImporter,
+                          allowedContentTypes: sisTypes,
+                          allowsMultipleSelection: true) { handleSisImport($0) }
         }
         .onAppear(perform: bootIfNeeded)
     }
 
-    private func handleImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .failure(let err):
-            importBanner = "Import failed: \(err.localizedDescription)"
-        case .success(let urls):
-            let outcome = ImportRouter.shared.ingest(urls: urls)
-            importBanner = outcome
-            refresh()
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No device installed", systemImage: "iphone.slash")
+        } description: {
+            Text(ImportStrings.noDeviceInstalled)
+        } actions: {
+            Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
+                .buttonStyle(.borderedProminent)
         }
     }
 
-    private func bootIfNeeded() {
-        guard !booted else { return }
-        let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-        if EKA2L1Bridge.shared.start(documentsPath: docs) {
-            booted = true
-            refresh()
-        } else {
-            bootError = "Emulator failed to initialise. Check Console for details."
-        }
-    }
-
-    private func refresh() {
-        roms = EKA2L1Bridge.shared.availableRoms()
-        let fm = FileManager.default
-        let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-        let sisDir = (docs as NSString).appendingPathComponent("sis")
-        sisFiles = ((try? fm.contentsOfDirectory(atPath: sisDir)) ?? []).filter {
-            $0.lowercased().hasSuffix(".sis") || $0.lowercased().hasSuffix(".sisx")
-        }
-    }
-}
-
-struct AppListView: View {
-    let romName: String
-    @Binding var apps: [EKA2L1AppItem]
-    @Binding var sisFiles: [String]
-    @Binding var importBanner: String?
-
-    @State private var mountedRom: String?
-    @State private var mountError: String?
-    @State private var showingImporter = false
-
-    var body: some View {
+    private var appList: some View {
         List {
-            Section("ROM") {
-                if mountedRom != romName {
-                    Button("Mount \(romName)") { mount() }
-                } else {
-                    Text("Mounted: \(romName)").font(.caption).foregroundColor(.secondary)
-                }
-                if let e = mountError {
-                    Text(e).foregroundColor(.red).font(.caption)
-                }
+            if let banner {
+                Section { Text(banner).font(.caption).foregroundColor(.green) }
             }
             Section("Apps (\(apps.count))") {
+                if apps.isEmpty {
+                    Text("No apps yet. Tap + to install a SIS / SISX package.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
                 ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
                         AppRow(uid: app.uid, name: app.name)
                     }
                 }
             }
-            Section("Install SIS") {
-                if sisFiles.isEmpty {
-                    Text("Tap Import to add a .sis / .sisx file.")
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                ForEach(sisFiles, id: \.self) { name in
-                    Button(name) { install(name) }
-                }
-            }
         }
-        .navigationTitle(romName)
-        .toolbar {
-            Button {
-                showingImporter = true
-            } label: {
-                Image(systemName: "square.and.arrow.down")
-            }
-        }
-        .fileImporter(isPresented: $showingImporter, allowedContentTypes: importTypes, allowsMultipleSelection: true) { result in
-            switch result {
-            case .failure(let err):
-                importBanner = "Import failed: \(err.localizedDescription)"
-            case .success(let urls):
-                importBanner = ImportRouter.shared.ingest(urls: urls)
-                refreshSisFiles()
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if !devices.isEmpty {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { showingSisImporter = true } label: {
+                    Image(systemName: "plus")
+                }
+                .disabled(switching)
+
+                Menu {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+
+                    Menu {
+                        ForEach(devices) { dev in
+                            Button {
+                                switchDevice(to: dev.index)
+                            } label: {
+                                if dev.index == currentIndex {
+                                    Label(dev.displayName, systemImage: "checkmark")
+                                } else {
+                                    Text(dev.displayName)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Devices", systemImage: "iphone")
+                    }
+
+                    Button {
+                        showingImportDevice = true
+                    } label: {
+                        Label(ImportStrings.importDeviceTitle, systemImage: "square.and.arrow.down")
+                    }
+
+                    Divider()
+
+                    Button {
+                        showingDiagnostics = true
+                    } label: {
+                        Label("Diagnostics", systemImage: "stethoscope")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .disabled(switching)
             }
         }
     }
 
-    private func refreshSisFiles() {
-        let fm = FileManager.default
-        let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-        let sisDir = (docs as NSString).appendingPathComponent("sis")
-        sisFiles = ((try? fm.contentsOfDirectory(atPath: sisDir)) ?? []).filter {
-            $0.lowercased().hasSuffix(".sis") || $0.lowercased().hasSuffix(".sisx")
-        }
-    }
-
-    private func mount() {
-        if EKA2L1Bridge.shared.mountRom(named: romName) {
-            mountedRom = romName
-            apps = EKA2L1Bridge.shared.rescanApps()
+    private func bootIfNeeded() {
+        guard !booted else { return }
+        if EKA2L1Bridge.shared.start(documentsPath: documentsRoot()) {
+            booted = true
+            refresh()
         } else {
-            mountError = "Mount failed (no device installed under this ROM folder?)"
+            bootError = "Check Console for details."
         }
     }
 
-    private func install(_ filename: String) {
-        let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-        let full = (docs as NSString).appendingPathComponent("sis/\(filename)")
-        _ = EKA2L1Bridge.shared.installSis(atPath: full)
-        apps = EKA2L1Bridge.shared.rescanApps()
+    private func refresh() {
+        devices = EKA2L1Bridge.shared.installedDevices()
+        currentIndex = EKA2L1Bridge.shared.currentDeviceIndex()
+        apps = currentIndex >= 0 ? EKA2L1Bridge.shared.rescanApps() : []
+    }
+
+    private func switchDevice(to index: Int) {
+        guard index != currentIndex, !switching else { return }
+        switching = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = EKA2L1Bridge.bootDevice(at: index)
+            DispatchQueue.main.async {
+                if ok {
+                    currentIndex = index
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                    banner = nil
+                }
+                switching = false
+            }
+        }
+    }
+
+    // Called after a successful device install. installedDevices() appends the
+    // newly-added device last, so boot that one.
+    private func bootNewestDevice() {
+        devices = EKA2L1Bridge.shared.installedDevices()
+        guard let newest = devices.last else { return }
+        switching = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = EKA2L1Bridge.bootDevice(at: newest.index)
+            DispatchQueue.main.async {
+                if ok {
+                    currentIndex = newest.index
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                    banner = ImportStrings.completed
+                }
+                switching = false
+            }
+        }
+    }
+
+    private func handleSisImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            banner = "Import failed: \(err.localizedDescription)"
+        case .success(let urls):
+            // Copy into Documents/sis via the shared router (handles the
+            // security-scoped URLs), then install each onto the live device.
+            _ = ImportRouter.shared.ingest(urls: urls)
+            let docs = documentsRoot()
+            var installed = 0
+            for url in urls {
+                let ext = url.pathExtension.lowercased()
+                guard ext == "sis" || ext == "sisx" else { continue }
+                let full = (docs as NSString).appendingPathComponent("sis/\(url.lastPathComponent)")
+                if EKA2L1Bridge.shared.installSis(atPath: full) { installed += 1 }
+            }
+            apps = EKA2L1Bridge.shared.rescanApps()
+            banner = "Installed \(installed) package(s)."
+        }
+    }
+}
+
+// Device-install Form. ROM file is mandatory; RPKG is supplied only when the
+// installer needs it (S60v2+ dumps). Both files are staged into the sandbox at
+// pick time so their paths survive past the security-scoped access window.
+struct ImportDeviceView: View {
+    var onFinish: (Bool) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private struct StagedFile { let name: String; let path: String }
+    private enum PickTarget { case rom, rpkg }
+
+    @State private var rom: StagedFile?
+    @State private var rpkg: StagedFile?
+    // A single fileImporter driven by which row was tapped. Stacking two
+    // .fileImporter modifiers on one view makes SwiftUI drop one of them, so
+    // we multiplex through this instead. `pickTarget` is read in the
+    // completion handler, so it is left set until then (only the bool drives
+    // presentation).
+    @State private var pickTarget: PickTarget = .rom
+    @State private var showingImporter = false
+    @State private var installing = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button { pickTarget = .rom; showingImporter = true } label: {
+                        fileRow(title: ImportStrings.romFilePrompt, value: rom?.name)
+                    }
+                    Button { pickTarget = .rpkg; showingImporter = true } label: {
+                        fileRow(title: ImportStrings.rpkgFilePrompt, value: rpkg?.name)
+                    }
+                } footer: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(ImportStrings.installDeviceNoteMayNeedRpkg)
+                        Text(ImportStrings.recommendedDevicesToInstall)
+                    }
+                }
+
+                if let errorMessage {
+                    Section { Text(errorMessage).foregroundColor(.red) }
+                }
+
+                Section {
+                    Button(action: install) {
+                        HStack(spacing: 8) {
+                            if installing { ProgressView() }
+                            Text(installing ? ImportStrings.processing : ImportStrings.installCTA)
+                        }
+                    }
+                    .disabled(rom == nil || installing)
+                }
+            }
+            .navigationTitle(ImportStrings.importDeviceTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.disabled(installing)
+                }
+            }
+            .fileImporter(isPresented: $showingImporter,
+                          allowedContentTypes: [.data],
+                          allowsMultipleSelection: false) { result in
+                let isRpkg = pickTarget == .rpkg
+                stage(result, kind: isRpkg ? "rpkg" : "rom") { staged in
+                    if isRpkg { rpkg = staged } else { rom = staged }
+                }
+            }
+            .interactiveDismissDisabled(installing)
+        }
+    }
+
+    private func fileRow(title: String, value: String?) -> some View {
+        HStack {
+            Text(title).foregroundColor(.primary)
+            Spacer()
+            Text(value ?? ImportStrings.noFileSelected)
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private func stage(_ result: Result<[URL], Error>, kind: String, assign: (StagedFile?) -> Void) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        let tmpDir = (documentsRoot() as NSString).appendingPathComponent("import_tmp")
+        let dst = (tmpDir as NSString).appendingPathComponent("\(kind)_\(url.lastPathComponent)")
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+            if fm.fileExists(atPath: dst) { try fm.removeItem(atPath: dst) }
+            try fm.copyItem(at: url, to: URL(fileURLWithPath: dst))
+            assign(StagedFile(name: url.lastPathComponent, path: dst))
+            errorMessage = nil
+        } catch {
+            errorMessage = "Failed to read file: \(error.localizedDescription)"
+        }
+    }
+
+    private func install() {
+        guard let rom else { return }
+        installing = true
+        errorMessage = nil
+        let romPath = rom.path
+        let rpkgPath = rpkg?.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = EKA2L1Bridge.installDevice(romPath: romPath, rpkgPath: rpkgPath)
+            DispatchQueue.main.async {
+                installing = false
+                cleanupStaging()
+                if result == .success {
+                    onFinish(true)
+                    dismiss()
+                } else {
+                    errorMessage = ImportStrings.message(for: result)
+                }
+            }
+        }
+    }
+
+    private func cleanupStaging() {
+        let tmpDir = (documentsRoot() as NSString).appendingPathComponent("import_tmp")
+        try? FileManager.default.removeItem(atPath: tmpDir)
+        rom = nil
+        rpkg = nil
     }
 }
 

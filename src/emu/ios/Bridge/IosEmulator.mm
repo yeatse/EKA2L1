@@ -53,6 +53,9 @@
 #include <services/window/window.h>
 #include <system/devices.h>
 #include <system/epoc.h>
+#include <system/installation/common.h>
+#include <system/installation/firmware.h>
+#include <system/installation/rpkg.h>
 #include <system/software.h>
 #include <utils/apacmd.h>
 #include <vfs/vfs.h>
@@ -61,6 +64,29 @@
 
 @implementation EKA2L1AppEntry
 @end
+
+@implementation EKA2L1DeviceEntry
+@end
+
+namespace eka2l1::ios {
+    static EKA2L1InstallResult map_install_result(eka2l1::device_installation_error err) {
+        switch (err) {
+            case eka2l1::device_installation_none: return EKA2L1InstallResultSuccess;
+            case eka2l1::device_installation_not_exist: return EKA2L1InstallResultNotExist;
+            case eka2l1::device_installation_insufficent: return EKA2L1InstallResultInsufficient;
+            case eka2l1::device_installation_rpkg_corrupt: return EKA2L1InstallResultRpkgCorrupt;
+            case eka2l1::device_installation_determine_product_failure: return EKA2L1InstallResultDetermineProductFailure;
+            case eka2l1::device_installation_already_exist: return EKA2L1InstallResultAlreadyExist;
+            case eka2l1::device_installation_general_failure: return EKA2L1InstallResultGeneralFailure;
+            case eka2l1::device_installation_rom_fail_to_copy: return EKA2L1InstallResultRomFailToCopy;
+            case eka2l1::device_installation_vpl_file_invalid: return EKA2L1InstallResultVplInvalid;
+            case eka2l1::device_installation_rofs_corrupt: return EKA2L1InstallResultRofsCorrupt;
+            case eka2l1::device_installation_rom_file_corrupt: return EKA2L1InstallResultRomCorrupt;
+            case eka2l1::device_installation_fpsx_corrupt: return EKA2L1InstallResultFpsxCorrupt;
+            default: return EKA2L1InstallResultGeneralFailure;
+        }
+    }
+}
 
 namespace eka2l1::ios {
     // 3.6 icon decoder. Mirrors src/emu/android/.../launcher.cpp::get_app_icon
@@ -266,7 +292,7 @@ namespace eka2l1::ios {
 
         std::atomic<bool> running{false};
         std::atomic<bool> paused{false};
-        // symsys->loop() must not run before mountRomNamed: completes —
+        // symsys->loop() must not run before bootDeviceAtIndex: completes —
         // kernel_system::crr_thread() dereferences a null thread_scheduler
         // otherwise. The os_thread idles until this flips true.
         std::atomic<bool> mounted{false};
@@ -276,6 +302,11 @@ namespace eka2l1::ios {
         // the EAGL context), the other ticks symsys->loop().
         std::unique_ptr<std::thread> os_thread;
         std::unique_ptr<std::thread> graphics_thread;
+
+        // Held by os_thread around each symsys->loop() tick. Device install /
+        // switch rebuilds symsys (or mutates device_manager) and must not race
+        // a loop in flight, so those paths grab this between ticks.
+        std::mutex loop_mutex;
 
         std::mutex layer_mutex;
         std::condition_variable layer_cv;
@@ -614,6 +645,7 @@ namespace eka2l1::ios {
                 continue;
             }
             try {
+                std::lock_guard<std::mutex> loop_lock(state->loop_mutex);
                 state->symsys->loop();
             } catch (std::exception &exc) {
                 LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Emu loop exception: {}", exc.what());
@@ -622,6 +654,18 @@ namespace eka2l1::ios {
             }
         }
     });
+
+    // If a device was previously installed, boot straight into it (restoring
+    // the last-selected one from conf.device) so the frontend lands on the
+    // app list rather than the empty-state import prompt.
+    auto *dvc = _state->symsys->get_device_manager();
+    if (dvc && dvc->total() > 0) {
+        std::size_t want = static_cast<std::size_t>(std::max(0, _state->conf.device));
+        if (want >= dvc->total()) {
+            want = 0;
+        }
+        [self bootDeviceAtIndex:want];
+    }
 
     return YES;
 }
@@ -652,137 +696,123 @@ namespace eka2l1::ios {
     _state.reset();
 }
 
-- (NSArray<NSString *> *)availableRoms {
-    NSMutableArray<NSString *> *out = [NSMutableArray array];
-    if (!_state) {
+- (NSArray<EKA2L1DeviceEntry *> *)installedDevices {
+    NSMutableArray<EKA2L1DeviceEntry *> *out = [NSMutableArray array];
+    if (!_state || !_state->symsys) {
         return out;
     }
-    NSString *romsRoot = [@(_state->documents_root.c_str()) stringByAppendingPathComponent:@"roms"];
-    NSError *err = nil;
-    NSArray<NSString *> *entries = [NSFileManager.defaultManager contentsOfDirectoryAtPath:romsRoot error:&err];
-    for (NSString *entry in entries) {
-        BOOL isDir = NO;
-        NSString *full = [romsRoot stringByAppendingPathComponent:entry];
-        if ([NSFileManager.defaultManager fileExistsAtPath:full isDirectory:&isDir] && isDir) {
-            [out addObject:entry];
-        }
+    auto *dvc = _state->symsys->get_device_manager();
+    if (!dvc) {
+        return out;
+    }
+    std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+    auto &devices = dvc->get_devices();
+    for (std::size_t i = 0; i < devices.size(); i++) {
+        EKA2L1DeviceEntry *entry = [[EKA2L1DeviceEntry alloc] init];
+        entry.index = i;
+        entry.firmwareCode = [NSString stringWithUTF8String:devices[i].firmware_code.c_str()];
+        entry.manufacturer = [NSString stringWithUTF8String:devices[i].manufacturer.c_str()];
+        entry.model = [NSString stringWithUTF8String:devices[i].model.c_str()];
+        [out addObject:entry];
     }
     return out;
 }
 
-- (BOOL)mountRomNamed:(NSString *)romName {
+- (NSInteger)currentDeviceIndex {
+    if (!_state || !_state->mounted || !_state->symsys) {
+        return -1;
+    }
+    auto *dvc = _state->symsys->get_device_manager();
+    if (!dvc) {
+        return -1;
+    }
+    return static_cast<NSInteger>(dvc->get_current_index());
+}
+
+- (EKA2L1InstallResult)installDeviceWithRomPath:(NSString *)romPath
+                                       rpkgPath:(NSString *)rpkgPath {
     if (!_state || !_state->symsys) {
-        return NO;
+        return EKA2L1InstallResultGeneralFailure;
     }
-    NSString *romsRoot = [@(_state->documents_root.c_str()) stringByAppendingPathComponent:@"roms"];
-    NSString *romPath = [romsRoot stringByAppendingPathComponent:romName];
-    BOOL isDir = NO;
-    if (![NSFileManager.defaultManager fileExistsAtPath:romPath isDirectory:&isDir] || !isDir) {
-        return NO;
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if (![fm fileExistsAtPath:romPath]) {
+        return EKA2L1InstallResultNotExist;
     }
+
+    // Installing mutates device_manager + the sandbox storage tree; stop the
+    // os_thread from ticking symsys->loop() while we work, then wait out any
+    // in-flight tick before touching shared state. On a failed install the
+    // installers revert their own changes, so restore the previous run state
+    // (a device may already be booted) and let it keep ticking. On success the
+    // frontend boots the new device, which rebuilds the system and remounts.
+    const bool was_mounted = _state->mounted;
+    _state->mounted = false;
+    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
 
     auto *sys = _state->symsys.get();
+    auto *dvc = sys->get_device_manager();
+    if (!dvc) {
+        _state->mounted = was_mounted;
+        return EKA2L1InstallResultGeneralFailure;
+    }
+
     const std::string storage = _state->conf.storage;
-    NSFileManager *fm = NSFileManager.defaultManager;
+    const std::string root_z_path = eka2l1::add_path(storage, "drives/z/");
+    const std::string rom_resident_path = eka2l1::add_path(storage, "roms/");
+    eka2l1::common::create_directories(rom_resident_path);
 
-    // The user-supplied ROM bundle ships as a desktop storage tree:
-    //   <romPath>/data/drives/z/<firm>/...   Symbian Z-drive filesystem
-    //   <romPath>/data/roms/<firm>/SYM.rom   raw ROM image (case-sensitive!)
-    // We stage it into the live sandbox so the running system finds it at
-    // both upper- and lower-case firmcode paths.
-    //
-    // Stage 3.4 note: the previous implementation symlinked the firm dirs
-    // and ROM files. That worked while we explicitly skip rescan_devices
-    // (the stage 2 #12 culprit), but `common::delete_folder` recurses into
-    // symlinked directories — any future caller (e.g. a "remove device" UI
-    // path) would wipe the user's source ROM. Switch to APFS hardlinks via
-    // NSFileManager linkItemAtPath: hardlinks share an inode, so deleting
-    // the destination name only removes that name; the source data and the
-    // separate directory tree under <romPath> are untouched. Directories on
-    // APFS can't be hardlinked, so linkItemAtPath recurses and hardlinks
-    // each contained file individually.
-    NSString *zSrc = [romPath stringByAppendingPathComponent:@"data/drives/z"];
-    NSString *romSrc = [romPath stringByAppendingPathComponent:@"data/roms"];
-    if (![fm fileExistsAtPath:zSrc isDirectory:&isDir] || !isDir ||
-        ![fm fileExistsAtPath:romSrc isDirectory:&isDir] || !isDir) {
+    const std::string rom_std = romPath.UTF8String;
+    eka2l1::device_installation_error result = eka2l1::device_installation_general_failure;
+    bool need_add_rpkg = false;
+    std::string firmware_code;
+
+    // Mirror launcher::install_device: a raw ROM that the loader flags as
+    // needing an RPKG must be paired with one; otherwise install_rom alone
+    // covers the dump.
+    if (eka2l1::loader::should_install_requires_additional_rpkg(rom_std)) {
+        if (!rpkgPath || ![fm fileExistsAtPath:rpkgPath]) {
+            _state->mounted = was_mounted;
+            return EKA2L1InstallResultNeedRpkg;
+        }
+        result = eka2l1::loader::install_rpkg(dvc, rpkgPath.UTF8String, root_z_path,
+            firmware_code, nullptr, nullptr);
+        need_add_rpkg = true;
+    } else {
+        result = eka2l1::loader::install_rom(dvc, rom_std, rom_resident_path, root_z_path,
+            nullptr, nullptr);
+    }
+
+    if (result != eka2l1::device_installation_none) {
+        _state->mounted = was_mounted;
+        return eka2l1::ios::map_install_result(result);
+    }
+
+    dvc->save_devices();
+
+    if (need_add_rpkg) {
+        const std::string rom_directory = eka2l1::add_path(rom_resident_path,
+            eka2l1::common::lowercase_string(firmware_code) + "/");
+        eka2l1::common::create_directories(rom_directory);
+        eka2l1::common::copy_file(rom_std, eka2l1::add_path(rom_directory, "SYM.ROM"), true);
+    }
+
+    return EKA2L1InstallResultSuccess;
+}
+
+- (BOOL)bootDeviceAtIndex:(NSUInteger)index {
+    if (!_state) {
         return NO;
     }
+    const std::string storage = _state->conf.storage;
 
-    // Generate a devices.yml entry for each firm we find. device_manager
-    // only re-reads this on construction, so we have to write it BEFORE
-    // restarting / rebuilding system. For stage 2 we already created system
-    // in start(); to pick up devices we'll rewrite devices.yml and recreate
-    // system. That's a heavy hammer, but the alternative (calling
-    // rescan_devices) recurses into symlinked content and can destroy the
-    // user's bundle if the SYM.ROM probe fails.
-    NSMutableString *yaml = [NSMutableString string];
-    NSString *zDst = [@(storage.c_str()) stringByAppendingPathComponent:@"drives/z"];
-    NSString *romDst = [@(storage.c_str()) stringByAppendingPathComponent:@"roms"];
-    for (NSString *firm in [fm contentsOfDirectoryAtPath:zSrc error:nil]) {
-        NSString *firmZSrc = [zSrc stringByAppendingPathComponent:firm];
-        std::string manufacturer = "Nokia";
-        std::string firmCode = firm.UTF8String;
-        std::string model = firmCode;
-        epocver version = eka2l1::loader::determine_rpkg_symbian_version(firmZSrc.UTF8String);
-        eka2l1::loader::determine_rpkg_product_info(firmZSrc.UTF8String, manufacturer, firmCode, model);
-        NSString *systemInstall = [firmZSrc stringByAppendingPathComponent:@"system/Install"];
-        if (![fm fileExistsAtPath:systemInstall isDirectory:&isDir] || !isDir) {
-            systemInstall = [firmZSrc stringByAppendingPathComponent:@"System/Install"];
-        }
-        if (version == epocver::epoc94) {
-            if ([fm fileExistsAtPath:[systemInstall stringByAppendingPathComponent:@"Series60v3.1.sis"]]) {
-                version = epocver::epoc93fp1;
-            } else if ([fm fileExistsAtPath:[systemInstall stringByAppendingPathComponent:@"Series60v3.2.sis"]]) {
-                version = epocver::epoc93fp2;
-            }
-        }
-
-        const std::string firmLowerUtf8 = eka2l1::common::lowercase_string(firmCode);
-        NSString *firmLower = [NSString stringWithUTF8String:firmLowerUtf8.c_str()];
-        NSString *firmZDst = [zDst stringByAppendingPathComponent:firmLower];
-        [fm removeItemAtPath:firmZDst error:nil];
-        // Make sure the parent (`drives/z`) exists so linkItemAtPath:'s
-        // implicit mkdir of the leaf has somewhere to land.
-        [fm createDirectoryAtPath:zDst withIntermediateDirectories:YES attributes:nil error:nil];
-        NSError *zLinkErr = nil;
-        if (![fm linkItemAtPath:firmZSrc toPath:firmZDst error:&zLinkErr]) {
-            LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS mount: failed to hardlink Z drive {} → {}: {}",
-                firmZSrc.UTF8String, firmZDst.UTF8String,
-                zLinkErr.localizedDescription.UTF8String ?: "unknown");
-            return NO;
-        }
-
-        NSString *romFirmSrc = [romSrc stringByAppendingPathComponent:firm];
-        NSString *romFirmDst = [romDst stringByAppendingPathComponent:firmLower];
-        [fm removeItemAtPath:romFirmDst error:nil];
-        [fm createDirectoryAtPath:romFirmDst withIntermediateDirectories:YES attributes:nil error:nil];
-        for (NSString *fname in [fm contentsOfDirectoryAtPath:romFirmSrc error:nil]) {
-            NSString *src = [romFirmSrc stringByAppendingPathComponent:fname];
-            // rescan/load_rom probes literal uppercase "SYM.ROM".
-            NSString *targetName = ([fname caseInsensitiveCompare:@"SYM.ROM"] == NSOrderedSame)
-                ? @"SYM.ROM" : fname;
-            NSString *dst = [romFirmDst stringByAppendingPathComponent:targetName];
-            [fm removeItemAtPath:dst error:nil];
-            NSError *romLinkErr = nil;
-            if (![fm linkItemAtPath:src toPath:dst error:&romLinkErr]) {
-                LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS mount: failed to hardlink ROM file {} → {}: {}",
-                    src.UTF8String, dst.UTF8String,
-                    romLinkErr.localizedDescription.UTF8String ?: "unknown");
-                return NO;
-            }
-        }
-
-        [yaml appendFormat:@"%s:\n  platver: %s\n  manufacturer: %s\n  firmcode: %s\n  model: %s\n  machine-uid: 0\n",
-            firmCode.c_str(), epocver_to_string(version), manufacturer.c_str(), firmCode.c_str(), model.c_str()];
-    }
-    if (yaml.length == 0) {
-        return NO;
-    }
-
-    // Write devices.yml then re-instantiate system so device_manager picks
-    // up the new entries (constructor calls load_devices()).
-    NSString *yamlPath = [@(storage.c_str()) stringByAppendingPathComponent:@"devices.yml"];
-    [yaml writeToFile:yamlPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    // Rebuild the system so device_manager reloads devices.yml fresh and the
+    // kernel comes up clean for the selected device. device_manager only
+    // reads devices.yml on construction. Stop + drain the os_thread first so
+    // the symsys reset below doesn't race a loop in flight.
+    _state->mounted = false;
+    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+    _state->winserv = nullptr;
+    _state->screen_redraw_handles.clear();
 
     eka2l1::system_create_components comp;
     comp.audio_ = _state->audio_driver.get();
@@ -790,15 +820,19 @@ namespace eka2l1::ios {
     comp.conf_ = &_state->conf;
     comp.settings_ = _state->settings.get();
     _state->symsys = std::make_unique<eka2l1::system>(comp);
-    sys = _state->symsys.get();
+    auto *sys = _state->symsys.get();
 
     sys->startup();
-    if (sys->get_device_manager()->total() == 0) {
+    auto *dvc = sys->get_device_manager();
+    if (!dvc || index >= dvc->total()) {
         return NO;
     }
-    if (!sys->set_device(0)) {
+    if (!sys->set_device(static_cast<std::uint8_t>(index))) {
         return NO;
     }
+    _state->conf.device = static_cast<int>(index);
+    _state->conf.serialize();
+
     sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
     sys->mount(drive_d, drive_media::physical, eka2l1::add_path(storage, "/drives/d/"), io_attrib_internal);
     sys->mount(drive_e, drive_media::physical, eka2l1::add_path(storage, "/drives/e/"), io_attrib_removeable);
@@ -828,10 +862,7 @@ namespace eka2l1::ios {
     eka2l1::ios::bind_graphics_driver(_state.get());
 
     // Register a per-screen redraw callback so each frame produced by the
-    // Symbian window server triggers a swap on the EAGL context. The
-    // launcher.draw() composition layer from the Android frontend is not
-    // ported in stage 2 — see "已知风险" — so content drawing depends on the
-    // standard graphics_driver command pipeline alone.
+    // Symbian window server triggers a swap on the EAGL context.
     if (_state->winserv) {
         auto *state = _state.get();
         eka2l1::epoc::screen *screens = _state->winserv->get_screens();

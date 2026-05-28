@@ -29,6 +29,7 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/EKA2L1App.swift"
     "${EKA2L1_IOS_APP_DIR}/ContentView.swift"
     "${EKA2L1_IOS_APP_DIR}/EKA2L1Bridge.swift"
+    "${EKA2L1_IOS_APP_DIR}/ImportStrings.swift"
     "${EKA2L1_IOS_APP_DIR}/EmulatorView.swift"
     "${EKA2L1_IOS_APP_DIR}/EmulatorViewController.swift"
     "${EKA2L1_IOS_APP_DIR}/ImportRouter.swift"

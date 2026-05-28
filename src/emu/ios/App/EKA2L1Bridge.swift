@@ -8,6 +8,22 @@ struct EKA2L1AppItem: Identifiable, Hashable {
     var id: UInt32 { uid }
 }
 
+struct EKA2L1DeviceItem: Identifiable, Hashable {
+    let index: Int
+    let firmwareCode: String
+    let manufacturer: String
+    let model: String
+
+    var id: Int { index }
+
+    // Title shown on the app list / device switcher. Prefer the model
+    // (e.g. "Nokia N97") and fall back to the firmware code.
+    var displayName: String {
+        let trimmed = model.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? firmwareCode : trimmed
+    }
+}
+
 struct CpuSmokeReport {
     enum Backend {
         case dyncom
@@ -39,12 +55,26 @@ final class EKA2L1Bridge {
         emulator.start(withDocumentsPath: documentsPath)
     }
 
-    func availableRoms() -> [String] {
-        emulator.availableRoms()
+    func installedDevices() -> [EKA2L1DeviceItem] {
+        emulator.installedDevices().map {
+            EKA2L1DeviceItem(index: Int($0.index), firmwareCode: $0.firmwareCode,
+                             manufacturer: $0.manufacturer, model: $0.model)
+        }
     }
 
-    func mountRom(named name: String) -> Bool {
-        emulator.mountRomNamed(name)
+    func currentDeviceIndex() -> Int {
+        emulator.currentDeviceIndex()
+    }
+
+    // Heavy operations (ROM dump / system rebuild) — exposed as nonisolated so
+    // the frontend can run them off the main queue while a spinner shows. The
+    // Obj-C side serialises against the emulator loop internally.
+    nonisolated static func installDevice(romPath: String, rpkgPath: String?) -> EKA2L1InstallResult {
+        EKA2L1Emulator.shared().installDevice(romPath: romPath, rpkgPath: rpkgPath)
+    }
+
+    nonisolated static func bootDevice(at index: Int) -> Bool {
+        EKA2L1Emulator.shared().bootDevice(at: UInt(index))
     }
 
     func rescanApps() -> [EKA2L1AppItem] {
