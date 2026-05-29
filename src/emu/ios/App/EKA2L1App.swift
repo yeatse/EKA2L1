@@ -11,17 +11,12 @@ struct EKA2L1App: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // Stage-1 regression hook: scripts/build_ios.sh smoke greps for the
-        // EKA2L1_SMOKE marker on stdout. Keep firing the dyncom check at
-        // launch so the CI signal survives the stage-2 UI restructure.
+        // Stage-1 regression hook: scripts/build_ios.sh smoke greps the
+        // simulator log for the EKA2L1_SMOKE marker. runSmoke() emits that
+        // marker itself (stderr + os_log + NSLog), so just fire the dyncom
+        // check at launch and let the bridge do the logging.
         DispatchQueue.global(qos: .background).async {
-            let r = EKA2L1Bridge.runSmoke(backend: .dyncom)
-            let backend = r.resolvedBackend == .dyncom ? "dyncom" : "dynarmic"
-            if r.pass {
-                NSLog("EKA2L1_SMOKE: PASS backend=\(backend) instrs=\(r.instructionsExecuted) pc=0x%08X", r.pc)
-            } else {
-                NSLog("EKA2L1_SMOKE: FAIL backend=\(backend) instrs=\(r.instructionsExecuted)")
-            }
+            _ = EKA2L1Bridge.runSmoke(backend: .dyncom)
         }
     }
 

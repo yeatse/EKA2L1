@@ -385,48 +385,44 @@ namespace eka2l1::ios {
         builder.clear({ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
             eka2l1::drivers::draw_buffer_bit_color_buffer);
 
-        if (scr) {
-            auto &mode = scr->current_mode();
-            eka2l1::rect src;
-            src.size = mode.size;
+        auto &mode = scr->current_mode();
+        eka2l1::rect src;
+        src.size = mode.size;
 
-            float width = static_cast<float>(swapchain_size.x);
-            float height = mode.size.y * width / mode.size.x;
-            if (height > swapchain_size.y) {
-                height = static_cast<float>(swapchain_size.y);
-                width = mode.size.x * height / mode.size.y;
-            }
-
-            eka2l1::rect dest;
-            dest.top.x = static_cast<int>((swapchain_size.x - width) / 2.0f);
-            dest.top.y = static_cast<int>((swapchain_size.y - height) / 2.0f);
-            dest.size.x = static_cast<int>(width);
-            dest.size.y = static_cast<int>(height);
-
-            const float scale_x = width / static_cast<float>(mode.size.x);
-            const float scale_y = height / static_cast<float>(mode.size.y);
-            scr->set_native_scale_factor(state->graphics_driver.get(), scale_x, scale_y);
-            scr->absolute_pos = dest.top;
-
-            eka2l1::drivers::advance_draw_pos_around_origin(dest, scr->ui_rotation);
-            if (scr->ui_rotation % 180 != 0) {
-                std::swap(dest.size.x, dest.size.y);
-                std::swap(src.size.x, src.size.y);
-            }
-            src.size *= scr->display_scale_factor;
-
-            std::uint32_t flags = 0;
-            if (scr->flags_ & eka2l1::epoc::screen::FLAG_SCREEN_UPSCALE_FACTOR_LOCK) {
-                flags |= eka2l1::drivers::bitmap_draw_flag_use_upscale_shader;
-            }
-
-            if (scr->screen_texture) {
-                builder.set_texture_filter(scr->screen_texture, true, eka2l1::drivers::filter_option::linear);
-                builder.set_texture_filter(scr->screen_texture, false, eka2l1::drivers::filter_option::linear);
-                builder.draw_bitmap(scr->screen_texture, 0, dest, src, eka2l1::vec2(0, 0),
-                    static_cast<float>(scr->ui_rotation), flags);
-            }
+        float width = static_cast<float>(swapchain_size.x);
+        float height = mode.size.y * width / mode.size.x;
+        if (height > swapchain_size.y) {
+            height = static_cast<float>(swapchain_size.y);
+            width = mode.size.x * height / mode.size.y;
         }
+
+        eka2l1::rect dest;
+        dest.top.x = static_cast<int>((swapchain_size.x - width) / 2.0f);
+        dest.top.y = static_cast<int>((swapchain_size.y - height) / 2.0f);
+        dest.size.x = static_cast<int>(width);
+        dest.size.y = static_cast<int>(height);
+
+        const float scale_x = width / static_cast<float>(mode.size.x);
+        const float scale_y = height / static_cast<float>(mode.size.y);
+        scr->set_native_scale_factor(state->graphics_driver.get(), scale_x, scale_y);
+        scr->absolute_pos = dest.top;
+
+        eka2l1::drivers::advance_draw_pos_around_origin(dest, scr->ui_rotation);
+        if (scr->ui_rotation % 180 != 0) {
+            std::swap(dest.size.x, dest.size.y);
+            std::swap(src.size.x, src.size.y);
+        }
+        src.size *= scr->display_scale_factor;
+
+        std::uint32_t flags = 0;
+        if (scr->flags_ & eka2l1::epoc::screen::FLAG_SCREEN_UPSCALE_FACTOR_LOCK) {
+            flags |= eka2l1::drivers::bitmap_draw_flag_use_upscale_shader;
+        }
+
+        builder.set_texture_filter(scr->screen_texture, true, eka2l1::drivers::filter_option::linear);
+        builder.set_texture_filter(scr->screen_texture, false, eka2l1::drivers::filter_option::linear);
+        builder.draw_bitmap(scr->screen_texture, 0, dest, src, eka2l1::vec2(0, 0),
+            static_cast<float>(scr->ui_rotation), flags);
 
         builder.load_backup_state();
         state->present_status = -100;
@@ -839,6 +835,10 @@ namespace eka2l1::ios {
     sys->mount(drive_z, drive_media::rom, eka2l1::add_path(storage, "/drives/z/"),
         io_attrib_internal | io_attrib_write_protected);
 
+    // Bind the drivers before initialize_user_parties so the services it
+    // boots (window server, key sound, ...) come up against a live driver.
+    // The graphics driver is re-bound via bind_graphics_driver() below once
+    // the device is mounted, so it does not need setting again here.
     if (_state->graphics_driver) {
         sys->set_graphics_driver(_state->graphics_driver.get());
     }
@@ -846,9 +846,6 @@ namespace eka2l1::ios {
         sys->set_audio_driver(_state->audio_driver.get());
     }
     sys->initialize_user_parties();
-    if (_state->graphics_driver) {
-        sys->set_graphics_driver(_state->graphics_driver.get());
-    }
     eka2l1::ios::install_required_rom_patches(_state.get());
     sys->get_packages()->load_registries();
     sys->get_packages()->migrate_legacy_registries();

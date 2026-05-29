@@ -1,10 +1,9 @@
-# EKA2L1 iOS frontend skeleton (task 0.6)
+# EKA2L1 iOS frontend
 #
-# Stage 0 only builds a tiny SwiftUI shell so we can prove that the iOS
-# toolchain produces a launchable .app bundle and that the emu static
-# libraries link cleanly into a real iOS executable. There is no real
-# emulator wiring here yet -- launcher/state/thread/emu_window/input_dialog
-# bridges will land in stage 2.
+# Builds the SwiftUI shell plus the Obj-C++ bridge (IosEmulator / CpuSmoke)
+# that drives the emu core on iOS: device install/boot, applist scan + launch,
+# EAGL rendering, input, audio and vibration. Mirrors the Android JNI bridge
+# under src/emu/android/app/src/main/cpp.
 #
 # The expected invocation is:
 #   cmake -S . -B build/ios -G Xcode \
@@ -34,8 +33,6 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/EmulatorViewController.swift"
     "${EKA2L1_IOS_APP_DIR}/ImportRouter.swift"
     "${EKA2L1_IOS_APP_DIR}/SettingsView.swift"
-    "${EKA2L1_IOS_BRIDGE_DIR}/StartupBridge.h"
-    "${EKA2L1_IOS_BRIDGE_DIR}/StartupBridge.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBlob.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.mm"
@@ -51,11 +48,9 @@ add_executable(${EKA2L1_IOS_APP} MACOSX_BUNDLE ${EKA2L1_IOS_SOURCES})
 target_include_directories(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}")
 target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE GLES_SILENCE_DEPRECATION)
 
-# Link the headline emu static libraries so the build graph is exercised
-# end to end. We mirror the Android JNI bridge link line (see
-# src/emu/android/app/src/main/cpp/CMakeLists.txt) because that target is
-# known-good for a non-Qt frontend. Additional libs will be added as the
-# bridge grows in stage 2.
+# Link the emu static libraries the bridge depends on. We mirror the Android
+# JNI bridge link line (see src/emu/android/app/src/main/cpp/CMakeLists.txt)
+# because that target is known-good for a non-Qt frontend.
 target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     common
     cpu

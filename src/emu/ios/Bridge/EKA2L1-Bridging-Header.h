@@ -2,6 +2,5 @@
 // the iOS frontend needs to call. Keep this list short and stable -- the
 // less surface area Swift sees, the less churn when the bridge evolves.
 
-#import "StartupBridge.h"
 #import "CpuSmokeBridge.h"
 #import "IosEmulator.h"

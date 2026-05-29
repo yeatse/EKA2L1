@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
 // Obj-C facade for the iOS-side emulator state. Mirrors the role
-// `eka2l1::android::emulator` plays for the Android frontend but trimmed to
-// stage-2 scope: no audio (cubeb absent), no sensors / camera / vibration,
-// no SIS-install UI. Implemented on top of the C++ `eka2l1::ios::emulator`
-// in IosEmulator.mm.
+// `eka2l1::android::emulator` plays for the Android frontend: device install /
+// boot, applist scan + launch, render-surface attach, input, audio (cubeb),
+// vibration (Core Haptics) and SIS install. Sensors / camera are not wired
+// yet. Implemented on top of the C++ `eka2l1::ios::emulator` in IosEmulator.mm.
 
 #import <Foundation/Foundation.h>
 #import <QuartzCore/CAEAGLLayer.h>
@@ -84,7 +84,8 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // Launch a previously-listed app.
 - (BOOL)launchAppWithUID:(uint32_t)uid;
 
-// SIS install (stub for stage 2 acceptance, implementation in 2.6).
+// Install a SIS / SISX package onto the running device. Picks drive D for
+// S80 devices and drive E otherwise, mirroring the Android install path.
 - (BOOL)installSisAtPath:(NSString *)sisPath;
 
 // Render surface / lifecycle ----------------------------------------------
