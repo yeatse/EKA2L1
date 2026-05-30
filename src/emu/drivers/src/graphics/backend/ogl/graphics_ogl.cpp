@@ -105,6 +105,14 @@ namespace eka2l1::drivers {
 
         is_gles = (context_->gl_mode() == graphics::gl_context::mode::opengl_es);
 
+        {
+            GLint max_tex = 0;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_tex);
+            if (max_tex > 0) {
+                max_texture_size_ = static_cast<std::uint32_t>(max_tex);
+            }
+        }
+
         GLint major_gl = 0;
         GLint minor_gl = 0;
         glGetIntegerv(GL_MAJOR_VERSION, &major_gl);
