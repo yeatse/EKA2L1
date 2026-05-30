@@ -554,6 +554,40 @@ namespace eka2l1::ios {
     _state->conf.deserialize();
     _state->conf.storage = dataRoot.UTF8String;
     _state->conf.cpu_load_save = false;
+
+    // Apply the configured log filter — the iOS frontend previously skipped
+    // this step (Qt does it in state.cpp), so the default log_filterings ctor
+    // left every class at trace level. On top of that, the iOS app is not a
+    // BUILD_FOR_USER build, so config::deserialize never downgrades the
+    // "*:trace" debug preset to the normal-use preset. The result was that
+    // every guest context switch ([Kernel]) and every dyncom VFP op
+    // ([CPU.DynCom]) was logged and synchronously flushed (spdlog flush_on =
+    // debug). Light S60v3 ROMs (N95) limped through, but heavier S60v5 ROMs
+    // (N97: ecomserver / AknIconSrv / cdlserver startup storm) spent ~all CPU
+    // in the trace flush flood and never produced a frame — a black screen at
+    // 100% CPU. Mirror BUILD_FOR_USER's downgrade here unless the user opted
+    // into extensive logging or set a custom filter.
+    std::string log_filter = _state->conf.log_filter;
+    if (log_filter.empty() || log_filter == eka2l1::LOG_FILTER_DEBUG_PRESET) {
+        if (_state->conf.extensive_logging) {
+            log_filter = eka2l1::LOG_FILTER_DEBUG_PRESET;
+        } else {
+            // Normal-use preset, plus silence the dyncom interpreter's per-op
+            // VFP trace. iOS runs the dyncom backend (see epoc.cpp — dynarmic
+            // still has a simulator-only A32 regalloc crash), and the normal
+            // preset leaves the CPU classes at trace level. Float-heavy guest
+            // code — e.g. AVKON UI bring-up on S60v5 (N97) — would otherwise
+            // flood the log with [CPU.DynCom] VFP traces, each synchronously
+            // flushed (spdlog flush_on = debug), pinning the CPU and starving
+            // rendering: the exact black-screen-at-100%-CPU symptom.
+            log_filter = std::string(eka2l1::LOG_FILTER_NORMAL_USE_PRESET)
+                + " CPU:warn CPU.DynCom:warn CPU.12L1R:warn";
+        }
+    }
+    if (eka2l1::log::filterings) {
+        eka2l1::log::filterings->parse_filter_string(log_filter);
+    }
+
     _state->settings = std::make_unique<eka2l1::config::app_settings>(&_state->conf);
 
     // 3.7: instantiate the cubeb iOS AudioUnit (RemoteIO) backend up front so
@@ -1147,6 +1181,10 @@ namespace eka2l1::ios {
     NSString *logFilter = snapshot[@"logFilter"];
     if ([logFilter isKindOfClass:NSString.class]) {
         _state->conf.log_filter = logFilter.UTF8String;
+        // Re-apply live so the change takes effect without a restart.
+        if (eka2l1::log::filterings && !_state->conf.log_filter.empty()) {
+            eka2l1::log::filterings->parse_filter_string(_state->conf.log_filter);
+        }
     }
 
     _state->conf.serialize();
