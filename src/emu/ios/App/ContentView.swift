@@ -36,6 +36,15 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingDiagnostics = false
 
+    // Dev/testing convenience: launch straight into a given app on startup,
+    // skipping the scroll-and-tap. Pass the UID as an iOS launch argument, e.g.
+    //   xcrun simctl launch booted com.eka2l1.emulator -LaunchAppUID 0x2000023D
+    // (decimal also accepted). simctl forwards "-Key Value" pairs into the
+    // NSArgumentDomain, so UserDefaults picks it up; it is volatile per-launch.
+    @State private var autoLaunchUID: UInt32?
+    @State private var showingAutoLaunch = false
+    @State private var autoLaunchHandled = false
+
     private var currentDevice: EKA2L1DeviceItem? {
         devices.first { $0.index == currentIndex } ?? devices.first
     }
@@ -58,6 +67,9 @@ struct ContentView: View {
             .toolbar { toolbarContent }
             .navigationDestination(isPresented: $showingSettings) { SettingsView() }
             .navigationDestination(isPresented: $showingDiagnostics) { DiagnosticsView() }
+            .navigationDestination(isPresented: $showingAutoLaunch) {
+                if let uid = autoLaunchUID { EmulatorView(uid: uid) }
+            }
             .sheet(isPresented: $showingImportDevice) {
                 ImportDeviceView { installed in
                     if installed { bootNewestDevice() }
@@ -158,9 +170,32 @@ struct ContentView: View {
         if EKA2L1Bridge.shared.start(documentsPath: documentsRoot()) {
             booted = true
             refresh()
+            maybeAutoLaunch()
         } else {
             bootError = "Check Console for details."
         }
+    }
+
+    // If launched with -LaunchAppUID, navigate straight into that app once a
+    // device is booted. EmulatorViewController waits for the graphics driver
+    // before calling launchApp, so no extra readiness gate is needed here.
+    private func maybeAutoLaunch() {
+        guard !autoLaunchHandled, currentIndex >= 0, let uid = Self.launchAppUIDArgument() else { return }
+        autoLaunchHandled = true
+        autoLaunchUID = uid
+        Task { @MainActor in
+            try? await Task.sleep(until: .now + .seconds(1))
+            self.showingAutoLaunch = true
+        }
+    }
+
+    private static func launchAppUIDArgument() -> UInt32? {
+        guard let raw = UserDefaults.standard.string(forKey: "LaunchAppUID")?
+            .trimmingCharacters(in: .whitespaces), !raw.isEmpty else { return nil }
+        if raw.lowercased().hasPrefix("0x") {
+            return UInt32(raw.dropFirst(2), radix: 16)
+        }
+        return UInt32(raw)
     }
 
     private func refresh() {
