@@ -1093,7 +1093,13 @@ namespace eka2l1::ios {
     evt.mouse_.pos_y_ = static_cast<int>(y);
     evt.mouse_.pos_z_ = 0;
     evt.mouse_.button_ = eka2l1::drivers::mouse_button_left;
-    evt.mouse_.raw_screen_pos_ = true;
+    // The position is in swapchain/layer pixels (touch point * contentScale),
+    // not guest screen coordinates. raw_screen_pos_ must therefore be false so
+    // window_server maps it through the screen's absolute_pos + logic scale
+    // (matching the Qt/Android frontends). Setting it true fed raw device
+    // pixels straight in as guest coords, landing every tap far outside the
+    // 360x640 guest screen — touches did nothing.
+    evt.mouse_.raw_screen_pos_ = false;
     // Single-touch in stage 2; the UITouch pointer hash maps to a mouse_id
     // so window_server can still tell separate gestures apart later.
     evt.mouse_.mouse_id = static_cast<std::uint32_t>(pointerId & 0xFFFFFFFFu);

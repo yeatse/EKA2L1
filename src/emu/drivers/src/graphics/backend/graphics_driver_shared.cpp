@@ -21,6 +21,9 @@
 #include <common/log.h>
 #include <common/platform.h>
 
+#include <cstdint>
+#include <vector>
+
 #include <drivers/graphics/backend/graphics_driver_shared.h>
 #include <drivers/graphics/buffer.h>
 #include <drivers/graphics/shader.h>
@@ -38,10 +41,23 @@ namespace eka2l1::drivers {
 
         switch (bpp) {
         case 8:
+#if EKA2L1_PLATFORM(IOS)
+            // The iOS GLES simulator samples single-channel R8 / GL_RED
+            // textures as 0 (black) even though the byte data uploads without
+            // any GL error (and renders fine on desktop GL). This breaks every
+            // AVKON glyph/icon alpha mask (gray256), which S60v5 apps lean on
+            // heavily — the masked text ended up as solid black blocks. Promote
+            // 8bpp bitmaps to RGBA8 instead; the source bytes are expanded to
+            // (v,v,v,v) at upload time (see update_bitmap), so the mask shader's
+            // maskValue.r still reads the coverage.
+            format = texture_format::rgba;
+            internal_format = texture_format::rgba;
+#else
             format = texture_format::r;
 
             if (stricted)
                 internal_format = texture_format::r8;
+#endif
 
             break;
 
@@ -53,21 +69,35 @@ namespace eka2l1::drivers {
             break;
 
         case 16:
+#if EKA2L1_PLATFORM(IOS)
+            // Same iOS GLES story as the 8bpp case: a GL_RGB / RGB565 texture
+            // that AVKON renders glyph runs into (window-server backing bitmaps)
+            // comes back black on the simulator. Promote to RGBA8 and unpack the
+            // 565 source to RGBA at upload time (see update_bitmap).
+            format = texture_format::rgba;
+            internal_format = texture_format::rgba;
+#else
             format = texture_format::rgb;
             data_type = texture_data_type::ushort_5_6_5;
 
             if (stricted)
                 internal_format = texture_format::rgb;
+#endif
 
             break;
 
         case 24:
+#if EKA2L1_PLATFORM(IOS)
+            format = texture_format::rgba;
+            internal_format = texture_format::rgba;
+#else
             if (stricted) {
                 format = texture_format::rgb;
                 internal_format = texture_format::rgb;
             } else {
                 format = texture_format::bgr;
             }
+#endif
 
             break;
 
@@ -240,6 +270,45 @@ namespace eka2l1::drivers {
 
         translate_bpp_to_format(bmp->bpp, internal_format, data_format, data_type, is_stricted());
 
+#if EKA2L1_PLATFORM(IOS)
+        // Counterpart to the 8/16/24bpp -> RGBA8 promotion in
+        // translate_bpp_to_format. The iOS GLES simulator renders these
+        // sub-32bpp window-server bitmaps as solid black (R8 samples 0,
+        // GL_RGB/565 textures that AVKON draws glyph runs into come back
+        // empty), so we unpack the source straight to RGBA8 here to match the
+        // RGBA8 texture the create path now allocates. Packed tightly, so the
+        // texture row length is just dim.x.
+        std::vector<std::uint8_t> expanded_rgba;
+        if (data && (bmp->bpp == 8 || bmp->bpp == 16 || bmp->bpp == 24)) {
+            const std::uint8_t *src = reinterpret_cast<const std::uint8_t *>(data);
+            const std::size_t bytes_pp = static_cast<std::size_t>(bmp->bpp) / 8;
+            const std::size_t src_stride = (pixels_per_line != 0) ? pixels_per_line : static_cast<std::size_t>(dim.x);
+            expanded_rgba.resize(static_cast<std::size_t>(dim.x) * static_cast<std::size_t>(dim.y) * 4);
+            for (int y = 0; y < dim.y; y++) {
+                for (int x = 0; x < dim.x; x++) {
+                    const std::uint8_t *s = src + (static_cast<std::size_t>(y) * src_stride + x) * bytes_pp;
+                    std::uint8_t *d = expanded_rgba.data() + (static_cast<std::size_t>(y) * dim.x + x) * 4;
+                    if (bmp->bpp == 8) {
+                        // Gray / alpha mask: replicate so maskValue.r is coverage.
+                        d[0] = d[1] = d[2] = d[3] = s[0];
+                    } else if (bmp->bpp == 16) {
+                        // RGB565, R in the high bits.
+                        const std::uint16_t p = static_cast<std::uint16_t>(s[0] | (s[1] << 8));
+                        const std::uint8_t r5 = (p >> 11) & 0x1F, g6 = (p >> 5) & 0x3F, b5 = p & 0x1F;
+                        d[0] = (r5 << 3) | (r5 >> 2);
+                        d[1] = (g6 << 2) | (g6 >> 4);
+                        d[2] = (b5 << 3) | (b5 >> 2);
+                        d[3] = 255;
+                    } else {
+                        // 24bpp color16m is stored B,G,R (see the desktop swizzle).
+                        d[0] = s[2]; d[1] = s[1]; d[2] = s[0]; d[3] = 255;
+                    }
+                }
+            }
+            bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), 0,
+                texture_format::rgba, texture_data_type::ubyte, expanded_rgba.data(), 0, 4);
+        } else
+#endif
         bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), pixels_per_line,
             data_format, data_type, data, 0, 4);
 
@@ -248,6 +317,12 @@ namespace eka2l1::drivers {
                 channel_swizzle::alpha, channel_swizzle::one });
         }
 
+#if EKA2L1_PLATFORM(IOS)
+        // On iOS the 8/16/24bpp data above was unpacked to correctly-ordered
+        // RGBA8, so no channel swizzle is needed (and the 24bpp B<->R swizzle
+        // would actively re-corrupt it).
+        if (false) {
+#else
         if (is_stricted()) {
             switch (bmp->bpp) {
             case 8:
@@ -268,6 +343,7 @@ namespace eka2l1::drivers {
             default:
                 break;
             }
+#endif
         } else {
             switch (data_format) {
             case texture_format::r:

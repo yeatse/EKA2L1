@@ -143,6 +143,8 @@ namespace eka2l1::drivers {
         bool is_gles;
         bool support_line_width_;
 
+        std::uint32_t max_texture_size_ = 2048;
+
         float point_size;
         pen_style line_style;
 
@@ -221,6 +223,10 @@ namespace eka2l1::drivers {
 
         bool is_stricted() const override {
             return is_gles;
+        }
+
+        std::uint32_t max_texture_size() const override {
+            return max_texture_size_;
         }
 
         bool get_supported_feature(const std::uint32_t feature_mask) const {
