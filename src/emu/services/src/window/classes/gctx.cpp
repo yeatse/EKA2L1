@@ -757,7 +757,9 @@ namespace eka2l1::epoc {
         line_mode = pen_style::solid;
 
         pen_size = { 1, 1 };
-        brush_color = 0xFFFFFFFF;
+        brush_color = (attached_window && (attached_window->flags & window::flags_enable_alpha))
+            ? attached_window->clear_color
+            : 0xFFFFFFFF;
         pen_color = 0;
 
         clipping_rect.make_empty();

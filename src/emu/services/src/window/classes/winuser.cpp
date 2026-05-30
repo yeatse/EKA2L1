@@ -495,6 +495,58 @@ namespace eka2l1::epoc {
 
     void canvas_base::set_transparency_alpha_channel(service::ipc_context &context, ws_cmd &cmd) {
         flags |= flags_enable_alpha;
+        if (clear_color == 0xFFFFFFFF) {
+            clear_color = 0xFF000000;
+        }
+        common::double_linked_queue_element *ite = attached_contexts.first();
+        common::double_linked_queue_element *end = attached_contexts.end();
+
+        do {
+            if (!ite) {
+                break;
+            }
+
+            epoc::graphic_context *gctx = E_LOFF(ite, epoc::graphic_context, context_attach_link);
+            gctx->brush_color = clear_color;
+
+            ite = ite->next;
+        } while (ite != end);
+
+        if (win_type == window_type::redraw) {
+            auto *redraw = reinterpret_cast<redraw_msg_canvas*>(this);
+            gdi_store_command clear_cmd;
+            auto &clear_data = clear_cmd.get_data_struct<gdi_store_command_draw_rect_data>();
+            clear_cmd.opcode_ = gdi_store_command_draw_rect;
+            clear_data.rect_ = bounding_rect();
+            clear_data.color_ = eka2l1::vec4(0, 0, 0, 255);
+            redraw->add_draw_command(clear_cmd);
+
+            auto rewrite_default_clear = [this](gdi_store_command_segment *segment) {
+                if (!segment) {
+                    return;
+                }
+
+                for (auto &command : segment->commands_) {
+                    if (command.opcode_ != gdi_store_command_draw_rect) {
+                        continue;
+                    }
+
+                    auto &data = command.get_data_struct<gdi_store_command_draw_rect_data>();
+                    if ((data.rect_.top == eka2l1::vec2(0, 0)) && (data.rect_.size == size())
+                        && (data.color_ == eka2l1::vec4(255, 255, 255, 255))) {
+                        data.color_ = eka2l1::vec4(0, 0, 0, 255);
+                    }
+                }
+            };
+
+            rewrite_default_clear(pending_segment_.get());
+            for (const auto &segment : redraw->redraw_segments_.get_segments()) {
+                rewrite_default_clear(segment.get());
+            }
+
+            redraw->background_region.add_rect(bounding_rect());
+            redraw->invalidate(bounding_rect());
+        }
         LOG_TRACE(SERVICE_WINDOW, "Enable alpha for window {}", id);
         context.complete(epoc::error_none);
     }
@@ -1166,6 +1218,31 @@ namespace eka2l1::epoc {
             return false;
         }
 
+        if (flags & flags_enable_alpha) {
+            auto rewrite_default_clear = [this](gdi_store_command_segment *segment) {
+                if (!segment) {
+                    return;
+                }
+
+                for (auto &command : segment->commands_) {
+                    if (command.opcode_ != gdi_store_command_draw_rect) {
+                        continue;
+                    }
+
+                    auto &data = command.get_data_struct<gdi_store_command_draw_rect_data>();
+                    if ((data.rect_.top == eka2l1::vec2(0, 0)) && (data.rect_.size == size())
+                        && (data.color_ == eka2l1::vec4(255, 255, 255, 255))) {
+                        data.color_ = eka2l1::vec4(0, 0, 0, 255);
+                    }
+                }
+            };
+
+            rewrite_default_clear(pending_segment_.get());
+            for (const auto &segment : redraw_segments_.get_segments()) {
+                rewrite_default_clear(segment.get());
+            }
+        }
+
         // If it does not have content drawn to it, it makes no sense to draw the background
         // Else, there's a flag in window server that enables clear on any siutation
         auto draw_background_color = [&]() {
@@ -1175,7 +1252,9 @@ namespace eka2l1::epoc {
 
                 builder.clip_bitmap_region(background_region, scr->display_scale_factor);
 
-                auto color_extracted = common::rgba_to_vec(clear_color);
+                auto color_extracted = (flags & flags_enable_alpha)
+                    ? eka2l1::vec4(0, 0, 0, 0)
+                    : common::rgba_to_vec(clear_color);
 
                 if (display_mode() <= epoc::display_mode::color16mu) {
                     color_extracted.w = 255;
@@ -1186,7 +1265,11 @@ namespace eka2l1::epoc {
 
                 background_region.make_empty();
             } else {
-                builder.set_brush_color(eka2l1::vec3(255, 255, 255));
+                if (flags & flags_enable_alpha) {
+                    builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 0));
+                } else {
+                    builder.set_brush_color(eka2l1::vec3(255, 255, 255));
+                }
                 builder.set_feature(drivers::graphics_feature::clipping, false);
             }
         };
@@ -1195,6 +1278,14 @@ namespace eka2l1::epoc {
 
         eka2l1::drivers::filter_option filter = (client->get_ws().get_kernel_system()->get_config()->nearest_neighbor_filtering ?
             eka2l1::drivers::filter_option::nearest : eka2l1::drivers::filter_option::linear);
+
+        if (flags & flags_enable_alpha) {
+            eka2l1::rect clear_rect = abs_rect;
+            scale_rectangle(clear_rect, scr->display_scale_factor);
+            builder.set_feature(drivers::graphics_feature::clipping, false);
+            builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 255));
+            builder.draw_rectangle(clear_rect);
+        }
 
         if (scr->flags_ & screen::FLAG_SERVER_REDRAW_PENDING) {
             auto &segments = redraw_segments_.get_segments();
@@ -1236,7 +1327,12 @@ namespace eka2l1::epoc {
 
             if (!cmd_list.empty()) {
                 builder.clip_bitmap_region(visible_region, scr->display_scale_factor);
-                builder.draw_rectangle(abs_rect);
+                eka2l1::rect clear_rect = abs_rect;
+                scale_rectangle(clear_rect, scr->display_scale_factor);
+                if (flags & flags_enable_alpha) {
+                    builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 0));
+                }
+                builder.draw_rectangle(clear_rect);
 
                 if (!builder.merge(cmd_list)) {
                     // Full, need to flush the old one maybe
@@ -1503,7 +1599,11 @@ namespace eka2l1::epoc {
         builder.set_feature(drivers::graphics_feature::clipping, false);
 
         if (reg_clip.has_value()) {
-            builder.clip_bitmap_region(reg_clip.value(), scr->display_scale_factor);
+            // driver_win_id is the unscaled, window-sized backing bitmap.
+            // Scaling this region by the screen display scale clips updates in
+            // the wrong coordinate space, leaving stale blocks in bitmap-backed
+            // S60v5 controls on high-DPI iOS surfaces.
+            builder.clip_bitmap_region(reg_clip.value(), 1.0f);
         }
 
         builder.draw_bitmap(to_draw_handle, 0, draw_rect, draw_rect);

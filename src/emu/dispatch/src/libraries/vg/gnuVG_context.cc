@@ -39,6 +39,9 @@ namespace gnuVG {
 		, miter_limit(4.0f)
 		, join_style(VG_JOIN_MITER)
 		, current_framebuffer(&screen_buffer)
+		, buffer_width(0)
+		, buffer_height(0)
+		, buffer_scale_factor(0.0f)
 		, idalloc(1)
 	{
 		default_fill_paint = create<Paint>();
@@ -1139,7 +1142,6 @@ namespace gnuVG {
 
 	void Context::clear(const GraphicState &state, VGint x, VGint y,
 			    VGint width, VGint height) {
-
 		// remember current blend mode
 		auto old_blend = vgGeti(VG_BLEND_MODE);
 
@@ -1383,7 +1385,6 @@ namespace gnuVG {
 	void Context::trivial_fill_area(const GraphicState &state,
 		VGint _x, VGint _y, VGint _width, VGint _height,
 		VGfloat r, VGfloat g, VGfloat b, VGfloat a) {
-
 		VGfloat x = (VGfloat)_x;
 		VGfloat y = (VGfloat)_y;
 		VGfloat width = (VGfloat)_width;
@@ -1834,16 +1835,18 @@ namespace gnuVG {
 
 		case VG_sBGRA_8888:
 			in_format = eka2l1::drivers::texture_format::bgra;
-			internal_format = eka2l1::drivers::texture_format::bgra;
+			internal_format = strict ? eka2l1::drivers::texture_format::rgba : eka2l1::drivers::texture_format::bgra;
 			dtype = eka2l1::drivers::texture_data_type::ubyte;
 			break;
 
 		case VG_A_8:
-			in_format = eka2l1::drivers::texture_format::r;
-			internal_format = strict ? eka2l1::drivers::texture_format::r8 : eka2l1::drivers::texture_format::rgba;;
+			in_format = strict ? eka2l1::drivers::texture_format::rgba : eka2l1::drivers::texture_format::r;
+			internal_format = strict ? eka2l1::drivers::texture_format::rgba : eka2l1::drivers::texture_format::rgba;
 			dtype = eka2l1::drivers::texture_data_type::ubyte;
-			swizzle = eka2l1::drivers::channel_swizzles{ eka2l1::drivers::channel_swizzle::one, eka2l1::drivers::channel_swizzle::one,
-				eka2l1::drivers::channel_swizzle::one, eka2l1::drivers::channel_swizzle::red };
+			if (!strict) {
+				swizzle = eka2l1::drivers::channel_swizzles{ eka2l1::drivers::channel_swizzle::one, eka2l1::drivers::channel_swizzle::one,
+					eka2l1::drivers::channel_swizzle::one, eka2l1::drivers::channel_swizzle::red };
+			}
 			break;
 
 		default:
@@ -1955,7 +1958,7 @@ namespace gnuVG {
 				return false;
 			}
 
-			cmd_builder_.recreate_texture(target->color_buffer, 2, 0, in_format, internal_format, dtype, nullptr, 0,
+			cmd_builder_.recreate_texture(target->color_buffer, 2, 0, internal_format, in_format, dtype, nullptr, 0,
 				eka2l1::vec3(target->width, target->height, 0) * draw_surface_->current_scale_);
 
 			target->scale_factor = draw_surface_->current_scale_;
@@ -2031,11 +2034,14 @@ namespace gnuVG {
 		if(current_framebuffer->width ==
 		   buffer_width &&
 		   current_framebuffer->height ==
-		   buffer_height)
+		   buffer_height &&
+		   current_framebuffer->scale_factor ==
+		   buffer_scale_factor)
 			return; // we can stop here - all is same from here
 
 		buffer_width = current_framebuffer->width;
 		buffer_height = current_framebuffer->height;
+		buffer_scale_factor = current_framebuffer->scale_factor;
 
 		eka2l1::rect viewport_transformed(eka2l1::vec2(0, 0), eka2l1::vec2(buffer_width, buffer_height));
 
@@ -2201,9 +2207,32 @@ namespace gnuVG {
 		std::size_t stride_selfcalc = calculate_image_data_stride(fmt, width);
 		std::size_t total_data_size = height * ((stride == 0) ? stride_selfcalc : stride);
 		std::size_t bytes_per_pixel = (stride_selfcalc / width);
+		std::vector<std::uint8_t> expanded_rgba;
 
 		if ((stride % bytes_per_pixel) != 0) {
 			LOG_WARN(eka2l1::HLE_DISPATCHER, "Stride byte count is odd compare to pixel size! VG Image may contains distortion!");
+		}
+
+		if (fmt == VG_A_8 && state.driver->is_stricted()) {
+			const auto *src = reinterpret_cast<const std::uint8_t*>(memory);
+			const std::size_t src_stride = (stride == 0) ? static_cast<std::size_t>(width) : static_cast<std::size_t>(stride);
+			expanded_rgba.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+
+			for (VGint row = 0; row < height; row++) {
+				for (VGint col = 0; col < width; col++) {
+					const std::uint8_t coverage = src[static_cast<std::size_t>(row) * src_stride + col];
+					std::uint8_t *dst_pixel = expanded_rgba.data() + (static_cast<std::size_t>(row) * width + col) * 4;
+					dst_pixel[0] = 255;
+					dst_pixel[1] = 255;
+					dst_pixel[2] = 255;
+					dst_pixel[3] = coverage;
+				}
+			}
+
+			total_data_size = expanded_rgba.size();
+			bytes_per_pixel = 4;
+			stride = 0;
+			memory = expanded_rgba.data();
 		}
 
 		cmd_builder_.update_texture(dst->color_buffer, reinterpret_cast<const char*>(memory),

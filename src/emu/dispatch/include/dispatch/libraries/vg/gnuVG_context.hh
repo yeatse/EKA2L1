@@ -150,6 +150,7 @@ namespace gnuVG {
 		FrameBuffer mask;
 		FrameBuffer temporary_a, temporary_b;
 		VGint buffer_width, buffer_height;
+		float buffer_scale_factor;
 
 		// Temporary framebuffers
 		std::vector<FrameBuffer *> available_temporary_framebuffers;

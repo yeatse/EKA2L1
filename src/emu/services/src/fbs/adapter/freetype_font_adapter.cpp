@@ -281,7 +281,7 @@ namespace eka2l1::epoc::adapter {
 
         stbrp_init_target(&pack_state->atlas_context_, atlas_size.x, atlas_size.y, pack_state->atlas_node_.data(),
             static_cast<int>(pack_state->atlas_node_.size()));
-        std::memset(pack_state->atlas_base_, 0, atlas_size.x * atlas_size.y);
+        std::memset(pack_state->atlas_base_, 0, atlas_size.x * atlas_size.y * get_atlas_bitmap_bits_per_pixel() / 8);
 
         return static_cast<std::int32_t>(pack_states_.add(pack_state));
     }

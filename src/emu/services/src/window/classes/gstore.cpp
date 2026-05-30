@@ -27,6 +27,7 @@
 
 #include <common/time.h>
 #include <common/algorithm.h>
+#include <common/platform.h>
 
 namespace eka2l1::epoc {
     // NOTE: Must store objects then free ref with local font atlas.
@@ -254,8 +255,15 @@ namespace eka2l1::epoc {
         scaled_rect.top += position_;
 
         scale_rectangle(scaled_rect, scale_factor_);
+        eka2l1::vec4 color = cmd.color_;
+#if EKA2L1_PLATFORM(IOS)
+        if ((scale_factor_ > 1.0f) && (cmd.rect_.top == eka2l1::vec2(0, 0)) && (cmd.rect_.size.x >= 360)
+            && (cmd.rect_.size.y >= 640) && (color.x == 255) && (color.y == 255) && (color.z == 255) && (color.w == 255)) {
+            color = eka2l1::vec4(0, 0, 0, 255);
+        }
+#endif
 
-        builder_.set_brush_color_detail(cmd.color_);
+        builder_.set_brush_color_detail(color);
         builder_.draw_rectangle(scaled_rect);
     }
 
