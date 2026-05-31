@@ -331,6 +331,22 @@ namespace eka2l1::ios {
         }) && state->graphics_driver != nullptr;
     }
 
+    // With cpu_load_save enabled the scheduler parks the os_thread inside
+    // symsys->loop() (idle_event.wait) whenever no guest thread is ready, so it
+    // stops burning a host core when the guest is idle. The flip side is that a
+    // parked loop still holds loop_mutex and won't observe running/paused/mounted
+    // flips until the next timer wakes it. Mirror Qt's kill_emulator: poke the
+    // scheduler awake so the in-flight tick returns promptly. Safe to call when
+    // idle is disabled (stop_cores_idling is a no-op then) or before boot.
+    static void break_core_idling(emulator *state) {
+        if (!state || !state->symsys) {
+            return;
+        }
+        if (auto *kern = state->symsys->get_kernel_system()) {
+            kern->stop_cores_idling();
+        }
+    }
+
     static bool bind_graphics_driver(emulator *state) {
         if (!state || !state->symsys || !state->graphics_driver) {
             return false;
@@ -553,7 +569,17 @@ namespace eka2l1::ios {
 
     _state->conf.deserialize();
     _state->conf.storage = dataRoot.UTF8String;
-    _state->conf.cpu_load_save = false;
+    // Force cpu_load_save on, matching desktop/Android's default: when the guest
+    // has no ready thread the scheduler parks the os_thread on idle_event instead
+    // of spinning symsys->loop(), so an idle screen (e.g. the N97 home screen)
+    // stops pinning a host core at 100%. We override here rather than just
+    // trusting the default because earlier builds hard-set this false (a leftover
+    // from launch-path debugging) and saveSettings persisted that into config.yml;
+    // deserialize() above would otherwise keep loading the stale false. There is
+    // no iOS UI toggle for this, so the default must always win.
+    // shutdown/pause/boot call break_core_idling() so a parked loop still tears
+    // down promptly.
+    _state->conf.cpu_load_save = true;
 
     // Apply the configured log filter — the iOS frontend previously skipped
     // this step (Qt does it in state.cpp), so the default log_filterings ctor
@@ -705,6 +731,9 @@ namespace eka2l1::ios {
         return;
     }
     _state->running = false;
+    // Wake the os_thread if it's parked in the scheduler's idle wait, otherwise
+    // the join below blocks until the next guest timer happens to fire.
+    break_core_idling(_state.get());
     {
         std::lock_guard<std::mutex> lk(_state->layer_mutex);
         _state->layer_cv.notify_all();
@@ -777,6 +806,7 @@ namespace eka2l1::ios {
     // frontend boots the new device, which rebuilds the system and remounts.
     const bool was_mounted = _state->mounted;
     _state->mounted = false;
+    break_core_idling(_state.get());
     std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
 
     auto *sys = _state->symsys.get();
@@ -840,6 +870,7 @@ namespace eka2l1::ios {
     // reads devices.yml on construction. Stop + drain the os_thread first so
     // the symsys reset below doesn't race a loop in flight.
     _state->mounted = false;
+    break_core_idling(_state.get());
     std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
@@ -1053,6 +1084,9 @@ namespace eka2l1::ios {
 - (void)pause {
     if (!_state) return;
     _state->paused = true;
+    // Break the idle wait so a parked loop returns and the os_thread settles on
+    // its paused sleep promptly instead of after the next guest timer.
+    break_core_idling(_state.get());
     // 3.7: drop the AVAudioSession activation while we're in the background
     // so the system can route audio to whatever's actually frontmost. The
     // session reactivates on resume below; the AURemoteIO units themselves

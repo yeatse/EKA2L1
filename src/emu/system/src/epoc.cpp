@@ -617,9 +617,20 @@ namespace eka2l1 {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
 #elif EKA2L1_PLATFORM(IOS)
-        // Keep the iOS frontend on dyncom for now. Simulator builds still
-        // compile dynarmic for targeted debugging, but Calculator currently
-        // exposes a simulator-only Dynarmic A32 regalloc crash.
+        // Keep the iOS frontend on dyncom. Simulator builds still compile
+        // dynarmic in (EKA2L1_IOS_SIMULATOR_DYNARMIC) for targeted debugging,
+        // but it is not yet robust enough to be the default:
+        //  - N97 app launch A/B (full cold OS boot → app rendered, iPhone 16
+        //    Pro sim): dynarmic ~42s vs dyncom ~52s — only ~20% faster, because
+        //    app launch is CPU-bound on *cold* code that runs once, so the JIT's
+        //    compile cost barely amortizes. The JIT win is in sustained
+        //    execution, not one-shot launch.
+        //  - Robustness: Zip manager (0x2000023D) launches fine under dynarmic,
+        //    but Calculator (0x10005902) still SIGSEGVs inside
+        //    Dynarmic::A32::Jit::Impl::Run() — the known A32 issue. A backend
+        //    that crashes a built-in app can't be the default for a modest
+        //    cold-launch gain. Revisit once the A32 crash is fixed; a per-app or
+        //    user-opt-in toggle would be the safe way to expose it meanwhile.
         cpu_type = arm_emulator_type::dyncom;
 #else
         cpu_type = /*arm::string_to_arm_emulator_type(conf_->cpu_backend);*/ arm_emulator_type::dynarmic;
