@@ -94,21 +94,31 @@ struct ContentView: View {
     }
 
     private var appList: some View {
-        List {
-            if let banner {
-                Section { Text(banner).font(.caption).foregroundColor(.green) }
-            }
-            Section("Apps (\(apps.count))") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let banner {
+                    Text(banner).font(.caption).foregroundColor(.green)
+                }
+
+                Text("Apps (\(apps.count))")
+                    .font(.headline)
+
                 if apps.isEmpty {
                     Text("No apps yet. Tap + to install a SIS / SISX package.")
                         .font(.caption).foregroundColor(.secondary)
-                }
-                ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
-                    NavigationLink(destination: EmulatorView(uid: app.uid)) {
-                        AppRow(uid: app.uid, name: app.name)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 16)],
+                              spacing: 16) {
+                        ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
+                            NavigationLink(destination: EmulatorView(uid: app.uid)) {
+                                AppGridCell(uid: app.uid, name: app.name)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
             }
+            .padding()
         }
     }
 
@@ -393,11 +403,12 @@ struct ImportDeviceView: View {
     }
 }
 
-// 3.6: lazily decode the registered icon (MIF/MBM/SVGB/NVG → RGBA → PNG)
-// off the main queue so scrolling the AppList stays smooth. The bridge
-// returns nil for apps without a usable icon, which falls back to a
-// generic SF Symbol placeholder.
-struct AppRow: View {
+// A large centered icon with the app name beneath, sized to fit the adaptive
+// LazyVGrid cells. The registered icon (MIF/MBM/SVGB/NVG → RGBA → PNG) is
+// lazily decoded off the main queue so scrolling the app grid stays smooth.
+// The bridge returns nil for apps without a usable icon, which falls back to
+// a generic SF Symbol placeholder.
+struct AppGridCell: View {
     let uid: UInt32
     let name: String
 
@@ -405,28 +416,30 @@ struct AppRow: View {
     @State private var attempted = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        VStack(spacing: 8) {
             ZStack {
                 if let icon {
                     Image(uiImage: icon)
                         .resizable()
                         .interpolation(.high)
-                        .frame(width: 36, height: 36)
+                        .frame(width: 64, height: 64)
                 } else {
                     Image(systemName: "app.dashed")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 26, height: 26)
+                        .frame(width: 48, height: 48)
                         .foregroundColor(.secondary)
                 }
             }
-            .frame(width: 40, height: 40)
-            VStack(alignment: .leading) {
-                Text(name)
-                Text(String(format: "uid=0x%08X", uid))
-                    .font(.caption2.monospaced()).foregroundColor(.secondary)
-            }
+            .frame(width: 72, height: 72)
+
+            Text(name)
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity)
         }
+        .padding(.vertical, 8)
         .onAppear(perform: loadIcon)
     }
 
@@ -435,7 +448,7 @@ struct AppRow: View {
         attempted = true
         let uid = self.uid
         DispatchQueue.global(qos: .userInitiated).async {
-            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 72)
+            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 144)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
                 self.icon = image
