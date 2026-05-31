@@ -819,12 +819,18 @@ namespace eka2l1::drivers {
         glStencilOp(GL_REPLACE, GL_KEEP, GL_KEEP);
         glStencilMask(0xFF);
 
+        GLboolean color_mask[4] = { GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE };
+        glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
         for (std::size_t i = 0; i < to_clip.rects_.size(); i++) {
             if (to_clip.rects_[i].valid()) {
                 to_clip.rects_[i].scale(scale);
                 draw_rectangle(to_clip.rects_[i]);
             }
         }
+
+        glColorMask(color_mask[0], color_mask[1], color_mask[2], color_mask[3]);
 
         glStencilFunc(GL_EQUAL, 1, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
