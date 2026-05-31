@@ -1110,6 +1110,7 @@ namespace eka2l1::epoc {
     void redraw_msg_canvas::add_draw_command(gdi_store_command &command) {
         const std::lock_guard<std::mutex> guard(scr->screen_mutex);
 
+        bool created_non_redraw_segment = false;
         if ((flags & flags_in_redraw) == 0) {
             eka2l1::rect full_size_rect(eka2l1::vec2(0, 0), abs_rect.size);
 
@@ -1124,6 +1125,7 @@ namespace eka2l1::epoc {
             if (!current_segment || (current_segment->type_ != gdi_store_command_segment_non_redraw)) {
                 // Create a new non redraw segment, covers the entire screen
                 redraw_segments_.add_new_segment(full_size_rect, gdi_store_command_segment_non_redraw);
+                created_non_redraw_segment = true;
             }
         }
 
@@ -1131,6 +1133,9 @@ namespace eka2l1::epoc {
 
         gdi_store_command_segment *current_segment = redraw_segments_.get_current_segment();
         current_segment->add_command(command);
+        if (created_non_redraw_segment || (flags & flags_enable_alpha)) {
+            scr->flags_ |= screen::FLAG_SERVER_REDRAW_PENDING;
+        }
 
         canvas_base::add_draw_command(command);
     }

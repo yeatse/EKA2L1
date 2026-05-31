@@ -17,10 +17,23 @@ struct EmulatorView: View {
             }
         }
         .toolbar {
-            Button {
-                showVirtualKeypad.toggle()
-            } label: {
-                Image(systemName: showVirtualKeypad ? "keyboard.chevron.compact.down" : "keyboard")
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button("L") {
+                    EKA2L1Bridge.shared.tapRawKey(0xA4)
+                }
+                .accessibilityLabel("Left soft key")
+
+                Button("R") {
+                    EKA2L1Bridge.shared.tapRawKey(0xA5)
+                }
+                .accessibilityLabel("Right soft key")
+
+                Button {
+                    showVirtualKeypad.toggle()
+                } label: {
+                    Image(systemName: showVirtualKeypad ? "keyboard.chevron.compact.down" : "keyboard")
+                }
+                .accessibilityLabel(showVirtualKeypad ? "Hide virtual keypad" : "Show virtual keypad")
             }
         }
     }
