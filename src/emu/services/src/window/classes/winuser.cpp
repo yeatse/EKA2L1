@@ -514,36 +514,6 @@ namespace eka2l1::epoc {
 
         if (win_type == window_type::redraw) {
             auto *redraw = reinterpret_cast<redraw_msg_canvas*>(this);
-            gdi_store_command clear_cmd;
-            auto &clear_data = clear_cmd.get_data_struct<gdi_store_command_draw_rect_data>();
-            clear_cmd.opcode_ = gdi_store_command_draw_rect;
-            clear_data.rect_ = bounding_rect();
-            clear_data.color_ = eka2l1::vec4(0, 0, 0, 255);
-            redraw->add_draw_command(clear_cmd);
-
-            auto rewrite_default_clear = [this](gdi_store_command_segment *segment) {
-                if (!segment) {
-                    return;
-                }
-
-                for (auto &command : segment->commands_) {
-                    if (command.opcode_ != gdi_store_command_draw_rect) {
-                        continue;
-                    }
-
-                    auto &data = command.get_data_struct<gdi_store_command_draw_rect_data>();
-                    if ((data.rect_.top == eka2l1::vec2(0, 0)) && (data.rect_.size == size())
-                        && (data.color_ == eka2l1::vec4(255, 255, 255, 255))) {
-                        data.color_ = eka2l1::vec4(0, 0, 0, 255);
-                    }
-                }
-            };
-
-            rewrite_default_clear(pending_segment_.get());
-            for (const auto &segment : redraw->redraw_segments_.get_segments()) {
-                rewrite_default_clear(segment.get());
-            }
-
             redraw->background_region.add_rect(bounding_rect());
             redraw->invalidate(bounding_rect());
         }
@@ -594,7 +564,12 @@ namespace eka2l1::epoc {
     }
 
     bool redraw_msg_canvas::clear_redraw_store() {
-        //has_redraw_content(false);
+        redraw_segments_.clear();
+        pending_segment_.reset();
+        redraw_region.make_empty();
+        redraw_rect_curr.make_empty();
+        background_region.add_rect(bounding_rect());
+        invalidate(bounding_rect());
         return true;
     }
 
@@ -1218,31 +1193,6 @@ namespace eka2l1::epoc {
             return false;
         }
 
-        if (flags & flags_enable_alpha) {
-            auto rewrite_default_clear = [this](gdi_store_command_segment *segment) {
-                if (!segment) {
-                    return;
-                }
-
-                for (auto &command : segment->commands_) {
-                    if (command.opcode_ != gdi_store_command_draw_rect) {
-                        continue;
-                    }
-
-                    auto &data = command.get_data_struct<gdi_store_command_draw_rect_data>();
-                    if ((data.rect_.top == eka2l1::vec2(0, 0)) && (data.rect_.size == size())
-                        && (data.color_ == eka2l1::vec4(255, 255, 255, 255))) {
-                        data.color_ = eka2l1::vec4(0, 0, 0, 255);
-                    }
-                }
-            };
-
-            rewrite_default_clear(pending_segment_.get());
-            for (const auto &segment : redraw_segments_.get_segments()) {
-                rewrite_default_clear(segment.get());
-            }
-        }
-
         // If it does not have content drawn to it, it makes no sense to draw the background
         // Else, there's a flag in window server that enables clear on any siutation
         auto draw_background_color = [&]() {
@@ -1252,9 +1202,7 @@ namespace eka2l1::epoc {
 
                 builder.clip_bitmap_region(background_region, scr->display_scale_factor);
 
-                auto color_extracted = (flags & flags_enable_alpha)
-                    ? eka2l1::vec4(0, 0, 0, 0)
-                    : common::rgba_to_vec(clear_color);
+                auto color_extracted = common::rgba_to_vec(clear_color);
 
                 if (display_mode() <= epoc::display_mode::color16mu) {
                     color_extracted.w = 255;
@@ -1265,11 +1213,7 @@ namespace eka2l1::epoc {
 
                 background_region.make_empty();
             } else {
-                if (flags & flags_enable_alpha) {
-                    builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 0));
-                } else {
-                    builder.set_brush_color(eka2l1::vec3(255, 255, 255));
-                }
+                builder.set_brush_color_detail(common::rgba_to_vec(clear_color));
                 builder.set_feature(drivers::graphics_feature::clipping, false);
             }
         };
@@ -1278,14 +1222,6 @@ namespace eka2l1::epoc {
 
         eka2l1::drivers::filter_option filter = (client->get_ws().get_kernel_system()->get_config()->nearest_neighbor_filtering ?
             eka2l1::drivers::filter_option::nearest : eka2l1::drivers::filter_option::linear);
-
-        if (flags & flags_enable_alpha) {
-            eka2l1::rect clear_rect = abs_rect;
-            scale_rectangle(clear_rect, scr->display_scale_factor);
-            builder.set_feature(drivers::graphics_feature::clipping, false);
-            builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 255));
-            builder.draw_rectangle(clear_rect);
-        }
 
         if (scr->flags_ & screen::FLAG_SERVER_REDRAW_PENDING) {
             auto &segments = redraw_segments_.get_segments();
@@ -1327,12 +1263,16 @@ namespace eka2l1::epoc {
 
             if (!cmd_list.empty()) {
                 builder.clip_bitmap_region(visible_region, scr->display_scale_factor);
-                eka2l1::rect clear_rect = abs_rect;
-                scale_rectangle(clear_rect, scr->display_scale_factor);
-                if (flags & flags_enable_alpha) {
-                    builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 0));
+                if (clear_color_enable || (flags & flags_enable_alpha)) {
+                    eka2l1::rect clear_rect = abs_rect;
+                    scale_rectangle(clear_rect, scr->display_scale_factor);
+                    if (flags & flags_enable_alpha) {
+                        builder.set_brush_color_detail(eka2l1::vec4(0, 0, 0, 255));
+                    } else {
+                        builder.set_brush_color_detail(common::rgba_to_vec(clear_color));
+                    }
+                    builder.draw_rectangle(clear_rect);
                 }
-                builder.draw_rectangle(clear_rect);
 
                 if (!builder.merge(cmd_list)) {
                     // Full, need to flush the old one maybe
@@ -1391,6 +1331,11 @@ namespace eka2l1::epoc {
 
         case EWsWinOpStoreDrawCommands:
             store_draw_commands(ctx, cmd);
+            break;
+
+        case EWsWinOpEnableBackup:
+            flags |= flags_enable_pbe;
+            ctx.complete(epoc::error_none);
             break;
 
         default:

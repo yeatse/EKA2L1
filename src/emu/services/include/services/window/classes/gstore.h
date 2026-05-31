@@ -190,6 +190,7 @@ namespace eka2l1::epoc {
         
         // Returns true if this must cause an invalidation
         bool clean_old_nonredraw_segments();
+        void clear();
         void redraw_done();
 
         gdi_store_command_segment *get_current_segment() const {
