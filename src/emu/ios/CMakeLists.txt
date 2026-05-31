@@ -20,6 +20,15 @@ enable_language(Swift)
 set(EKA2L1_IOS_APP EKA2L1)
 set(EKA2L1_IOS_BUNDLE_ID "com.eka2l1.emulator" CACHE STRING "iOS bundle identifier")
 
+# Apple Development team for real-device installs. Leave empty for the
+# unsigned stage-0 build (simulator / "build graph compiles" CI). Set it to a
+# team id (e.g. via -DEKA2L1_IOS_DEVELOPMENT_TEAM=XXXXXXXXXX or the
+# EKA2L1_IOS_DEVELOPMENT_TEAM env passed through build_ios.sh) to flip the
+# target into automatic code signing so the .app can be sideloaded onto a
+# physical iPhone. dyncom-only means no JIT entitlement is needed, so a plain
+# Apple Development signature is enough.
+set(EKA2L1_IOS_DEVELOPMENT_TEAM "" CACHE STRING "Apple Development team id for device signing")
+
 set(EKA2L1_IOS_RESOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Resources")
 set(EKA2L1_IOS_APP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/App")
 set(EKA2L1_IOS_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Bridge")
@@ -82,11 +91,28 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "$(inherited) -Xcc -DGLES_SILENCE_DEPRECATION"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${EKA2L1_IOS_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
-    # Stage-0 builds are unsigned. Developers can flip these via -D overrides
-    # or by opening the generated Xcode project and selecting a team.
-    XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
-    XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
-    XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
     XCODE_ATTRIBUTE_ENABLE_BITCODE "NO")
+
+if (EKA2L1_IOS_DEVELOPMENT_TEAM STREQUAL "")
+    # Stage-0 builds are unsigned. Developers can flip these by passing
+    # -DEKA2L1_IOS_DEVELOPMENT_TEAM=<team> (see above) or by opening the
+    # generated Xcode project and selecting a team.
+    set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY ""
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "NO"
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO")
+    message(STATUS "EKA2L1 iOS: unsigned build (no development team set)")
+else()
+    # Real-device install path: automatic signing against the given team.
+    # Xcode registers the bundle id / device UDID and provisions on demand
+    # (xcodebuild needs -allowProvisioningUpdates; see scripts/build_ios.sh).
+    set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
+        XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "${EKA2L1_IOS_DEVELOPMENT_TEAM}"
+        XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "YES")
+    message(STATUS "EKA2L1 iOS: signed build for team ${EKA2L1_IOS_DEVELOPMENT_TEAM}")
+endif()
 
 message(STATUS "EKA2L1 iOS frontend skeleton: bundle ${EKA2L1_IOS_BUNDLE_ID}, deployment ${EKA2L1_IOS_DEPLOYMENT_TARGET}")

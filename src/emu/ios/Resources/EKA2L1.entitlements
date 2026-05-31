@@ -3,17 +3,22 @@
 <plist version="1.0">
 <dict>
     <!--
-        Stage-0 entitlements file. The JIT and increased-memory-limit keys are
-        commented out on purpose: the dynarmic backend is not yet wired up
-        (task 0.4 / stage 1), so requesting these capabilities now would only
-        delay provisioning without unlocking anything. Re-enable them in
-        stage 1 once the MAP_JIT path is in.
+        com.apple.security.cs.allow-jit stays commented out on purpose: iOS
+        runs the dyncom interpreter (dynarmic SIGSEGVs on real apps), so no
+        MAP_JIT / W^X path is engaged and requesting the JIT capability would
+        only complicate provisioning. Re-enable it if/when dynarmic is wired up.
     -->
     <!--
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
+    -->
+    <!--
+        The emulator maps large guest chunks (ROM + RAM + codeseg) and gets
+        jetsam-killed under the default per-app memory cap on big ROMs. This
+        entitlement raises that cap; it is honored for development-signed
+        builds against a registered team.
+    -->
     <key>com.apple.developer.kernel.increased-memory-limit</key>
     <true/>
-    -->
 </dict>
 </plist>

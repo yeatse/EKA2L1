@@ -9,7 +9,9 @@
 #
 # Usage:
 #   scripts/build_ios.sh                 # build both device + simulator
-#   scripts/build_ios.sh device          # device only (PLATFORM=OS64)
+#   scripts/build_ios.sh device          # device only (PLATFORM=OS64), unsigned
+#   scripts/build_ios.sh device-signed   # device, code-signed (needs team)
+#   scripts/build_ios.sh install         # build signed device + install to phone
 #   scripts/build_ios.sh simulator       # simulator only (SIMULATORARM64)
 #   scripts/build_ios.sh smoke           # build sim, install + launch on
 #                                        # the booted iPhone simulator, grep
@@ -20,6 +22,8 @@
 #   EKA2L1_IOS_DEPLOYMENT_TARGET   default 18.0
 #   EKA2L1_IOS_CONFIGURATION       default Debug
 #   EKA2L1_IOS_SCHEME              default EKA2L1
+#   EKA2L1_IOS_DEVELOPMENT_TEAM    Apple Development team id (device signing)
+#   EKA2L1_IOS_DEVICE              target device name/udid for `install`
 #
 # This script intentionally does not require Qt or any signing identity.
 
@@ -31,12 +35,22 @@ cd "${ROOT_DIR}"
 DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-18.0}"
 CONFIGURATION="${EKA2L1_IOS_CONFIGURATION:-Debug}"
 SCHEME="${EKA2L1_IOS_SCHEME:-EKA2L1}"
+# Set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> to build a code-signed device
+# bundle that can be installed on a real iPhone (see `device-signed` /
+# `install` commands below). Empty => unsigned stage-0 build.
+DEVELOPMENT_TEAM="${EKA2L1_IOS_DEVELOPMENT_TEAM:-}"
 
 build_one() {
     local label="$1"
     local platform="$2"
     local sdk="$3"
     local build_dir="build/ios-${label}"
+
+    # Only the device bundle signs, and only when a team is provided.
+    local team=""
+    if [ "${label}" = "device" ]; then
+        team="${DEVELOPMENT_TEAM}"
+    fi
 
     scripts/build_ios_ffmpeg.sh "${label}"
 
@@ -51,18 +65,79 @@ build_one() {
         -DPLATFORM="${platform}" \
         -DDEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
         -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
+        -DEKA2L1_IOS_DEVELOPMENT_TEAM="${team}" \
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
         -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     echo "==> Building ${label}"
-    xcodebuild \
-        -project "${build_dir}/EKA2L1.xcodeproj" \
-        -scheme "${SCHEME}" \
-        -configuration "${CONFIGURATION}" \
-        -sdk "${sdk}" \
-        CODE_SIGNING_ALLOWED=NO \
-        build
+    if [ -n "${team}" ]; then
+        # Signed device build: let Xcode auto-provision (registers the app id
+        # and the connected device's UDID against the team on demand).
+        xcodebuild \
+            -project "${build_dir}/EKA2L1.xcodeproj" \
+            -scheme "${SCHEME}" \
+            -configuration "${CONFIGURATION}" \
+            -sdk "${sdk}" \
+            -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM="${team}" \
+            CODE_SIGN_STYLE=Automatic \
+            build
+    else
+        xcodebuild \
+            -project "${build_dir}/EKA2L1.xcodeproj" \
+            -scheme "${SCHEME}" \
+            -configuration "${CONFIGURATION}" \
+            -sdk "${sdk}" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+    fi
+}
+
+# Build a signed device bundle and install it onto a connected iPhone.
+install_device() {
+    if [ -z "${DEVELOPMENT_TEAM}" ]; then
+        echo "install: set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> first." >&2
+        echo "  Find it with: security find-identity -v -p codesigning" >&2
+        exit 6
+    fi
+
+    build_one device OS64 iphoneos
+
+    local device_app="build/ios-device/src/emu/ios/${CONFIGURATION}-iphoneos/EKA2L1.app"
+    if [ ! -d "${device_app}" ]; then
+        echo "install: built bundle not found at ${device_app}" >&2
+        exit 7
+    fi
+
+    # Pick the target device. EKA2L1_IOS_DEVICE may be a name, UDID or the
+    # devicectl identifier; default to the first connected device.
+    local device="${EKA2L1_IOS_DEVICE:-}"
+    if [ -z "${device}" ]; then
+        local tmp_json
+        tmp_json="$(mktemp -t eka2l1-devices)"
+        xcrun devicectl list devices --json-output "${tmp_json}" >/dev/null 2>&1 || true
+        device="$(python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+for dev in d.get("result", {}).get("devices", []):
+    if dev.get("connectionProperties", {}).get("tunnelState") == "connected":
+        print(dev.get("hardwareProperties", {}).get("udid", ""))
+        break
+' "${tmp_json}")"
+        rm -f "${tmp_json}"
+        if [ -z "${device}" ]; then
+            echo "install: no connected device found. Plug in + trust the iPhone," >&2
+            echo "  or set EKA2L1_IOS_DEVICE=<name|udid>. Connected devices:" >&2
+            xcrun devicectl list devices >&2 || true
+            exit 8
+        fi
+    fi
+    echo "==> Installing to device '${device}'"
+    xcrun devicectl device install app --device "${device}" "${device_app}"
 }
 
 smoke_test() {
@@ -125,6 +200,16 @@ case "${1:-all}" in
     device)
         build_one device OS64 iphoneos
         ;;
+    device-signed)
+        if [ -z "${DEVELOPMENT_TEAM}" ]; then
+            echo "device-signed: set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> first." >&2
+            exit 6
+        fi
+        build_one device OS64 iphoneos
+        ;;
+    install)
+        install_device
+        ;;
     simulator)
         build_one simulator SIMULATORARM64 iphonesimulator
         ;;
@@ -138,7 +223,7 @@ case "${1:-all}" in
         ;;
     *)
         echo "Unknown command: ${1}" >&2
-        echo "Usage: $0 [device|simulator|smoke|all|clean]" >&2
+        echo "Usage: $0 [device|device-signed|install|simulator|smoke|all|clean]" >&2
         exit 2
         ;;
 esac
