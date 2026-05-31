@@ -54,17 +54,23 @@ set(EKA2L1_IOS_SOURCES
 
 add_executable(${EKA2L1_IOS_APP} MACOSX_BUNDLE ${EKA2L1_IOS_SOURCES})
 
-# Bundle the GLES shader sources into the .app under "resources/". The ogl
+# Bundle the GLES shader sources into the .app under "shaders/". The ogl
 # driver loads these at runtime (see ogl_graphics_driver::do_init), and
-# IosEmulator.mm stages them from NSBundle.resourcePath/resources. The
-# __FILE__-relative fallback in that staging only resolves on the simulator
-# (which runs on the build host); on a real device the bundle copy is the
-# only source, so a missing copy here means a null shader FILE* and a crash.
+# IosEmulator.mm stages them from NSBundle.resourcePath/shaders into the
+# sandbox's data/resources. The __FILE__-relative fallback in that staging
+# only resolves on the simulator (which runs on the build host); on a real
+# device the bundle copy is the only source, so a missing copy here means a
+# null shader FILE* and a crash.
+#
+# NB: the bundle subfolder must NOT be named "resources" — the build host's
+# filesystem is case-insensitive, so "resources" collides with the reserved
+# "Resources" bundle directory and codesign rejects the .app with "bundle
+# format unrecognized, invalid, or unsuitable".
 file(GLOB EKA2L1_IOS_SHADER_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/gles/*")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_SHADER_FILES})
 set_source_files_properties(${EKA2L1_IOS_SHADER_FILES} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "resources")
+    MACOSX_PACKAGE_LOCATION "shaders")
 
 target_include_directories(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}")
 target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE GLES_SILENCE_DEPRECATION)

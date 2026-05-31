@@ -527,7 +527,12 @@ namespace eka2l1::ios {
         [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
-    NSString *bundleShaders = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"resources"];
+    // The bundle subfolder is "shaders", not "resources": "resources" would
+    // collide with the reserved "Resources" bundle dir on the case-insensitive
+    // build host and break codesign (see src/emu/ios/CMakeLists.txt). The ogl
+    // driver still reads them from data/resources relative to the cwd, so the
+    // staged copy keeps the "resources" name inside the sandbox.
+    NSString *bundleShaders = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shaders"];
     NSString *dataShaders = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"resources"];
     NSString *sourceShaders = [[[@(__FILE__) stringByDeletingLastPathComponent]
         stringByAppendingPathComponent:@"../../drivers/resources/gles"] stringByStandardizingPath];
