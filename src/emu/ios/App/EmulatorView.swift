@@ -7,15 +7,16 @@ struct EmulatorView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        VStack(spacing: 0) {
             EmulatorControllerView(uid: uid)
-                .ignoresSafeArea(edges: .bottom)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showVirtualKeypad {
                 VirtualKeypad()
                     .padding(.horizontal, 10)
-                    .padding(.bottom, 10)
+                    .padding(.vertical, 10)
             }
         }
+        .background(Color.black)
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button("L") {

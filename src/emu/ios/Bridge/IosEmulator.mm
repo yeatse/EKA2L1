@@ -405,12 +405,19 @@ namespace eka2l1::ios {
         eka2l1::rect src;
         src.size = mode.size;
 
-        float width = static_cast<float>(swapchain_size.x);
-        float height = mode.size.y * width / mode.size.x;
-        if (height > swapchain_size.y) {
-            height = static_cast<float>(swapchain_size.y);
-            width = mode.size.x * height / mode.size.y;
+        eka2l1::vec2 display_size = mode.size;
+        if (scr->ui_rotation % 180 != 0) {
+            std::swap(display_size.x, display_size.y);
         }
+
+        float scale = std::min(
+            static_cast<float>(swapchain_size.x) / static_cast<float>(display_size.x),
+            static_cast<float>(swapchain_size.y) / static_cast<float>(display_size.y));
+        if (scale <= 0.0f) {
+            return;
+        }
+        const float width = display_size.x * scale;
+        const float height = display_size.y * scale;
 
         eka2l1::rect dest;
         dest.top.x = static_cast<int>((swapchain_size.x - width) / 2.0f);
@@ -418,15 +425,12 @@ namespace eka2l1::ios {
         dest.size.x = static_cast<int>(width);
         dest.size.y = static_cast<int>(height);
 
-        const float scale_x = width / static_cast<float>(mode.size.x);
-        const float scale_y = height / static_cast<float>(mode.size.y);
-        scr->set_native_scale_factor(state->graphics_driver.get(), scale_x, scale_y);
+        scr->set_native_scale_factor(state->graphics_driver.get(), scale, scale);
         scr->absolute_pos = dest.top;
 
         eka2l1::drivers::advance_draw_pos_around_origin(dest, scr->ui_rotation);
         if (scr->ui_rotation % 180 != 0) {
             std::swap(dest.size.x, dest.size.y);
-            std::swap(src.size.x, src.size.y);
         }
         src.size *= scr->display_scale_factor;
 

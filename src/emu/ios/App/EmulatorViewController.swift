@@ -46,6 +46,7 @@ private final class EKA2L1RenderView: UIView {
         super.layoutSubviews()
 
         let scale = contentScaleFactor
+        eaglLayer.contentsScale = scale
         let pixels = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         guard pixels.width > 0, pixels.height > 0 else { return }
 
