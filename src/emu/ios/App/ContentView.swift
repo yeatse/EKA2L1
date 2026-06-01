@@ -36,6 +36,10 @@ struct ContentView: View {
     @State private var showingSettings = false
     @State private var showingDiagnostics = false
 
+    // App list presentation: adaptive icon grid (default) or compact rows.
+    // Persisted so the choice sticks across launches.
+    @AppStorage("appListUsesGrid") private var usesGridLayout = true
+
     // Dev/testing convenience: launch straight into a given app on startup,
     // skipping the scroll-and-tap. Pass the UID as an iOS launch argument, e.g.
     //   xcrun simctl launch booted com.eka2l1.emulator -LaunchAppUID 0x2000023D
@@ -93,7 +97,16 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
     private var appList: some View {
+        if usesGridLayout {
+            appGrid
+        } else {
+            appRows
+        }
+    }
+
+    private var appGrid: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let banner {
@@ -122,6 +135,25 @@ struct ContentView: View {
         }
     }
 
+    private var appRows: some View {
+        List {
+            if let banner {
+                Section { Text(banner).font(.caption).foregroundColor(.green) }
+            }
+            Section("Apps (\(apps.count))") {
+                if apps.isEmpty {
+                    Text("No apps yet. Tap + to install a SIS / SISX package.")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
+                    NavigationLink(destination: EmulatorView(uid: app.uid)) {
+                        AppRow(uid: app.uid, name: app.name)
+                    }
+                }
+            }
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         if !devices.isEmpty {
@@ -136,6 +168,16 @@ struct ContentView: View {
                         showingSettings = true
                     } label: {
                         Label("Settings", systemImage: "gearshape")
+                    }
+
+                    Button {
+                        usesGridLayout.toggle()
+                    } label: {
+                        if usesGridLayout {
+                            Label("Show as List", systemImage: "list.bullet")
+                        } else {
+                            Label("Show as Grid", systemImage: "square.grid.2x2")
+                        }
                     }
 
                     Menu {
@@ -449,6 +491,56 @@ struct AppGridCell: View {
         let uid = self.uid
         DispatchQueue.global(qos: .userInitiated).async {
             let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 144)
+            let image = data.flatMap { UIImage(data: $0) }
+            DispatchQueue.main.async {
+                self.icon = image
+            }
+        }
+    }
+}
+
+// Compact row used by the List layout: small leading icon, name, and UID.
+// Icon decoding mirrors AppGridCell (off the main queue, generic placeholder
+// when the bridge has no usable icon).
+struct AppRow: View {
+    let uid: UInt32
+    let name: String
+
+    @State private var icon: UIImage?
+    @State private var attempted = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                if let icon {
+                    Image(uiImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 36, height: 36)
+                } else {
+                    Image(systemName: "app.dashed")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 26, height: 26)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .frame(width: 40, height: 40)
+            VStack(alignment: .leading) {
+                Text(name)
+                Text(String(format: "uid=0x%08X", uid))
+                    .font(.caption2.monospaced()).foregroundColor(.secondary)
+            }
+        }
+        .onAppear(perform: loadIcon)
+    }
+
+    private func loadIcon() {
+        guard !attempted else { return }
+        attempted = true
+        let uid = self.uid
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 72)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
                 self.icon = image
