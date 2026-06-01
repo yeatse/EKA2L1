@@ -129,7 +129,13 @@ namespace eka2l1::arm {
     }
 
     void dyncom_core::load_context(const thread_context &ctx) {
-        clear_instruction_cache();
+        // NOTE: Do not clear the translation cache here. A context switch only needs to
+        // invalidate translated code when the *address space* changes (the same virtual PC can
+        // decode to different code in another process). That case is handled in the scheduler's
+        // process-change branch (thread_scheduler::switch_context), which calls
+        // on_address_space_switch() -> clear_instruction_cache(). Same-process thread switches
+        // now keep their translations, which dynarmic already relied on (its load_context never
+        // cleared).
 
         for (uint8_t i = 0; i < 16; i++) {
             state_->Reg[i] = ctx.cpu_registers[i];
@@ -160,9 +166,16 @@ namespace eka2l1::arm {
     void dyncom_core::clear_instruction_cache() {
         state_->instruction_cache.clear();
         state_->trans_cache_buf_top = 0;
+        state_->bump_block_cache_generation();
     }
 
     void dyncom_core::imb_range(address addr, std::size_t size) {
+        clear_instruction_cache();
+    }
+
+    void dyncom_core::on_address_space_switch() {
+        // dyncom keys its translation cache purely on the virtual address, so the cache must be
+        // dropped whenever the active address space changes. See the note in load_context().
         clear_instruction_cache();
     }
 

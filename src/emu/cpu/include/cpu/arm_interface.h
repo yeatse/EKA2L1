@@ -196,6 +196,13 @@ namespace eka2l1::arm {
         virtual void clear_instruction_cache() = 0;
         virtual void imb_range(address addr, std::size_t size) = 0;
 
+        // Called by the scheduler right after the active address space changes (a real process
+        // switch). Backends that key their translation cache purely on the virtual address
+        // (with no ASID dimension) must invalidate it here, since the same virtual PC can now
+        // decode to different code. Backends with an ASID-aware TLB (e.g. dynarmic) can ignore
+        // this. Default: no-op.
+        virtual void on_address_space_switch() {}
+
         virtual bool should_clear_old_memory_map() const {
             return true;
         }

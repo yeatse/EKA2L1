@@ -116,6 +116,13 @@ namespace eka2l1::kernel {
 
                 run_core->flush_tlb();
 
+                // The virtual address space just changed. Let the CPU backend invalidate any
+                // translation cache that is keyed purely on the virtual address (dyncom). This
+                // replaces the old per-thread-switch clear in dyncom_core::load_context, so
+                // same-process thread switches now keep their translations. Backends with an
+                // ASID-aware TLB (dynarmic) treat this as a no-op.
+                run_core->on_address_space_switch();
+
                 // NOTE: This is not needed now
                 //run_core->set_asid(mm_process->address_space_id());
             }
