@@ -75,3 +75,6 @@ testable, and debuggable.
   and known follow-ups.
 - Keep documentation concise and outcome-focused. Avoid dumping low-level trace
   details unless they are necessary to reproduce or verify the issue.
+- For lengthy investigation write-ups of complex problems, split each into its own
+  topic file under `docs/`, and leave only a reference link plus a one-line core
+  conclusion in `IOS_PORTING_TASKS.md`.
