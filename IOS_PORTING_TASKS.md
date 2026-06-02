@@ -425,52 +425,24 @@
 - ✅ 桌面 / Android / Win32 路径未受改动；iOS simulator build 通过（`scripts/build_ios.sh` 替代之 `xcodebuildmcp simulator build` SUCCEEDED）。
 
 #### 3.4 真正的 ROM 安装流程（取代 symlink / hardlink graft）✅
-- ⚠️ **hardlink graft 已废弃**：早期（3.4 第一版）`mountRomNamed:` 用 `NSFileManager.linkItemAtPath:toPath:` 把 `roms/<rom>/data/drives/z` + `data/roms/<firm>/SYM.ROM` 硬链进 sandbox，并手写 `devices.yml`。这要求 ROM 文件夹已经是 desktop 预装好的 device 树，是个权宜方案。2026-05-29 整段移除，改走与 Android / macOS 完全一致的真实安装管线。
-- ✅ 真实安装 API：Obj-C facade 把 `availableRoms` / `mountRomNamed:` 换成 `installedDevices` / `currentDeviceIndex` / `installDeviceWithRomPath:rpkgPath:` / `bootDeviceAtIndex:`。`installDeviceWithRomPath:rpkgPath:` 镜像 `launcher::install_device`：`loader::should_install_requires_additional_rpkg(rom)` 为真 → `loader::install_rpkg(dvc, rpkg, drives/z, ...)` + 把 ROM 拷成 `roms/<firm>/SYM.ROM`；为假 → `loader::install_rom(dvc, rom, roms/, drives/z, ...)`（install_rom 内部已经把 ROM 拷到 `roms/<firm>/SYM.ROM`）。完成后 `dvc->save_devices()` 落 `devices.yml`，**不再手写**。
-- ✅ `bootDeviceAtIndex:` 抽出原 mount 尾段（重建 `system` → `startup` → `set_device(idx)` → mount c/d/e/z → 绑 graphics → 注册 per-screen redraw callback），并把选中的 index 写回 `conf.device` + `serialize()`，下次启动 `startWithDocumentsPath:` 末尾自动 boot 上次设备。
-- ✅ 安装结果走新枚举 `EKA2L1InstallResult`（1:1 镜像 `device_installation_error` + iOS 专属 `NeedRpkg`），前端用从 Android `strings.xml` 移植的文案（`install_rpkg_corrupt` / `install_already_exist` / ... 见 `ImportStrings.swift`）。
-- ✅ 并发：设备安装 / 切换会重建 `symsys` 或改 `device_manager`，新增 `loop_mutex`（os_thread 每个 `symsys->loop()` tick 持有），install/boot 先翻 `mounted=false` 再抢锁排空在途 tick；安装失败时把 `mounted` 还原回原值，让原本运行的设备继续跑。重操作经 `nonisolated static` 桥接入口在后台队列跑，UI 转 spinner。
-- ✅ 端到端验证（iPhone 16 Pro / iOS 26.5 模拟器，2026-05-29）：空 sandbox → 空态 `ContentUnavailableView` → Install device → 文件选择器选 `SYM.rom`(60.6MB) + `rm-320.rpkg`(98.7MB) → "Processing…" → `install_rpkg` 成功 → 自动 boot 新设备 → 标题 "Nokia N95 (01.01)"、applist 62 app、图标正常。
-- 备注：裸 ROM（无 device tree 的 .rom）现在天然由 `install_rom` 的 ROM-dump 解析覆盖，不再需要单独的"自动生成 minimal device tree"路径。
+- **核心结论**：废弃早期 hardlink graft + 手写 `devices.yml` 的权宜方案，改走与 Android / macOS 完全一致的真实安装管线（`install_device` / `install_rom` / `install_rpkg`），设备选择持久化、下次自动 boot。
+- 详见 [`docs/ios-rom-install-pipeline.md`](./docs/ios-rom-install-pipeline.md)（含安装 API、并发锁、端到端验证）。
 
 #### 3.5 UIDocumentPicker 文件导入 🟡
-- ✅ Info.plist：新增 `CFBundleDocumentTypes` 三条（SIS/SISX viewer-owner、ROM zip viewer-alt、TTF/OTF viewer-alt）+ `UTExportedTypeDeclarations`（`com.eka2l1.sis` / `com.eka2l1.sisx` conform 到 `public.data` + `.sis` / `.sisx` extension tag）。`UIFileSharingEnabled` 与 `LSSupportsOpeningDocumentsInPlace` 已经在阶段 0 打开，保持不变。
-- ✅ **首页重设计（2026-05-29）**：`ContentView` 从原"ROM 列表 → AppListView → Emulator"三屏改为以设备为中心。无设备时显示 `ContentUnavailableView`（标题 No device installed + Android `no_device_installed` 文案 + "Install device" CTA）；有设备时直接进 app 列表，标题为设备名（`EKA2L1DeviceItem.displayName`，取 model 回落 firmcode），右上 `⋯` Menu 含 Settings / Devices（二级菜单切换设备，当前项带勾选）/ Install device / Diagnostics，左侧 `+` 走 `.fileImporter` 装 SIS 到当前设备。`AppListView` 整个删除。
-- ✅ **设备导入页 `ImportDeviceView`**（Form）：第一行选 ROM 文件、第二行选 RPKG 文件（可选），section footer 是 Android `install_device_note_may_need_rpkg` + `recommended_devices_to_install` 文案，底部 Install CTA。选文件时在安全作用域内把文件暂存到 `Documents/import_tmp/`（路径在 picker 关闭后失效，必须先拷），Install 时在后台队列调 `EKA2L1Bridge.installDevice(romPath:rpkgPath:)`（见 3.4），成功后清 `import_tmp` 并 boot 新设备。
-- ⚠️ **fileImporter bug 修复**：同一视图上叠加两个 `.fileImporter`（ROM + RPKG）会被 SwiftUI 丢弃其一导致点击无反应。改为单个 `.fileImporter` + `pickTarget` 枚举多路复用（`showingImporter` bool 驱动展示，`pickTarget` 在 onCompletion 里读取，不在 binding setter 里清空以免竞态读到 nil）。
-- ✅ `src/emu/ios/App/ImportRouter.swift`：仍负责 SIS 的安全作用域 URL pair（`startAccessingSecurityScopedResource` / `stopAccessing...`）+ 按扩展名分发（`.sis/.sisx → Documents/sis/`、`.ttf/.otf → Documents/data/fonts/`）。`.zip` / `*.rom` 分支保留但 SIS 导入入口的 UTI 过滤不会再走到（ROM 现在走 `ImportDeviceView` 的真实安装路径，不再落 `Documents/roms/`）。
-- ✅ Info.plist：`CFBundleDocumentTypes`（SIS/SISX viewer-owner、ROM zip、TTF/OTF）+ `UTExportedTypeDeclarations`（`com.eka2l1.sis` / `com.eka2l1.sisx`）；`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace`（阶段 0 打开），所以 app 的 Documents 出现在 Files「浏览 → 我的 iPhone → EKA2L1」下，是导入 ROM/RPKG 的取文件来源之一。
-- ✅ 端到端验证（iPhone 16 Pro / iOS 26.5 模拟器，2026-05-29）：把工作区 `SYM.rom` + `rm-320.rpkg` 拷进 app Documents → 文件选择器浏览 EKA2L1 文件夹选中两文件 → Install → 安装成功进 applist（详见 3.4）。
-- 🟡 剩余 follow-up：①ZIP unzip 走 miniz 暂未做（现在 ROM 走真实 install_rom/rpkg，ZIP-bundle 导入需求降级）；②"Share to EKA2L1" extension（外部应用 Share 菜单直接送进来）推迟到 stage 3 收尾或更后；③`scripts/seed_ios_simulator_documents.sh` 继续保留为开发期复跑捷径，不进 release 路径。
+- **核心结论**：首页重设计为以设备为中心，`ImportDeviceView` 走真实 ROM/RPKG 安装、`+` 走单一 `.fileImporter` 装 SIS（双 importer 会被 SwiftUI 丢弃，改 `pickTarget` 多路复用）；安全作用域 URL 必须先拷暂存。剩余 ZIP 解包 / Share extension 待办。
+- 详见 [`docs/ios-document-picker-import.md`](./docs/ios-document-picker-import.md)（含 Info.plist UTI、导入页与 follow-up）。
 
 #### 3.6 AppList 图标（SVG / MIF 解码）✅
-- ✅ `EKA2L1Emulator` 新增 `iconPNGDataForUID:sizePx:`，按 Android 同款顺序尝试解码：①`.mif` → `loader::mif_file` + `convert_svgb_to_svg` / `convert_nvg_to_svg` debinarize 到 `Documents/data/cache/icons/debinarized_<sanitized-name>.svg`（带 mtime cache）→ `lunasvg::Document` 光栅化到内置 width/height；②`.mbm` → `loader::mbm_file` + `epoc::convert_to_rgba8888(fbsserv, ..., 0, dst)`；③其它/失败 fallback → `alserv->get_icon(*reg, 0)` 取 `bitwise_bitmap` pair + `convert_to_rgba8888(fbsserv, bitmap, dst)`。
-- ✅ 解码出的 RGBA 走 `CGBitmapContext + CGContextDrawImage` 缩放到调用方请求的方形尺寸（默认 72px，给 SwiftUI 一份 stable 画布），再 `UIImagePNGRepresentation` 编 PNG 返回 `NSData`。
-- ✅ SwiftUI `AppRow` 在 `.onAppear` 把解码 dispatch 到 `DispatchQueue.global(qos: .userInitiated)`，回主线程赋 `@State`；解码失败 fallback 到 `Image(systemName: "app.dashed")` 占位。CMake 给 iOS target 加 `epocloader` / `lunasvg` 链接依赖。
-- ✅ xcodebuildmcp 验证（iPhone 16 Pro 模拟器）：mount N95 → AppList 出 Help (?)、Messaging (信封)、Voice recorder (麦克风)、Settings (扳手)、Call mailbox、Profiles、Calendar (30)、Calculator 等真实 S60 图标。截屏 `docs/screenshots/ios-stage3/3.6-icons/applist-with-real-icons.jpg`。
-- ✅ 2026-05-24 追加稳定性修复：N95 applist 里存在 caption 为空格的条目（`uid=0x101F4CD2`），滚动触发图标懒加载时 MIF cache name sanitize 成空串，`pystr::strip/rstrip` 在空 string 上调用 `back()` 被 libc++ hardening abort。修法：`pystr::{lstrip,rstrip}` 空串 guard；MIF cache 文件名空时 fallback 到 `uid_<UID>`；iOS 图标解码入口加 mutex 串行化 applist/fbs/io 访问。验证：iPhone 16 Pro 模拟器连续滚动到中后段和底部，无新 `EKA2L1-*.ips`。
-- 字体缺失时 SVG 文本会失败 → 3.12 字体引导覆盖。
+- **核心结论**：`iconPNGDataForUID:sizePx:` 按 Android 同款顺序解 `.mif`(lunasvg) / `.mbm` / fallback `get_icon`，缩放成方形 PNG 给 SwiftUI 懒加载；附带修了空格 caption 触发的 `pystr` 空串崩溃。
+- 详见 [`docs/ios-applist-icons.md`](./docs/ios-applist-icons.md)（含解码链路、缓存与稳定性修复）。
 
 #### 3.7 iOS 原生 AudioUnit 后端 🟡
-- ✅ **不再通过 cubeb**。第一版（commit `a3d20d326`）用一个 cubeb shim 把 RemoteIO 包成 cubeb_ops；user 要求改成"平台原生 API"，于是把 iOS 直接接到 AURemoteIO + AVAudioSession，cubeb 在 iOS 整个不构建：
-  - `src/external/CMakeLists.txt`：iOS 重新走 `if (NOT EKA2L1_IOS)` 跳过 `add_subdirectory(cubeb)`。
-  - cubeb 子模块回退到上游 `d512bfa07` 干净 SHA（删除 shim 文件 + CMake patch），不再 dirty。
-  - ffmpeg 继续 skip（bundled binary 没 iOS cross-build）。
-  - 2026-05-24 临时恢复 DSP out：iOS target 仍未接回 FFmpeg headers/libs，直接打开 `dsp_output_stream_ffmpeg` 会在 `libavcodec/avcodec.h` 缺失处编译失败；当前先提供 iOS PCM16/PCM8-only `dsp_output_stream_pcm`，让已解码 PCM 的 DSP out stream 能创建并走 AudioUnit。
-- ✅ 新增 `src/emu/drivers/{include,src}/drivers/audio/backend/audiounit_ios/`：
-  - `audio_audiounit_ios.{h,mm}` —— `audiounit_ios_audio_driver : public audio_driver`，构造时 `dispatch_once` 配 `AVAudioSession.Playback + MixWithOthers + setActive:YES`，`native_sample_rate()` 直接读 `[AVAudioSession sharedInstance].sampleRate`。
-  - `stream_audiounit_ios.{h,mm}` —— `audiounit_ios_stream_base` 持 `AudioUnit`(RemoteIO)，`AudioComponentFindNext + AudioComponentInstanceNew + AudioUnitSetProperty(StreamFormat S16LE interleaved, mChannelsPerFrame=channels, mBitsPerChannel=16) + AURenderCallback + AudioUnitInitialize`；output 用 bus 0 input scope，input 启用 bus 1 + enable IO 1 / 0；`AudioOutputUnitStart/Stop` 走运行控制。`audiounit_ios_output_stream` / `audiounit_ios_input_stream` 是 final 子类，加上 `pause / volume / current_frame_position` 等接口，soft volume + idle-frames 处理与 cubeb 老路径一致（避免 DSP 时间戳跳变）。
-- ✅ `drivers/CMakeLists.txt`：iOS 编 `DRIVERS_AUDIOUNIT_IOS_SRC`，桌面 / Android 编 `DRIVERS_CUBEB_SRC` + `DRIVERS_FFMPEG_SRC`。`drivers` iOS link 去掉 `cubeb`，保留 `AudioToolbox / CoreAudio / AVFoundation` 系统 framework。
-- ✅ `audio.cpp::make_audio_driver(audio_driver_backend::cubeb, ...)` 在 `EKA2L1_PLATFORM(IOS)` 下返回 `audiounit_ios_audio_driver`，桌面 / Android 不变（cubeb 枚举名保留是有意的：上层 services 用同一个 backend 标签）。
-- ✅ `IosEmulator`：未改动 —— 仍按 3.7 一版调 `make_audio_driver(cubeb, master_vol, player_type_tsf)`、`set_bank_path(HSB/SF2)`、塞进 `system_create_components.audio_`，mount 后 `sys->set_audio_driver(...)`；`-pause` / `-resume` 仍 `AVAudioSession setActive:NO/YES`，但 session 配置现在由 audio_driver 构造统一负责，避免两边重复 `dispatch_once`。
-- ✅ xcodebuildmcp 验证（iPhone 16 Pro / iOS 26.5 sim）：cubeb 不再编入；build SUCCEEDED；mount N95 → 日志仍出 `mediaclientaudiostream_general.dll` / `mediaclientaudio_general.dll` / `audiooutputrouting_general.dll` 三个 audio patch DLL（证明 services 拿到了真 audio_driver）；applist 64 app；Calculator UI 渲染稳定 ≥10s，无新 `.ips`。截屏 `docs/screenshots/ios-stage3/3.7-audio/calculator-native-audiounit.jpg`。
-- 🟡 剩余 follow-up：①真的"能听见声音"要选一个会出声的 ROM 应用（候选：N-Gage demo / Music Player / 一段 SIS 带 BGM 的小游戏），跑起来人耳确认 —— 不能用 xcodebuildmcp 自动断言；②MIDI 用 TSF 后端走 file-based bank，HSB/SF2 路径默认空，sandbox 里没把 `defaultbank.hsb` / `defaultbank.sf2` 拷过去（先前没人需要），有需要时和字体一样在 startup 里复制；③Audio input（mic）路径已经接好但未实测，3.x 没有需要录音的功能流程。
+- **核心结论**：弃用 cubeb shim，iOS 直接接 AURemoteIO + AVAudioSession（`audiounit_ios` 后端），`make_audio_driver(cubeb,…)` 在 iOS 下返回该后端；services 拿到真 audio_driver、加载三个 audio patch DLL。剩余听感与 MIDI bank 验证待办。
+- 详见 [`docs/ios-audiounit-backend.md`](./docs/ios-audiounit-backend.md)（含后端结构、CMake 切分与验证）。
 
 #### 3.7.1 iOS DSP / FFmpeg 回接 🟡
-- ✅ 2026-05-24 simulator 路径已回接：新增 `scripts/build_ios_ffmpeg.sh`，用 bundled FFmpeg source out-of-tree 构建 iOS static libs 到 `build/ios-<device|simulator>/ios-ffmpeg`，不 dirty `src/external/ffmpeg` 子模块；`scripts/build_ios.sh` 在配置 iOS 前自动构建对应 FFmpeg 产物，并传 `EKA2L1_IOS_ENABLE_FFMPEG=ON` / `EKA2L1_IOS_FFMPEG_ROOT=...`。
-- ✅ CMake 回接：`src/external/CMakeLists.txt` 在 iOS 下把 `libavformat/libavcodec/libswscale/libavutil/libswresample` 暴露成 `ffmpeg` interface target；`drivers` 在 `EKA2L1_HAVE_FFMPEG` 时编回 `dsp_ffmpeg.cpp` / `player_ffmpeg.cpp` / `video_player_ffmpeg.cpp`，并定义 `EKA2L1_HAS_FFMPEG=1`。如果显式关闭 FFmpeg，iOS 仍保留 PCM16/PCM8-only fallback，避免回到空 stream。
-- ✅ 验证：`scripts/build_ios.sh simulator` 通过；Xcode build 中 drivers 编译 `video_player_ffmpeg.cpp`，最终 app link line 包含五个 iOS FFmpeg static libs；`nm` 确认 `libdrivers.a` 内已有 `dsp_output_stream_ffmpeg` / `player_ffmpeg` 符号。
-- 🟡 剩余：device 路径使用同一脚本支持 `iphoneos`，但本轮尚未跑 `scripts/build_ios.sh device`；运行时还需要用压缩 DSP sample 或 MP3/AMR 应用验证真实解码，并复测 Final Battle 无 `Unable to create new DSP out stream!` / `KERN-EXEC` / `Access violation`。
+- **核心结论**：新增 `scripts/build_ios_ffmpeg.sh` 用 bundled FFmpeg source out-of-tree 构建 iOS static libs（不 dirty 子模块），CMake 在 `EKA2L1_HAVE_FFMPEG` 时编回 `dsp_ffmpeg` / `player_ffmpeg` / `video_player_ffmpeg`，否则保留 PCM16/PCM8 fallback。simulator 已回接，device 路径与真实解码验证待办。
+- 详见 [`docs/ios-dsp-ffmpeg.md`](./docs/ios-dsp-ffmpeg.md)（含脚本、CMake 回接与验证）。
 
 #### 3.8 振动：Core Haptics ✅
 - ✅ 新建 `src/emu/drivers/{include,src}/hwrm/backend/vibration_ios.{h,mm}`：iOS 18+ 直接用 `CHHapticEngine` + continuous `CHHapticEvent`，把 HWRM `millisecs/intensity` 映射为 duration/intensity/sharpness；不再维护 iOS 18 以下 fallback。
