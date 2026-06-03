@@ -546,22 +546,34 @@ namespace eka2l1::ios {
         [fm copyItemAtPath:shaderSource toPath:dataShaders error:nil];
     }
 
+    // Stage the HLE patch DLLs/maps into data/patch, which load_patch_libraries
+    // scans at boot. Prefer the bundled copy (CMake stages src/patch/*/group/*
+    // flat under the .app's "patch/" — see src/emu/ios/CMakeLists.txt); the
+    // __FILE__-relative source tree only resolves on the simulator (same host
+    // filesystem as the build), so on a real device the bundle is the only
+    // source. Without this, the guest boots unpatched: no audio, and apps that
+    // hit an unpatched path (e.g. Snakes -> d_display.ldd) panic and black-screen.
     NSString *dataPatch = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"patch"];
+    NSString *bundlePatch = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"patch"];
     NSString *sourcePatch = [[[@(__FILE__) stringByDeletingLastPathComponent]
         stringByAppendingPathComponent:@"../../../patch"] stringByStandardizingPath];
-    if ([fm fileExistsAtPath:sourcePatch]) {
+    BOOL patchFromBundle = [fm fileExistsAtPath:bundlePatch];
+    NSString *patchSource = patchFromBundle ? bundlePatch : sourcePatch;
+    if ([fm fileExistsAtPath:patchSource]) {
         [fm removeItemAtPath:dataPatch error:nil];
         [fm createDirectoryAtPath:dataPatch withIntermediateDirectories:YES attributes:nil error:nil];
-        NSDirectoryEnumerator<NSString *> *patchEnum = [fm enumeratorAtPath:sourcePatch];
+        NSDirectoryEnumerator<NSString *> *patchEnum = [fm enumeratorAtPath:patchSource];
         for (NSString *relative in patchEnum) {
-            if (![relative containsString:@"/group/"]) {
+            // The bundle stages the files flat; the source tree nests them under
+            // each patch project's group/ dir, so only require that for the latter.
+            if (!patchFromBundle && ![relative containsString:@"/group/"]) {
                 continue;
             }
             NSString *name = relative.lastPathComponent;
             if (![name hasSuffix:@".map"] && ![name hasSuffix:@"_general.dll"]) {
                 continue;
             }
-            NSString *src = [sourcePatch stringByAppendingPathComponent:relative];
+            NSString *src = [patchSource stringByAppendingPathComponent:relative];
             NSString *dst = [dataPatch stringByAppendingPathComponent:name];
             [fm copyItemAtPath:src toPath:dst error:nil];
         }

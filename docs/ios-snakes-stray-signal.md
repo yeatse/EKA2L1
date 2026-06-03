@@ -97,3 +97,9 @@ EKA2L1 里同步 IPC completion 与 active-object completion 共用同一个 thr
 - 使用软键盘确认 `Start Game` → `Start New Game` → 跳过玩法提示后进入实际 3D 游戏关卡；方向键输入后画面继续实时更新。
 - Calculator (`uid=0x10005902`) 回归正常渲染。
 - 日志扫描无 `REQDBG`、`Thread Snakes panicked`、`E32USER-CBase`、`Access violation`、`Corrupted graphics`、`Active scheduler dump`、`KERN-EXEC`、`Emulation halt`。
+
+## 真机（device）回归（2026-06-03）—— ⚠️ 旧结论已被推翻，真机根因另在他处
+
+> 本节最初把真机黑屏归因为「同一非确定性 request-completion / active-scheduler 竞态」。**该结论已被证伪**：那个 `wait_for_any_request` 的 block/complete 高频循环其实是**游戏正常的逐帧循环**，不是活锁；加过的 kernel WFARDBG 诊断已全部回退。
+>
+> 真机 N95 黑屏无声的**真实根因是 iOS 真机构建从不安装 HLE patch DLL**（缺音频 patch → 无声；缺 `scdv` 屏幕驱动 patch → Snakes 退回 `d_display.ldd` 直屏路径触发活动调度器 panic → 黑屏），与本文的模拟器 stray-signal 修复无关。已修复并真机验证（声音+画面正常）。完整调查见 **[`ios-device-missing-patch-dlls.md`](./ios-device-missing-patch-dlls.md)**。本文档（模拟器 N95 上的 stray-signal 修复）本身仍然成立。

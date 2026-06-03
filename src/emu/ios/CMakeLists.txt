@@ -72,6 +72,24 @@ target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_SHADER_FILES})
 set_source_files_properties(${EKA2L1_IOS_SHADER_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "shaders")
 
+# Bundle the prebuilt HLE patch DLLs + .map files into the .app under "patch/".
+# lib_manager::load_patch_libraries (epoc.cpp) scans data/patch at boot to apply
+# ROM/library patches (audio via mediaclientaudiostream, the scdv screen driver,
+# etc.). IosEmulator.mm stages them from NSBundle.resourcePath/patch into the
+# sandbox's data/patch. As with the shaders above, the __FILE__-relative source
+# fallback only resolves on the simulator (which runs on the build host); on a
+# real device the bundle copy is the only source. A missing copy here leaves the
+# guest unpatched — no sound, and apps that hit an unpatched path (e.g. Snakes
+# falling back to d_display.ldd) panic the active scheduler and black-screen.
+# Names are flat and unique, so MACOSX_PACKAGE_LOCATION "patch" stages them
+# alongside each other, matching the layout load_patch_libraries expects.
+file(GLOB EKA2L1_IOS_PATCH_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*.map"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*_general.dll")
+target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_PATCH_FILES})
+set_source_files_properties(${EKA2L1_IOS_PATCH_FILES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "patch")
+
 target_include_directories(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}")
 target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE GLES_SILENCE_DEPRECATION)
 

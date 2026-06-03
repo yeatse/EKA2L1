@@ -60,6 +60,34 @@ testable, and debuggable.
 - Debugging should start from symptoms and logs, then narrow toward root cause. Avoid landing
   fixes that only mask one title.
 
+### Physical device (devicectl)
+
+The simulator runs on the build host, so it can hide device-only bugs (e.g.
+resources staged from `__FILE__`-relative paths). Verify device-facing fixes on
+real hardware. Known device: iPhone Air, UDID `77611A2B-2A02-51FA-BAFC-2104F1D8011A`.
+
+```sh
+UDID=77611A2B-2A02-51FA-BAFC-2104F1D8011A          # or: xcrun devicectl list devices
+
+# Build + install (signing env required):
+EKA2L1_IOS_DEVELOPMENT_TEAM=L6JP27B8YR EKA2L1_IOS_DEVICE=$UDID scripts/build_ios.sh install
+
+# Launch directly into an app by UID (device must be UNLOCKED, else errors "Locked"):
+xcrun devicectl device process launch --device $UDID --terminate-existing \
+  com.eka2l1.emulator -LaunchAppUID 0x2000730F
+
+# Pull the emulator log (retry: copy-from occasionally returns empty / "Connection reset"):
+xcrun devicectl device copy from --device $UDID --domain-type appDataContainer \
+  --domain-identifier com.eka2l1.emulator --source Documents/data/EKA2L1.log --destination /tmp/EKA2L1.log
+
+# Inspect the sandbox file tree (e.g. confirm data/patch staged):
+xcrun devicectl device info files --device $UDID --domain-type appDataContainer \
+  --domain-identifier com.eka2l1.emulator | grep data/patch
+```
+
+- The device cannot be screenshotted via CLI — ask the user to confirm screen
+  and sound visually.
+
 ## Verification
 
 - For iOS changes, verify at least the affected app path plus a known-good
