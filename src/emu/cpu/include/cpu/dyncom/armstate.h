@@ -148,21 +148,6 @@ enum {
     RUN = 3 // Continuous execution
 };
 
-// Direct-mapped L1 cache that sits in front of ARMul_State::instruction_cache.
-// It lets the hot dispatch path resolve a translated basic block with a single
-// indexed load + tag compare instead of a std::unordered_map hash lookup.
-// Validity is tracked with a generation counter so a full invalidation (on
-// thread context switch / instruction memory barrier) stays O(1).
-struct block_cache_entry {
-    std::uint32_t tag;
-    std::uint32_t generation;
-    std::size_t offset;
-};
-
-static constexpr std::size_t BLOCK_CACHE_BITS = 16;
-static constexpr std::size_t BLOCK_CACHE_SIZE = std::size_t(1) << BLOCK_CACHE_BITS;
-static constexpr std::size_t BLOCK_CACHE_MASK = BLOCK_CACHE_SIZE - 1;
-
 struct ARMul_State final {
 public:
     explicit ARMul_State(eka2l1::arm::dyncom_core *core, PrivilegeMode initial_mode);
@@ -259,53 +244,6 @@ public:
     // TODO(bunnei): Move this cache to a better place - it should be per codeset (likely per
     // process for our purposes), not per ARMul_State (which tracks CPU core state).
     std::unordered_map<std::uint32_t, std::size_t> instruction_cache;
-
-    // Fast L1 in front of instruction_cache; see block_cache_entry above.
-    std::array<block_cache_entry, BLOCK_CACHE_SIZE> block_cache{};
-    std::uint32_t block_cache_generation = 1;
-
-    // Resolve the translation-cache offset of the basic block starting at pc.
-    // Returns true and fills offset on a hit, repopulating the L1 on a map hit.
-    bool find_cached_block(std::uint32_t pc, std::size_t &offset) {
-        block_cache_entry &slot = block_cache[(pc >> 2) & BLOCK_CACHE_MASK];
-        if (slot.generation == block_cache_generation && slot.tag == pc) {
-            offset = slot.offset;
-            return true;
-        }
-
-        auto itr = instruction_cache.find(pc);
-        if (itr == instruction_cache.end()) {
-            return false;
-        }
-
-        slot.tag = pc;
-        slot.generation = block_cache_generation;
-        slot.offset = itr->second;
-        offset = itr->second;
-        return true;
-    }
-
-    // Record a freshly translated block in both the map and the L1.
-    void store_cached_block(std::uint32_t pc, std::size_t offset) {
-        instruction_cache[pc] = offset;
-
-        block_cache_entry &slot = block_cache[(pc >> 2) & BLOCK_CACHE_MASK];
-        slot.tag = pc;
-        slot.generation = block_cache_generation;
-        slot.offset = offset;
-    }
-
-    // Invalidate every cached block in O(1) by retiring the current generation.
-    void bump_block_cache_generation() {
-        if (++block_cache_generation == 0) {
-            // Generation wrapped: stale entries could now alias the live one,
-            // so force them all to miss.
-            for (block_cache_entry &slot : block_cache) {
-                slot.generation = 0;
-            }
-            block_cache_generation = 1;
-        }
-    }
 
 private:
     void ResetMPCoreCP15Registers();

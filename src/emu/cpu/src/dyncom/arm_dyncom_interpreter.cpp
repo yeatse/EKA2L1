@@ -855,7 +855,7 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
         ret = inst_base->br;
     };
 
-    cpu->store_cached_block(pc_start, bb_start);
+    cpu->instruction_cache[pc_start] = bb_start;
 
     return KEEP_GOING;
 }
@@ -873,7 +873,7 @@ static int InterpreterTranslateSingle(ARMul_State *cpu, std::size_t &bb_start, s
         inst_base->br = TransExtData::SINGLE_STEP;
     }
 
-    cpu->store_cached_block(pc_start, bb_start);
+    cpu->instruction_cache[pc_start] = bb_start;
 
     return KEEP_GOING;
 }
@@ -1601,8 +1601,9 @@ DISPATCH : {
         cpu->Reg[15] &= 0xfffffffc;
 
     // Find the cached instruction cream, otherwise translate it...
-    if (cpu->find_cached_block(cpu->Reg[15], ptr)) {
-        // ptr now points at the cached block.
+    auto itr = cpu->instruction_cache.find(cpu->Reg[15]);
+    if (itr != cpu->instruction_cache.end()) {
+        ptr = itr->second;
     } else if (cpu->NumInstrsToExecute != 1) {
         if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
             goto END;
