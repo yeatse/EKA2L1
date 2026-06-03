@@ -489,15 +489,14 @@
 7. **N95 Snakes 真机黑屏无声（2026-06-03 已修）**：**核心结论**——iOS 真机构建从不把 HLE patch DLL 拷进 `data/patch`（旧 staging 只认 `__FILE__` 相对的开发机源码树、无 bundle 回退，仅模拟器侥幸成立）→ 零 patch → 无声 + Snakes 退回 `d_display.ldd` 触发活动调度器 panic → 黑屏。修法：把 `src/patch/*/group/*` 打进 .app `patch/`，staging 优先 bundle。真机验证声音+画面正常。详见 [`docs/ios-device-missing-patch-dlls.md`](./docs/ios-device-missing-patch-dlls.md)。
 
 ### 阶段 3 已知风险
-- **iOS sandbox 下 mmap / mprotect 行为差异是 3.1 的关键变量**：模拟器（Apple Silicon host）与真机的 sandbox 配额不完全一致，3.1 修完后必须在真机上至少跑一次 mount，不能只靠 booted 模拟器。
-- **cubeb iOS 后端历史包袱**：cubeb_audiounit 在新 SDK 下偶有编译告警升错；如真的编不过、又不想动 cubeb 源，可以临时给一个最薄的 AVAudioEngine 后端走 `audio_driver` 接口，但务必记录在修复清单里、不要让回退方案永久化。
-- **AVAudioSession 与 EAGL 生命周期耦合**：进后台时音频要先 deactivate 再让 GL pause，否则 AudioUnit 在 EAGL context 释放后仍持引用可能 crash；scenePhase 路径里写明先后顺序。
-- **Core Haptics 在 iOS 模拟器上不可用**：模拟器 silently 失败，验证振动只能上真机；CI 烟测里跳过振动相关 assert。
-- **UIDocumentPicker 返回的是 security-scoped URL**：必须配对 `startAccessingSecurityScopedResource` / `stop...`，否则后台拷贝会读不到文件。这是阶段 3 上手时最容易踩的隐性坑。
-- **chunk 修复一旦泄漏到桌面**：mem 模块的所有改动都要在 macOS / Linux / Win32 桌面 Qt 构建上跑一次回归，3.3 的 API 拆分尤其要小心 ABI 漂移。
-- **设置面板与 services 的耦合**：`config::state` 字段改完不一定立即对 services 生效（多数需要 reset 模拟器）；设置面板要在 UI 上明确告知 "需要重启模拟器才能生效" 的字段。
-- **S60v5（N97 / RM-507, epoc94）GUI app 卡在 AVKON FEP / PtiEngine 启动**（未解决，独立立项）：**核心结论**——N97 点 Calculator 黑屏 + CPU 100% 是 backend 无关、iOS 无关的 EKA2L1 通用 S60v5 重 app 启动缺口；深挖后定论 FEP/Pti 崩溃（`Can't open object: ZIDATA_`）只是稀有副经路，主导黑屏是 dyncom 下 AVKON/CONE/OpenVG/多服务握手的非确定性卡死，单解决 FEP 不会让 Calculator 渲染。**实务建议**：N97 用 Zip manager 这类不吃 FEP/OpenVG 的轻量 app 验收，Calculator 等重 app 待 dynarmic-on-sim + S60v5 启动稳定性作为独立大任务推进。完整排查记录（avkonfep `.map` 失败、默认 FEP UID `0x101FD65A` 身份确认、非确定性分布统计等）见 [`docs/s60v5-avkon-fep-pti.md`](./docs/s60v5-avkon-fep-pti.md)。
-- **`epoc.cpp` iOS 强制 dyncom；sim 切 dynarmic 已不再复现历史 regalloc crash**（待评估）：`system_impl` 构造里 iOS（含 simulator）硬编码 `cpu_type = dyncom`，注释理由是"Calculator 在 simulator 上有 Dynarmic A32 regalloc crash"。本轮排查临时把 sim 切 `EKA2L1_IOS_SIMULATOR_DYNARMIC → dynarmic` 实测：N95 Calculator 在 dynarmic 下**完整渲染**（+ − × ÷ = √ % 按钮）、无 host crash；N97 也只在 guest 侧 fault（即上面的 FEP/Pti 问题）而非 dynarmic 崩溃。即历史 regalloc crash 说法疑似已过时。但因为切 dynarmic 既不解决 N97、又反转了既有的稳定性决定，本轮**未并入**，留作后续单独评估 sim 默认 backend 时再做（需要跑更多 app 验证 dynarmic 稳定性）。
+- ✅ **mmap / mprotect 行为差异（3.1）已解决**：根因是 Apple Silicon 16 KB host page 与 4 KB `mprotect` 粒度不匹配（确定性、真机同样适用），按 host page size 对齐后消除。
+- ✅ **cubeb iOS 后端历史包袱（3.7）已消除**：弃用 cubeb，改接原生 AURemoteIO / AVAudioSession（`audiounit_ios`），不再存在 cubeb 编译风险。
+- **AVAudioSession 与 EAGL 生命周期耦合**：进后台须先 deactivate 音频再 pause GL，scenePhase 路径要写明先后顺序，否则 AudioUnit 可能在 EAGL context 释放后仍持引用而 crash。
+- **Core Haptics 在模拟器不可用（平台限制）**：振动只能上真机验证，CI 烟测跳过振动相关 assert。
+- **UIDocumentPicker 返回 security-scoped URL（3.5 进行中）**：拷贝前后必须配对 `startAccessingSecurityScopedResource` / `stop...`，否则读不到文件。
+- **mem/chunk 改动须做桌面回归**：3.3 的 `virtualmem` 改动要在 macOS / Linux / Win32 桌面 Qt 上各跑一次，防 ABI 漂移。
+- **S60v5 重 app 卡在 AVKON FEP / PtiEngine 启动（未解决，独立立项）**：N97 Calculator 黑屏是 backend / iOS 无关的通用 S60v5 重 app 启动缺口，验收改用 ZipManager 等轻量 app，详见 [`docs/s60v5-avkon-fep-pti.md`](./docs/s60v5-avkon-fep-pti.md)。
+- **iOS 默认 dyncom vs sim dynarmic（待评估）**：sim 切 dynarmic 实测 N95 Calculator 完整渲染、未复现历史 regalloc crash，但因不解决 N97 且反转既有决定，留作后续单独评估。
 
 ---
 
