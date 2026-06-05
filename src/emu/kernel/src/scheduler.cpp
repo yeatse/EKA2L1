@@ -121,11 +121,6 @@ namespace eka2l1::kernel {
             }
 
             run_core->load_context(crr_thread->ctx);
-            // TODO(ios): temporary diagnostic trace for stage 3.2.1
-            LOG_INFO(KERNEL, "Switch to thread {} pc=0x{:08X} lr=0x{:08X} sp=0x{:08X} r4=0x{:08X} cpsr=0x{:08X} (process={})",
-                crr_thread->name(), crr_thread->ctx.get_pc(), crr_thread->ctx.get_lr(),
-                crr_thread->ctx.get_sp(), crr_thread->ctx.cpu_registers[4], crr_thread->ctx.cpsr,
-                crr_process ? crr_process->name() : "?");
         } else {
             // No current thread is eligible to run. Let the core that this scheduler currently handle sleeps.
             crr_thread = nullptr;
@@ -188,6 +183,19 @@ namespace eka2l1::kernel {
                 // Use our old outdated friend, it seems only one thread exists
                 next_thread = old_friend;
             }
+        }
+
+        // A ready thread can briefly outlive its process memory model during
+        // multi-step teardown. Drop stale entries so switch_context receives a
+        // runnable thread with a valid address space.
+        while (next_thread) {
+            kernel::process *owner = next_thread->owning_process();
+            if (owner && owner->get_mem_model()) {
+                break;
+            }
+
+            dequeue_thread_from_ready(next_thread);
+            next_thread = next_ready_thread();
         }
 
         switch_context(crr_thread, next_thread);
@@ -285,6 +293,7 @@ namespace eka2l1::kernel {
 
             thr->state = thread_state::wait;
             dequeue_thread_from_ready(thr);
+            kern->prepare_reschedule();
         }
 
         // Schedule the thread to be waken up
