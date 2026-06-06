@@ -334,6 +334,13 @@ namespace eka2l1::ios {
         // which reboots the device on app exit: the next launchAppWithUID:
         // rebuilds the system first. Cleared by that rebuild.
         bool needs_reboot_before_launch = false;
+
+        // Bumped on every launch. The process exit logon is registered with the
+        // generation it belongs to; a stale logon (e.g. the previous app's
+        // callback re-fired while its process is torn down during the reboot of
+        // the next launch — logon_requests_emu isn't cleared after firing) is
+        // then ignored instead of closing the freshly-launched screen.
+        std::uint64_t launch_generation = 0;
     };
 
     static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
@@ -504,8 +511,9 @@ namespace eka2l1::ios {
 }
 
 @interface EKA2L1Emulator ()
-// Main-queue bounce target for the launched process' exit logon.
-- (void)handleRunningAppExited;
+// Main-queue bounce target for the launched process' exit logon. `generation`
+// identifies the launch the logon belonged to, so a stale re-fire is dropped.
+- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation;
 @end
 
 @implementation EKA2L1Emulator {
@@ -1057,16 +1065,18 @@ namespace eka2l1::ios {
     cmdline.launch_cmd_ = eka2l1::epoc::apa::command_create;
 
     eka2l1::kernel::uid launched_thread_id = 0;
+    const std::uint64_t generation = ++_state->launch_generation;
     kern->lock();
     // The exit callback fires from the kernel loop thread (process logon) when
     // the app leaves — normal exit, Exit soft key, kill or panic. Bounce to the
     // main queue so the SwiftUI frontend can close the emulator screen. self is
-    // a singleton so a weak capture is just defensive.
+    // a singleton so a weak capture is just defensive. The generation guards
+    // against a stale logon from a superseded launch closing this screen.
     __weak EKA2L1Emulator *weakSelf = self;
     bool launched = alserv->launch_app(*reg, cmdline, &launched_thread_id,
-        [weakSelf](eka2l1::kernel::process *) {
+        [weakSelf, generation](eka2l1::kernel::process *) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf handleRunningAppExited];
+                [weakSelf handleRunningAppExitedForGeneration:generation];
             });
         });
     if (launched) {
@@ -1112,14 +1122,18 @@ namespace eka2l1::ios {
     return launched ? YES : NO;
 }
 
-- (void)handleRunningAppExited {
+- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation {
+    // Ignore a logon that belongs to a superseded launch: a previous app's
+    // callback can re-fire while its process is torn down during the next
+    // launch's reboot, and must not close the screen that just opened.
+    if (!_state || generation != _state->launch_generation) {
+        return;
+    }
     // The tracked process is gone; drop its id so a later closeRunningApp from
     // the screen-teardown path doesn't try to kill a stale (or recycled) id,
     // and flag the session for a rebuild before the next launch.
-    if (_state) {
-        _state->running_thread_id = 0;
-        _state->needs_reboot_before_launch = true;
-    }
+    _state->running_thread_id = 0;
+    _state->needs_reboot_before_launch = true;
     if (self.appExitHandler) {
         self.appExitHandler();
     }

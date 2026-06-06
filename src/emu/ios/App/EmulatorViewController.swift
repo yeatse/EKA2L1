@@ -211,25 +211,12 @@ final class EmulatorViewController: UIViewController {
         }
     }
 
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        if isMovingFromParent || isBeingDismissed {
-            // Closing the screen (pop / dismiss) kills the guest app in
-            // lockstep. Drop the exit handler first so the kill's logon
-            // doesn't bounce back into onAppExit while we're already leaving.
-            // Don't pause: let the loop keep ticking so the window server
-            // finishes tearing the dead app down (the relaunch itself reboots
-            // the device, see IosEmulator). cpu_load_save parks the idle loop,
-            // so leaving it running while on the app list is cheap.
-            EKA2L1Bridge.shared.setAppExitHandler(nil)
-            EKA2L1Bridge.shared.closeRunningApp()
-        } else {
-            // Transient disappear (backgrounding / a pushed sub-screen): pause
-            // to save power; resume() in viewDidAppear brings it back.
-            EKA2L1Bridge.shared.pause()
-        }
-    }
-
+    // Closing the screen (and killing the app) is detected at the SwiftUI level
+    // in EmulatorView's .onDisappear: UIKit's isMovingFromParent /
+    // isBeingDismissed are unreliable for a UIViewControllerRepresentable popped
+    // by a SwiftUI NavigationStack (they read false), so viewWillDisappear can't
+    // tell a pop from a transient disappear. Backgrounding is handled by
+    // scenePhase.
     private func handleAppExited() {
         EKA2L1Bridge.shared.setAppExitHandler(nil)
         onAppExit?()

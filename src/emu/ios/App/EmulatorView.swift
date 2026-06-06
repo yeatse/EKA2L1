@@ -18,6 +18,17 @@ struct EmulatorView: View {
             }
         }
         .background(Color.black)
+        .onDisappear {
+            // The emulator screen was popped/dismissed (back button or a
+            // programmatic dismiss after the app exited). Kill the guest app in
+            // lockstep with closing the screen. Drop the exit handler first so
+            // the kill's logon doesn't bounce back into a dismiss. SwiftUI's
+            // onDisappear fires on navigation removal but not on app
+            // backgrounding (that path pauses via scenePhase), so this cleanly
+            // means "screen closed". No-op if the app already exited.
+            EKA2L1Bridge.shared.setAppExitHandler(nil)
+            EKA2L1Bridge.shared.closeRunningApp()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button("L") {
