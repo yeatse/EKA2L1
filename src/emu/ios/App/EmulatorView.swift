@@ -5,10 +5,11 @@ struct EmulatorView: View {
     let uid: UInt32
 
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
-            EmulatorControllerView(uid: uid)
+            EmulatorControllerView(uid: uid, onAppExit: { dismiss() })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showVirtualKeypad {
                 VirtualKeypad()
@@ -42,12 +43,17 @@ struct EmulatorView: View {
 
 private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
+    let onAppExit: () -> Void
 
     func makeUIViewController(context: Context) -> EmulatorViewController {
-        return EmulatorViewController(uid: uid)
+        let controller = EmulatorViewController(uid: uid)
+        controller.onAppExit = onAppExit
+        return controller
     }
 
-    func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {
+        uiViewController.onAppExit = onAppExit
+    }
 }
 
 private struct VirtualKeypad: View {

@@ -87,6 +87,18 @@ final class EKA2L1Bridge {
         emulator.launchApp(withUID: uid)
     }
 
+    // Set/clear the callback fired (on the main queue) when the running app's
+    // process exits — used to close the emulator screen when the guest app
+    // leaves via Exit soft key, panic, or normal termination.
+    func setAppExitHandler(_ handler: (() -> Void)?) {
+        emulator.appExitHandler = handler
+    }
+
+    // Kill the running app in lockstep with the frontend closing its screen.
+    func closeRunningApp() {
+        emulator.closeRunningApp()
+    }
+
     func installSis(atPath path: String) -> Bool {
         emulator.installSis(atPath: path)
     }

@@ -42,6 +42,8 @@
 #include <drivers/hwrm/vibration.h>
 #include <services/window/screen.h>
 #include <kernel/kernel.h>
+#include <kernel/process.h>
+#include <kernel/thread.h>
 #include <loader/mbm.h>
 #include <loader/mif.h>
 #include <loader/nvg.h>
@@ -319,6 +321,19 @@ namespace eka2l1::ios {
         std::mutex icon_mutex;
         std::vector<std::size_t> screen_redraw_handles;
         int present_status = 0;
+
+        // Primary-thread id of the app launched by launchAppWithUID:. Used to
+        // kill that process when the frontend closes the emulator screen, and
+        // cleared once the process exits (so closeRunningApp no-ops afterwards).
+        eka2l1::kernel::uid running_thread_id = 0;
+
+        // Set once an app has exited / been killed in this booted session. The
+        // window + view servers don't fully reset between app instances (the
+        // guest logs "Can't remove active view!" on exit), so relaunching into
+        // the same session renders a blank screen. Mirror the desktop frontend,
+        // which reboots the device on app exit: the next launchAppWithUID:
+        // rebuilds the system first. Cleared by that rebuild.
+        bool needs_reboot_before_launch = false;
     };
 
     static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
@@ -487,6 +502,11 @@ namespace eka2l1::ios {
         }
     }
 }
+
+@interface EKA2L1Emulator ()
+// Main-queue bounce target for the launched process' exit logon.
+- (void)handleRunningAppExited;
+@end
 
 @implementation EKA2L1Emulator {
     std::unique_ptr<eka2l1::ios::emulator> _state;
@@ -1003,6 +1023,23 @@ namespace eka2l1::ios {
         LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver was not ready before app launch");
         return NO;
     }
+
+    // A prior app left the booted session dirty (the window/view servers don't
+    // reset cleanly between app instances). Rebuild the system for a clean
+    // launch, mirroring the desktop frontend's reboot-on-exit. Only the second
+    // and later launches pay this; the screen is black during launch anyway.
+    if (_state->needs_reboot_before_launch) {
+        _state->needs_reboot_before_launch = false;
+        NSInteger reboot_index = [self currentDeviceIndex];
+        if (reboot_index < 0) {
+            reboot_index = std::max(0, _state->conf.device);
+        }
+        if (![self bootDeviceAtIndex:static_cast<NSUInteger>(reboot_index)]) {
+            LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS device reboot before relaunch failed");
+            return NO;
+        }
+    }
+
     eka2l1::ios::bind_graphics_driver(_state.get());
 
     auto *kern = _state->symsys->get_kernel_system();
@@ -1021,8 +1058,19 @@ namespace eka2l1::ios {
 
     eka2l1::kernel::uid launched_thread_id = 0;
     kern->lock();
-    bool launched = alserv->launch_app(*reg, cmdline, &launched_thread_id, nullptr);
+    // The exit callback fires from the kernel loop thread (process logon) when
+    // the app leaves — normal exit, Exit soft key, kill or panic. Bounce to the
+    // main queue so the SwiftUI frontend can close the emulator screen. self is
+    // a singleton so a weak capture is just defensive.
+    __weak EKA2L1Emulator *weakSelf = self;
+    bool launched = alserv->launch_app(*reg, cmdline, &launched_thread_id,
+        [weakSelf](eka2l1::kernel::process *) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf handleRunningAppExited];
+            });
+        });
     if (launched) {
+        _state->running_thread_id = launched_thread_id;
         kern->stop_cores_idling();
     }
     kern->unlock();
@@ -1062,6 +1110,49 @@ namespace eka2l1::ios {
             });
     }
     return launched ? YES : NO;
+}
+
+- (void)handleRunningAppExited {
+    // The tracked process is gone; drop its id so a later closeRunningApp from
+    // the screen-teardown path doesn't try to kill a stale (or recycled) id,
+    // and flag the session for a rebuild before the next launch.
+    if (_state) {
+        _state->running_thread_id = 0;
+        _state->needs_reboot_before_launch = true;
+    }
+    if (self.appExitHandler) {
+        self.appExitHandler();
+    }
+}
+
+- (void)closeRunningApp {
+    if (!_state || !_state->symsys) {
+        return;
+    }
+    auto *kern = _state->symsys->get_kernel_system();
+    if (!kern) {
+        return;
+    }
+    const eka2l1::kernel::uid tid = _state->running_thread_id;
+    if (tid == 0) {
+        return;
+    }
+    _state->running_thread_id = 0;
+    // The killed app leaves the session dirty; rebuild before the next launch.
+    _state->needs_reboot_before_launch = true;
+
+    // Kill the process from outside the loop thread under the kernel lock, the
+    // same guard launch uses to mutate kernel state. The process logon still
+    // fires (handleRunningAppExited); callers tearing down the screen clear
+    // appExitHandler first so that bounce is a no-op.
+    kern->lock();
+    auto *thr = kern->get_by_id<eka2l1::kernel::thread>(tid);
+    eka2l1::kernel::process *pr = thr ? thr->owning_process() : nullptr;
+    if (pr && pr->get_exit_type() == eka2l1::kernel::entity_exit_type::pending) {
+        pr->kill(eka2l1::kernel::entity_exit_type::kill, u"Closed", 0);
+    }
+    kern->stop_cores_idling();
+    kern->unlock();
 }
 
 - (BOOL)installSisAtPath:(NSString *)sisPath {

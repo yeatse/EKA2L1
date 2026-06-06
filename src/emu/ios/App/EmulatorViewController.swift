@@ -166,6 +166,10 @@ private final class EKA2L1RenderView: UIView {
 
 final class EmulatorViewController: UIViewController {
     private let uid: UInt32
+    // Invoked when the guest app exits on its own (Exit soft key / panic /
+    // normal termination) so the SwiftUI host can pop this screen.
+    var onAppExit: (() -> Void)?
+    private var launched = false
     private var gameView: EKA2L1RenderView {
         view as! EKA2L1RenderView
     }
@@ -195,14 +199,39 @@ final class EmulatorViewController: UIViewController {
         super.viewDidAppear(animated)
         gameView.setNeedsLayout()
         gameView.layoutIfNeeded()
-        if gameView.surfaceReady {
+        EKA2L1Bridge.shared.resume()
+        // Launch once: viewDidAppear can re-fire (e.g. returning frontmost),
+        // and re-launching would spawn a second guest instance.
+        if gameView.surfaceReady, !launched {
+            launched = true
+            EKA2L1Bridge.shared.setAppExitHandler { [weak self] in
+                self?.handleAppExited()
+            }
             _ = EKA2L1Bridge.shared.launchApp(uid: uid)
-            EKA2L1Bridge.shared.resume()
         }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        EKA2L1Bridge.shared.pause()
+        if isMovingFromParent || isBeingDismissed {
+            // Closing the screen (pop / dismiss) kills the guest app in
+            // lockstep. Drop the exit handler first so the kill's logon
+            // doesn't bounce back into onAppExit while we're already leaving.
+            // Don't pause: let the loop keep ticking so the window server
+            // finishes tearing the dead app down (the relaunch itself reboots
+            // the device, see IosEmulator). cpu_load_save parks the idle loop,
+            // so leaving it running while on the app list is cheap.
+            EKA2L1Bridge.shared.setAppExitHandler(nil)
+            EKA2L1Bridge.shared.closeRunningApp()
+        } else {
+            // Transient disappear (backgrounding / a pushed sub-screen): pause
+            // to save power; resume() in viewDidAppear brings it back.
+            EKA2L1Bridge.shared.pause()
+        }
+    }
+
+    private func handleAppExited() {
+        EKA2L1Bridge.shared.setAppExitHandler(nil)
+        onAppExit?()
     }
 }

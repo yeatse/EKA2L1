@@ -84,6 +84,18 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // Launch a previously-listed app.
 - (BOOL)launchAppWithUID:(uint32_t)uid;
 
+// Invoked on the main queue when the currently-running app's process exits —
+// whether it left normally (Exit soft key), was killed, or panicked. The
+// frontend uses it to close the emulator screen when the guest app goes away.
+// Cleared by passing nil. Set this before launchAppWithUID:.
+@property(nonatomic, copy, nullable) void (^appExitHandler)(void);
+
+// Kill the app launched by the last launchAppWithUID:, in lockstep with the
+// frontend closing the emulator screen. No-op if nothing is running or the
+// process has already exited. Killing fires the process logon, so clear
+// appExitHandler first when the caller is already tearing the screen down.
+- (void)closeRunningApp;
+
 // Install a SIS / SISX package onto the running device. Picks drive D for
 // S80 devices and drive E otherwise, mirroring the Android install path.
 - (BOOL)installSisAtPath:(NSString *)sisPath;
