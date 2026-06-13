@@ -1060,6 +1060,11 @@ namespace eka2l1::ios {
         entry.uid = reg.mandatory_info.uid;
         std::string name = eka2l1::common::ucs2_to_utf8(reg.mandatory_info.long_caption.to_std_string(nullptr));
         entry.name = [NSString stringWithUTF8String:name.c_str()];
+        // Mirror the Qt/Android heuristic: a built-in system app lands on the
+        // ROM drive (Z) and uses a UID below the user-installable range.
+        constexpr std::uint32_t WARE_APP_UID_START = 0x10300000;
+        entry.system = (reg.land_drive == drive_z) &&
+                       (reg.mandatory_info.uid < WARE_APP_UID_START);
         [out addObject:entry];
     }
     return out;
@@ -1233,6 +1238,32 @@ namespace eka2l1::ios {
     auto result = static_cast<eka2l1::package::installation_result>(
         _state->symsys->install_package(upath, install_drive));
     return result == eka2l1::package::installation_result_success ? YES : NO;
+}
+
+- (BOOL)uninstallAppWithUID:(uint32_t)uid {
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    auto *manager = _state->symsys->get_packages();
+    if (!manager) {
+        return NO;
+    }
+    // App UID3 == package UID for single-app SIS packages. Remove the base
+    // install (index 0) plus any augmentations sharing the UID so nothing is
+    // left dangling. ROM apps have no package entry, so this is a no-op for
+    // them (matching the frontend only offering uninstall on installed apps).
+    bool removed = false;
+    for (eka2l1::package::object *aug : manager->augmentations(uid)) {
+        if (aug && manager->uninstall_package(*aug)) {
+            removed = true;
+        }
+    }
+    if (eka2l1::package::object *base = manager->package(uid, 0)) {
+        if (manager->uninstall_package(*base)) {
+            removed = true;
+        }
+    }
+    return removed ? YES : NO;
 }
 
 - (void)attachLayer:(CAEAGLLayer *)layer

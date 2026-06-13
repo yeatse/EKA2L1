@@ -4,6 +4,8 @@ import QuartzCore
 struct EKA2L1AppItem: Identifiable, Hashable {
     let uid: UInt32
     let name: String
+    // True for built-in ROM/system apps; false for user-installed packages.
+    let system: Bool
 
     var id: UInt32 { uid }
 }
@@ -79,7 +81,7 @@ final class EKA2L1Bridge {
 
     func rescanApps() -> [EKA2L1AppItem] {
         emulator.rescanApps().map {
-            EKA2L1AppItem(uid: $0.uid, name: $0.name)
+            EKA2L1AppItem(uid: $0.uid, name: $0.name, system: $0.system)
         }
     }
 
@@ -101,6 +103,10 @@ final class EKA2L1Bridge {
 
     func installSis(atPath path: String) -> Bool {
         emulator.installSis(atPath: path)
+    }
+
+    func uninstallApp(uid: UInt32) -> Bool {
+        emulator.uninstallApp(withUID: uid)
     }
 
     func attach(layer: CAEAGLLayer, pixelSize: CGSize, scale: CGFloat) {

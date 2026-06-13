@@ -40,6 +40,10 @@ struct ContentView: View {
     // Persisted so the choice sticks across launches.
     @AppStorage("appListUsesGrid") private var usesGridLayout = true
 
+    // Whether to show built-in ROM/system apps alongside user-installed ones.
+    // Defaults to false so the list shows only what the user installed.
+    @AppStorage("appListShowSystemApps") private var showSystemApps = false
+
     // Dev/testing convenience: launch straight into a given app on startup,
     // skipping the scroll-and-tap. Pass the UID as an iOS launch argument, e.g.
     //   xcrun simctl launch booted com.eka2l1.emulator -LaunchAppUID 0x2000023D
@@ -49,8 +53,31 @@ struct ContentView: View {
     @State private var showingAutoLaunch = false
     @State private var autoLaunchHandled = false
 
+    // App pending uninstall confirmation (set from the long-press context menu).
+    @State private var pendingUninstall: EKA2L1AppItem?
+
     private var currentDevice: EKA2L1DeviceItem? {
         devices.first { $0.index == currentIndex } ?? devices.first
+    }
+
+    // Drives the uninstall confirmation dialog off `pendingUninstall`.
+    private var uninstallDialogShown: Binding<Bool> {
+        Binding(get: { pendingUninstall != nil },
+                set: { if !$0 { pendingUninstall = nil } })
+    }
+
+    // Apps shown in the list, honouring the "show system apps" toggle.
+    private var visibleApps: [EKA2L1AppItem] {
+        showSystemApps ? apps : apps.filter { !$0.system }
+    }
+
+    // Hint shown when the visible list is empty. If system apps are hidden but
+    // some exist, point the user at the toggle instead of the install prompt.
+    private var emptyAppsHint: String {
+        if !showSystemApps && !apps.isEmpty {
+            return "No installed apps. Tap + to install a SIS / SISX package, or enable “Show System Apps”."
+        }
+        return "No apps yet. Tap + to install a SIS / SISX package."
     }
 
     var body: some View {
@@ -82,8 +109,31 @@ struct ContentView: View {
             .fileImporter(isPresented: $showingSisImporter,
                           allowedContentTypes: sisTypes,
                           allowsMultipleSelection: true) { handleSisImport($0) }
+            .confirmationDialog("Uninstall \(pendingUninstall?.name ?? "")?",
+                                isPresented: uninstallDialogShown,
+                                titleVisibility: .visible) {
+                if let app = pendingUninstall {
+                    Button("Uninstall", role: .destructive) { uninstall(app) }
+                }
+                Button("Cancel", role: .cancel) { pendingUninstall = nil }
+            } message: {
+                Text("This removes the package and its files from the device.")
+            }
         }
         .onAppear(perform: bootIfNeeded)
+    }
+
+    // Context-menu content for an app. Only user-installed apps can be removed;
+    // ROM/system apps get no menu items (the menu simply won't appear).
+    @ViewBuilder
+    private func uninstallMenu(for app: EKA2L1AppItem) -> some View {
+        if !app.system {
+            Button(role: .destructive) {
+                pendingUninstall = app
+            } label: {
+                Label("Uninstall", systemImage: "trash")
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -113,20 +163,21 @@ struct ContentView: View {
                     Text(banner).font(.caption).foregroundColor(.green)
                 }
 
-                Text("Apps (\(apps.count))")
+                Text("Apps (\(visibleApps.count))")
                     .font(.headline)
 
-                if apps.isEmpty {
-                    Text("No apps yet. Tap + to install a SIS / SISX package.")
+                if visibleApps.isEmpty {
+                    Text(emptyAppsHint)
                         .font(.caption).foregroundColor(.secondary)
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 16)],
                               spacing: 16) {
-                        ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
+                        ForEach(Array(visibleApps.enumerated()), id: \.offset) { _, app in
                             NavigationLink(destination: EmulatorView(uid: app.uid)) {
                                 AppGridCell(uid: app.uid, name: app.name)
                             }
                             .buttonStyle(.plain)
+                            .contextMenu { uninstallMenu(for: app) }
                         }
                     }
                 }
@@ -140,15 +191,16 @@ struct ContentView: View {
             if let banner {
                 Section { Text(banner).font(.caption).foregroundColor(.green) }
             }
-            Section("Apps (\(apps.count))") {
-                if apps.isEmpty {
-                    Text("No apps yet. Tap + to install a SIS / SISX package.")
+            Section("Apps (\(visibleApps.count))") {
+                if visibleApps.isEmpty {
+                    Text(emptyAppsHint)
                         .font(.caption).foregroundColor(.secondary)
                 }
-                ForEach(Array(apps.enumerated()), id: \.offset) { _, app in
+                ForEach(Array(visibleApps.enumerated()), id: \.offset) { _, app in
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
                         AppRow(uid: app.uid, name: app.name)
                     }
+                    .contextMenu { uninstallMenu(for: app) }
                 }
             }
         }
@@ -177,6 +229,16 @@ struct ContentView: View {
                             Label("Show as List", systemImage: "list.bullet")
                         } else {
                             Label("Show as Grid", systemImage: "square.grid.2x2")
+                        }
+                    }
+
+                    Button {
+                        showSystemApps.toggle()
+                    } label: {
+                        if showSystemApps {
+                            Label("Hide System Apps", systemImage: "eye.slash")
+                        } else {
+                            Label("Show System Apps", systemImage: "eye")
                         }
                     }
 
@@ -289,6 +351,13 @@ struct ContentView: View {
                 switching = false
             }
         }
+    }
+
+    private func uninstall(_ app: EKA2L1AppItem) {
+        pendingUninstall = nil
+        let ok = EKA2L1Bridge.shared.uninstallApp(uid: app.uid)
+        apps = EKA2L1Bridge.shared.rescanApps()
+        banner = ok ? "Uninstalled \(app.name)." : "Failed to uninstall \(app.name)."
     }
 
     private func handleSisImport(_ result: Result<[URL], Error>) {

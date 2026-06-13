@@ -15,6 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 @interface EKA2L1AppEntry : NSObject
 @property(nonatomic, assign) uint32_t uid;
 @property(nonatomic, copy) NSString *name;
+// YES for apps that ship in the device ROM (built-in system apps), NO for apps
+// the user installed from a SIS/SISX package. Lets the frontend default to
+// showing only user-installed apps.
+@property(nonatomic, assign) BOOL system;
 @end
 
 // An installed Symbian device (firmware). `index` matches device_manager's
@@ -101,6 +105,11 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // Install a SIS / SISX package onto the running device. Picks drive D for
 // S80 devices and drive E otherwise, mirroring the Android install path.
 - (BOOL)installSisAtPath:(NSString *)sisPath;
+
+// Uninstall a user-installed package by its app UID. Deletes the package's
+// files and registration; ROM/system apps cannot be uninstalled. Returns NO if
+// no matching installed package is found.
+- (BOOL)uninstallAppWithUID:(uint32_t)uid;
 
 // Render surface / lifecycle ----------------------------------------------
 // Frontend hands the EAGLView's CAEAGLLayer here. Called from
