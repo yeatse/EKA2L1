@@ -90,7 +90,7 @@ final class EKA2L1Bridge {
     // Set/clear the callback fired (on the main queue) when the running app's
     // process exits — used to close the emulator screen when the guest app
     // leaves via Exit soft key, panic, or normal termination.
-    func setAppExitHandler(_ handler: (() -> Void)?) {
+    func setAppExitHandler(_ handler: ((String?) -> Void)?) {
         emulator.appExitHandler = handler
     }
 

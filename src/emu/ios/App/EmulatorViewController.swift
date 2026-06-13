@@ -168,7 +168,7 @@ final class EmulatorViewController: UIViewController {
     private let uid: UInt32
     // Invoked when the guest app exits on its own (Exit soft key / panic /
     // normal termination) so the SwiftUI host can pop this screen.
-    var onAppExit: (() -> Void)?
+    var onAppExit: ((String?) -> Void)?
     private var launched = false
     private var gameView: EKA2L1RenderView {
         view as! EKA2L1RenderView
@@ -204,8 +204,8 @@ final class EmulatorViewController: UIViewController {
         // and re-launching would spawn a second guest instance.
         if gameView.surfaceReady, !launched {
             launched = true
-            EKA2L1Bridge.shared.setAppExitHandler { [weak self] in
-                self?.handleAppExited()
+            EKA2L1Bridge.shared.setAppExitHandler { [weak self] fatalDetails in
+                self?.handleAppExited(fatalDetails: fatalDetails)
             }
             _ = EKA2L1Bridge.shared.launchApp(uid: uid)
         }
@@ -217,8 +217,8 @@ final class EmulatorViewController: UIViewController {
     // by a SwiftUI NavigationStack (they read false), so viewWillDisappear can't
     // tell a pop from a transient disappear. Backgrounding is handled by
     // scenePhase.
-    private func handleAppExited() {
+    private func handleAppExited(fatalDetails: String?) {
         EKA2L1Bridge.shared.setAppExitHandler(nil)
-        onAppExit?()
+        onAppExit?(fatalDetails)
     }
 }

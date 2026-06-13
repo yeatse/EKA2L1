@@ -6,10 +6,17 @@ struct EmulatorView: View {
 
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
     @Environment(\.dismiss) private var dismiss
+    @State private var guestFatalDetails: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            EmulatorControllerView(uid: uid, onAppExit: { dismiss() })
+            EmulatorControllerView(uid: uid, onAppExit: { fatalDetails in
+                if let fatalDetails {
+                    guestFatalDetails = fatalDetails
+                } else {
+                    dismiss()
+                }
+            })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if showVirtualKeypad {
                 VirtualKeypad()
@@ -28,6 +35,21 @@ struct EmulatorView: View {
             // means "screen closed". No-op if the app already exited.
             EKA2L1Bridge.shared.setAppExitHandler(nil)
             EKA2L1Bridge.shared.closeRunningApp()
+        }
+        .alert("Guest fatal", isPresented: Binding(
+            get: { guestFatalDetails != nil },
+            set: { isPresented in
+                if !isPresented {
+                    guestFatalDetails = nil
+                }
+            }
+        )) {
+            Button("确定") {
+                guestFatalDetails = nil
+                dismiss()
+            }
+        } message: {
+            Text(guestFatalDetails ?? "")
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
@@ -54,7 +76,7 @@ struct EmulatorView: View {
 
 private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
-    let onAppExit: () -> Void
+    let onAppExit: (String?) -> Void
 
     func makeUIViewController(context: Context) -> EmulatorViewController {
         let controller = EmulatorViewController(uid: uid)

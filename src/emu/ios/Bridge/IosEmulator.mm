@@ -60,6 +60,7 @@
 #include <system/installation/rpkg.h>
 #include <system/software.h>
 #include <utils/apacmd.h>
+#include <utils/panic.h>
 #include <vfs/vfs.h>
 
 #include <lunasvg.h>
@@ -91,6 +92,43 @@ namespace eka2l1::ios {
 }
 
 namespace eka2l1::ios {
+    static NSString *guest_fatal_detail(kernel::process *pr) {
+        if (!pr) {
+            return nil;
+        }
+
+        const auto exit_type = pr->get_exit_type();
+        const std::int32_t reason = pr->get_exit_reason();
+        if (exit_type != kernel::entity_exit_type::panic
+            && !(exit_type == kernel::entity_exit_type::terminate && reason != 0)) {
+            return nil;
+        }
+
+        const std::string process_name = pr->raw_name();
+        const std::string category = common::ucs2_to_utf8(pr->get_exit_category());
+        const std::optional<std::string> description = epoc::get_panic_description(category, reason);
+
+        const char *exit_type_name = "unknown";
+        switch (exit_type) {
+            case kernel::entity_exit_type::panic: exit_type_name = "panic"; break;
+            case kernel::entity_exit_type::terminate: exit_type_name = "terminate"; break;
+            case kernel::entity_exit_type::kill: exit_type_name = "kill"; break;
+            case kernel::entity_exit_type::pending: exit_type_name = "pending"; break;
+        }
+
+        std::ostringstream detail;
+        detail << "Process: " << (process_name.empty() ? "<unknown>" : process_name) << "\n"
+               << "Exit type: " << exit_type_name << "\n"
+               << "Category: " << (category.empty() ? "<none>" : category) << "\n"
+               << "Reason: " << reason;
+        if (description && !description->empty()) {
+            detail << "\nDescription: " << *description;
+        }
+
+        const std::string message = detail.str();
+        return [NSString stringWithUTF8String:message.c_str()];
+    }
+
     // 3.6 icon decoder. Mirrors src/emu/android/.../launcher.cpp::get_app_icon
     // but writes the rendered RGBA buffer straight into a CFData → CGImage →
     // UIImage → PNG round-trip so SwiftUI can consume it as plain Data.
@@ -513,7 +551,8 @@ namespace eka2l1::ios {
 @interface EKA2L1Emulator ()
 // Main-queue bounce target for the launched process' exit logon. `generation`
 // identifies the launch the logon belonged to, so a stale re-fire is dropped.
-- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation;
+- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation
+                               fatalDetails:(nullable NSString *)fatalDetails;
 @end
 
 @implementation EKA2L1Emulator {
@@ -1074,9 +1113,11 @@ namespace eka2l1::ios {
     // against a stale logon from a superseded launch closing this screen.
     __weak EKA2L1Emulator *weakSelf = self;
     bool launched = alserv->launch_app(*reg, cmdline, &launched_thread_id,
-        [weakSelf, generation](eka2l1::kernel::process *) {
+        [weakSelf, generation](eka2l1::kernel::process *pr) {
+            NSString *fatalDetails = eka2l1::ios::guest_fatal_detail(pr);
             dispatch_async(dispatch_get_main_queue(), ^{
-                [weakSelf handleRunningAppExitedForGeneration:generation];
+                [weakSelf handleRunningAppExitedForGeneration:generation
+                                                 fatalDetails:fatalDetails];
             });
         });
     if (launched) {
@@ -1122,7 +1163,8 @@ namespace eka2l1::ios {
     return launched ? YES : NO;
 }
 
-- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation {
+- (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation
+                               fatalDetails:(NSString *)fatalDetails {
     // Ignore a logon that belongs to a superseded launch: a previous app's
     // callback can re-fire while its process is torn down during the next
     // launch's reboot, and must not close the screen that just opened.
@@ -1135,7 +1177,7 @@ namespace eka2l1::ios {
     _state->running_thread_id = 0;
     _state->needs_reboot_before_launch = true;
     if (self.appExitHandler) {
-        self.appExitHandler();
+        self.appExitHandler(fatalDetails);
     }
 }
 
