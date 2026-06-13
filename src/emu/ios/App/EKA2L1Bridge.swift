@@ -139,6 +139,10 @@ final class EKA2L1Bridge {
         emulator.testVibration()
     }
 
+    func renderedFrameCount() -> UInt64 {
+        emulator.renderedFrameCount()
+    }
+
     nonisolated static func iconPNGData(uid: UInt32, sizePx: UInt) -> Data? {
         EKA2L1Emulator.shared().iconPNGData(forUID: uid, sizePx: sizePx)
     }

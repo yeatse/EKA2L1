@@ -132,6 +132,7 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
 - (void)testVibration;
+- (uint64_t)renderedFrameCount;
 
 // 3.6: decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)
 // and return a square RGBA PNG sized `sizePx` per side. Returns nil if

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
+    @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
     @AppStorage("ios.orientation") private var orientation = "auto"
 
     @State private var audioMasterVolume = 100.0
@@ -35,6 +36,7 @@ struct SettingsView: View {
             }
             Section("Input") {
                 Toggle("Virtual keypad", isOn: $showVirtualKeypad)
+                Toggle("FPS overlay", isOn: $showFPSOverlay)
                 Button("Test vibration") {
                     EKA2L1Bridge.shared.testVibration()
                 }

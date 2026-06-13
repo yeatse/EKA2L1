@@ -359,6 +359,7 @@ namespace eka2l1::ios {
         std::mutex icon_mutex;
         std::vector<std::size_t> screen_redraw_handles;
         int present_status = 0;
+        std::atomic<std::uint64_t> rendered_frame_count{0};
 
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
@@ -509,6 +510,7 @@ namespace eka2l1::ios {
         builder.present(&state->present_status);
         eka2l1::drivers::command_list commands = builder.retrieve_command_list();
         state->graphics_driver->submit_command_list(commands);
+        state->rendered_frame_count.fetch_add(1, std::memory_order_relaxed);
     }
 
     static void install_required_rom_patches(emulator *state) {
@@ -962,6 +964,7 @@ namespace eka2l1::ios {
     std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
+    _state->rendered_frame_count.store(0, std::memory_order_relaxed);
 
     eka2l1::system_create_components comp;
     comp.audio_ = _state->audio_driver.get();
@@ -1404,6 +1407,13 @@ namespace eka2l1::ios {
     if (vibrator) {
         vibrator->vibrate(180, 70);
     }
+}
+
+- (uint64_t)renderedFrameCount {
+    if (!_state) {
+        return 0;
+    }
+    return _state->rendered_frame_count.load(std::memory_order_relaxed);
 }
 
 - (nullable NSData *)iconPNGDataForUID:(uint32_t)uid sizePx:(NSUInteger)sizePx {
