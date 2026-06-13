@@ -194,78 +194,219 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     }
 }
 
+// Symbian standard scan codes (see services/window/keys.h).
+private enum Scan {
+    static let leftSoft: UInt32 = 0xA4   // std_key_device_0
+    static let rightSoft: UInt32 = 0xA5  // std_key_device_1
+    static let select: UInt32 = 0xA7     // std_key_device_3
+    static let call: UInt32 = 0xB4       // std_key_application_0 (green send)
+    static let end: UInt32 = 0xB5        // std_key_application_1 (red hangup)
+    static let up: UInt32 = 0x10
+    static let down: UInt32 = 0x11
+    static let left: UInt32 = 0x0E
+    static let right: UInt32 = 0x0F
+    static let hash: UInt32 = 0x7F
+    static let star: UInt32 = 0x2A
+}
+
 private struct VirtualKeypad: View {
-    private let columns = Array(repeating: GridItem(.fixed(44), spacing: 8), count: 3)
+    private let columns = Array(repeating: GridItem(.fixed(48), spacing: 10), count: 3)
+
+    // Digit, letters under it (phone style), and the raw scan code.
+    private let digits: [(label: String, sub: String, scan: UInt32)] = [
+        ("1", "", 0x31), ("2", "ABC", 0x32), ("3", "DEF", 0x33),
+        ("4", "GHI", 0x34), ("5", "JKL", 0x35), ("6", "MNO", 0x36),
+        ("7", "PQRS", 0x37), ("8", "TUV", 0x38), ("9", "WXYZ", 0x39),
+        ("\u{2217}", "", Scan.star), ("0", "+", 0x30), ("#", "", Scan.hash)
+    ]
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 14) {
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    keyButton("LS", scan: 0xA4)
-                    keyButton("RS", scan: 0xA5)
-                }
-                HStack(spacing: 8) {
-                    Spacer().frame(width: 44)
-                    iconButton("chevron.up", scan: 0x10)
-                    Spacer().frame(width: 44)
-                }
-                HStack(spacing: 8) {
-                    iconButton("chevron.left", scan: 0x0e)
-                    iconButton("circle", scan: 0xA7)
-                    iconButton("chevron.right", scan: 0x0f)
-                }
-                HStack(spacing: 8) {
-                    Spacer().frame(width: 44)
-                    iconButton("chevron.down", scan: 0x11)
-                    Spacer().frame(width: 44)
-                }
-            }
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"], id: \.self) { label in
-                    keyButton(label, scan: scanCode(for: label))
-                }
-            }
+        HStack(alignment: .top, spacing: 16) {
+            navigationCluster
+            numericPad
         }
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+        )
     }
 
-    private func keyButton(_ label: String, scan: UInt32) -> some View {
-        Button {
-            EKA2L1Bridge.shared.tapRawKey(scan)
-        } label: {
-            Text(label)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .frame(width: 44, height: 36)
+    // MARK: Left side – soft keys, call / end, and the navigation pad.
+
+    private var navigationCluster: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                key(.text("LSK"), scan: Scan.leftSoft, kind: .soft)
+                key(.text("RSK"), scan: Scan.rightSoft, kind: .soft)
+            }
+            HStack(spacing: 10) {
+                key(.symbol("phone.fill"), scan: Scan.call, kind: .call)
+                key(.symbol("phone.down.fill"), scan: Scan.end, kind: .end)
+            }
+            dPad
         }
-        .buttonStyle(.bordered)
     }
 
-    private func iconButton(_ symbol: String, scan: UInt32) -> some View {
+    private var dPad: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [.white.opacity(0.16), .white.opacity(0.05)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
+                .overlay(Circle().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+                .frame(width: 130, height: 130)
+
+            arrow("chevron.up", scan: Scan.up).offset(y: -45)
+            arrow("chevron.down", scan: Scan.down).offset(y: 45)
+            arrow("chevron.left", scan: Scan.left).offset(x: -45)
+            arrow("chevron.right", scan: Scan.right).offset(x: 45)
+
+            Button {
+                tap(Scan.select)
+            } label: {
+                Text("OK")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(width: 54, height: 54)
+                    .background(
+                        Circle().fill(
+                            LinearGradient(
+                                colors: [.white.opacity(0.28), .white.opacity(0.12)],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                    )
+                    .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+            }
+            .buttonStyle(PressableStyle())
+        }
+        .frame(width: 130, height: 130)
+    }
+
+    private func arrow(_ symbol: String, scan: UInt32) -> some View {
         Button {
-            EKA2L1Bridge.shared.tapRawKey(scan)
+            tap(scan)
         } label: {
             Image(systemName: symbol)
-                .frame(width: 44, height: 36)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 38, height: 38)
+                .contentShape(Circle())
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(PressableStyle())
     }
 
-    private func scanCode(for label: String) -> UInt32 {
-        switch label {
-        case "1": return 0x31
-        case "2": return 0x32
-        case "3": return 0x33
-        case "4": return 0x34
-        case "5": return 0x35
-        case "6": return 0x36
-        case "7": return 0x37
-        case "8": return 0x38
-        case "9": return 0x39
-        case "0": return 0x30
-        case "*": return 0x2a
-        case "#": return 0x7f
-        default: return 0
+    // MARK: Right side – numeric pad.
+
+    private var numericPad: some View {
+        // Row height tuned so 4 rows + 3 gaps == the left cluster's height
+        // (soft row + call row + d-pad), keeping both columns top/bottom aligned.
+        LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(digits, id: \.label) { digit in
+                Button {
+                    tap(digit.scan)
+                } label: {
+                    VStack(spacing: 1) {
+                        Text(digit.label)
+                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                        if !digit.sub.isEmpty {
+                            Text(digit.sub)
+                                .font(.system(size: 7, weight: .semibold))
+                                .tracking(0.5)
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                    }
+                    .frame(width: 48, height: 49)
+                }
+                .buttonStyle(KeyStyle(kind: .digit))
+            }
         }
+    }
+
+    private enum KeyLabel {
+        case text(String)
+        case symbol(String)
+    }
+
+    private func key(_ label: KeyLabel, scan: UInt32, kind: KeyKind) -> some View {
+        Button {
+            tap(scan)
+        } label: {
+            Group {
+                switch label {
+                case .text(let value):
+                    Text(value).font(.system(size: 13, weight: .semibold, design: .rounded))
+                case .symbol(let value):
+                    Image(systemName: value).font(.system(size: 16, weight: .semibold))
+                }
+            }
+            .frame(width: 58, height: 38)
+        }
+        .buttonStyle(KeyStyle(kind: kind))
+    }
+
+    private func tap(_ scan: UInt32) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        EKA2L1Bridge.shared.tapRawKey(scan)
+    }
+}
+
+private enum KeyKind {
+    case digit, soft, call, end
+}
+
+private struct KeyStyle: ButtonStyle {
+    let kind: KeyKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(foreground)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(background(pressed: configuration.isPressed))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(.white.opacity(kind == .digit || kind == .soft ? 0.12 : 0.0), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.93 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+
+    private var foreground: Color {
+        switch kind {
+        case .digit, .soft: return .white
+        case .call, .end: return .white
+        }
+    }
+
+    private func background(pressed: Bool) -> Color {
+        switch kind {
+        case .digit:
+            return .white.opacity(pressed ? 0.24 : 0.10)
+        case .soft:
+            return .white.opacity(pressed ? 0.26 : 0.13)
+        case .call:
+            return Color.green.opacity(pressed ? 0.7 : 0.9)
+        case .end:
+            return Color.red.opacity(pressed ? 0.7 : 0.9)
+        }
+    }
+}
+
+private struct PressableStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.85 : 1)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
