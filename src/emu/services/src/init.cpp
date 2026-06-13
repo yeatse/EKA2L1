@@ -243,7 +243,7 @@ namespace eka2l1 {
             CREATE_SERVER(sys, keysound_server);
 
             CREATE_SERVER(sys, eikappui_server);
-            //CREATE_SERVER(sys, akn_icon_server);
+            CREATE_SERVER(sys, akn_icon_server);
             CREATE_SERVER(sys, akn_skin_server);
 
             CREATE_SERVER(sys, system_agent_server);
