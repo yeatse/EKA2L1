@@ -165,7 +165,8 @@ private struct FPSOverlay: View {
             .onReceive(timer) { now in
                 let frameCount = EKA2L1Bridge.shared.renderedFrameCount()
                 let elapsed = max(now.timeIntervalSince(previousTimestamp), 0.001)
-                fps = Int((Double(frameCount - previousFrameCount) / elapsed).rounded())
+                let renderedFrames = frameCount >= previousFrameCount ? frameCount - previousFrameCount : 0
+                fps = Int((Double(renderedFrames) / elapsed).rounded())
                 previousFrameCount = frameCount
                 previousTimestamp = now
             }

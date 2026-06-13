@@ -211,6 +211,11 @@ final class EmulatorViewController: UIViewController {
         }
     }
 
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        EKA2L1Bridge.shared.detachLayer()
+    }
+
     // Closing the screen (and killing the app) is detected at the SwiftUI level
     // in EmulatorView's .onDisappear: UIKit's isMovingFromParent /
     // isBeingDismissed are unreliable for a UIViewControllerRepresentable popped

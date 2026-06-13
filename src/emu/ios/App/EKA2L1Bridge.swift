@@ -107,6 +107,10 @@ final class EKA2L1Bridge {
         emulator.attach(layer: layer, pixelSize: pixelSize, scale: scale)
     }
 
+    func detachLayer() {
+        emulator.detachLayer()
+    }
+
     func pause() {
         emulator.pause()
     }

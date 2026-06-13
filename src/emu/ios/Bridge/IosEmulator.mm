@@ -1188,10 +1188,6 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return;
     }
-    auto *kern = _state->symsys->get_kernel_system();
-    if (!kern) {
-        return;
-    }
     const eka2l1::kernel::uid tid = _state->running_thread_id;
     if (tid == 0) {
         return;
@@ -1200,9 +1196,21 @@ namespace eka2l1::ios {
     // The killed app leaves the session dirty; rebuild before the next launch.
     _state->needs_reboot_before_launch = true;
 
-    // Kill the process from outside the loop thread under the kernel lock, the
-    // same guard launch uses to mutate kernel state. The process logon still
-    // fires (handleRunningAppExited); callers tearing down the screen clear
+    // Stop and drain the OS loop before killing the guest process. Otherwise
+    // the loop thread can still be executing this process in HLE/active
+    // scheduler code while the UI thread tears it down.
+    _state->mounted = false;
+    break_core_idling(_state.get());
+    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+
+    auto *kern = _state->symsys->get_kernel_system();
+    if (!kern) {
+        return;
+    }
+
+    // Kill the process under the kernel lock, the same guard launch uses to
+    // mutate kernel state. The process logon still fires
+    // (handleRunningAppExited); callers tearing down the screen clear
     // appExitHandler first so that bounce is a no-op.
     kern->lock();
     auto *thr = kern->get_by_id<eka2l1::kernel::thread>(tid);
@@ -1249,6 +1257,21 @@ namespace eka2l1::ios {
             static_cast<int>(pixelSize.width),
             static_cast<int>(pixelSize.height),
             static_cast<float>(scale));
+    }
+}
+
+- (void)detachLayer {
+    if (!_state) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lk(_state->layer_mutex);
+        _state->pending_layer = nullptr;
+        _state->layer_dirty = true;
+        _state->layer_cv.notify_all();
+    }
+    if (_state->window && _state->graphics_driver) {
+        _state->window->surface_changed(nullptr, 0, 0, 0.0f);
     }
 }
 
