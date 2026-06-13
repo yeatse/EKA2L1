@@ -1614,7 +1614,7 @@ namespace eka2l1::epoc {
         return true;
     }
 
-    bool bitmap_backed_canvas::execute_command(service::ipc_context &ctx, ws_cmd &cmd) {        
+    bool bitmap_backed_canvas::execute_command(service::ipc_context &ctx, ws_cmd &cmd) {
         // LOG_TRACE(SERVICE_WINDOW, "Backed up canvas opcode {}", cmd.header.op);
 
         bool did_it = false;
@@ -1640,8 +1640,17 @@ namespace eka2l1::epoc {
             ctx.complete(epoc::error_none);
             break;
 
+        case EWsWinOpEnableBackup:
+            // This window is already a bitmap-backed (backup) canvas, so enabling
+            // backup is a no-op. Just acknowledge it.
+            ctx.complete(epoc::error_none);
+            break;
+
         default:
             LOG_ERROR(SERVICE_WINDOW, "Unimplemented bitmap backed canavas opcode 0x{:X}!", cmd.header.op);
+            // Still complete the synchronous request: leaving it dangling blocks
+            // the guest's SendReceive forever and deadlocks the whole UI.
+            ctx.complete(epoc::error_none);
             break;
         }
 

@@ -46,7 +46,8 @@ namespace eka2l1 {
         feature_id_chinese = 1096,
         feature_id_flash_lite_viewer = 1145,
         feature_id_pen_calibration = 1658,
-        feature_id_tactile_feedback = 1718
+        feature_id_tactile_feedback = 1718,
+        feature_id_app_menu_show_images = 1012
     };
 
     void featmgr_server::do_feature_scanning(system *sys) {
@@ -60,6 +61,13 @@ namespace eka2l1 {
         enable_features.push_back(feature_id_pen);
         enable_features.push_back(feature_id_vibra);
         enable_features.push_back(feature_id_pen_calibration);
+
+        // AVKON app menus query this to decide whether menu items can show images.
+        // Most ROM featreg.cfg files are near-empty, so EKA2L1 default-denies it; the
+        // Calculator's DynInitMenuPaneL then deletes image menu items and panics
+        // (EIKCOCTL 8) / fails to build the Options menu. Real devices treat it as
+        // supported. (Ref: same Calculator-LSK issue diagnosed on the wasm build.)
+        enable_features.push_back(feature_id_app_menu_show_images);
 
         // 2. Are we welcoming SVG? Check for OpenVG, cause it should be there if this feature is available
         if (sys->get_io_system()->exist(u"z:\\sys\\bin\\libopenvg.dll")) {
