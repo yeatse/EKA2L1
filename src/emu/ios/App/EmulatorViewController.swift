@@ -45,13 +45,29 @@ private final class EKA2L1RenderView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        let scale = contentScaleFactor
+        let scale = renderScale
         eaglLayer.contentsScale = scale
         let pixels = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         guard pixels.width > 0, pixels.height > 0 else { return }
 
         EKA2L1Bridge.shared.attach(layer: eaglLayer, pixelSize: pixels, scale: scale)
         surfaceReady = true
+    }
+
+    /// Backing-store scale for the GL surface. On a real device this is the
+    /// native screen scale and the GPU does the present blit for free. The
+    /// iOS Simulator has no GPU-backed GLES — every present blit is rasterized
+    /// in software on the host CPU, and its cost grows with the pixel count.
+    /// Since the guest screen is tiny (e.g. 240x320) and the present is just an
+    /// upscale, rendering it at full native Retina only burns host CPU on
+    /// interpolated pixels with no added detail. Cap the simulator surface so
+    /// the software blit stops being the frame bottleneck.
+    private var renderScale: CGFloat {
+        #if targetEnvironment(simulator)
+        return min(contentScaleFactor, 1.5)
+        #else
+        return contentScaleFactor
+        #endif
     }
 
     private func pointerPhase(for touch: UITouch) -> EKA2L1PointerPhase {
@@ -74,7 +90,9 @@ private final class EKA2L1RenderView: UIView {
     }
 
     private func dispatchTouches(_ touches: Set<UITouch>) {
-        let scale = contentScaleFactor
+        // Must match the surface scale used in layoutSubviews so guest pointer
+        // coordinates line up with the (possibly downscaled) render surface.
+        let scale = renderScale
         for touch in touches {
             let point = touch.location(in: self)
             EKA2L1Bridge.shared.submitPointer(
