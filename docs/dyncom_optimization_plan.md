@@ -259,12 +259,34 @@ untouched. **Verified** by the harness (600k data-proc + load/store cases incl.
 memory diff, PASS) + `ios_regression_test.sh` 8/8; Snakes profile shows
 ReadMemory32 self-time ~161→~7, WriteMemory32 ~112→~2 (call overhead gone).
 
-Remaining harness-gated wins, in order of risk: **shifter-operand
-specialization** (precompute the immediate operand / inline common shifts to drop
-the `shtop_func` indirect call — moderate, carry-flag-sensitive, fully covered by
-the Phase-3 shifter golden) and **lazy condition flags** (highest reward, highest
-risk; needs the edge corpus + careful S-bit/MSR/SPSR coverage). Fusion still needs
-Phase 4 (instruction-stream self-A/B).
+### Shifter-operand specialization — tried, measured neutral, REVERTED
+Inlined the common shifter forms (immediate/register/LSL-imm/LSR-imm) into a
+`compute_shifter_operand` dispatcher to drop the `shtop_func` indirect call.
+Harness-verified correct (800k cases, all shifter forms). But the compiler kept
+`compute_shifter_operand` out-of-line (~11% of the thread, ~430 samples), so it
+just swapped an indirect call for a direct call + a pointer-compare chain (and a
+fallback indirect call for the rarer register-specified shifts) — Snakes FPS
+stayed within noise (33–35 vs a 34 baseline). The shifter dispatch is inherently
+data-dependent and the shift computation is cheap, so there's no win without a
+broad translate-time precompute / cream-tag refactor whose payoff doesn't justify
+it. Reverted.
+
+### Lazy condition flags — NOT pursued (data shows it regresses dyncom)
+Profiled the flag mechanism: `CondPassed` (flag **reads**, via ARM predication) is
+~2% of the thread, while the flag **writes** (`UPDATE_NFLAG`/`UPDATE_ZFLAG`,
+carry/overflow from the inlined `AddWithCarry`) cost ~0 measurable — flags are
+already denormalised (`NFlag/ZFlag/CFlag/VFlag` as separate u32 "for speed"), so
+writes are cheap and inlined. Lazy/deferred NZCV (QEMU `cc_op` style) helps when
+reads are rare (x86: only branches read flags); on ARM, widespread predication
+reads flags constantly, so deferring would make the ~2% read path *more*
+expensive while saving ~0 on the already-cheap writes — a net regression. Not
+worth the large, invasive, correctness-sensitive change.
+
+**Conclusion:** the interpreter-internal wins are exhausted. The remaining
+dispatch-share lever is **instruction fusion** (needs Phase 4 stream self-A/B),
+and the only structural multiplier (JIT) is off-limits on iOS. The landed wins —
+ASID instruction cache, simulator render-scale cap, ReadCode-via-TLB, inlined
+AddWithCarry, block-L1, and the inline memory fast-path — stand.
 
 - **Design: self-A/B (no external dependency).** For an optimization that should
   be behaviour-preserving, the reference is the *same* dyncom with the
