@@ -358,7 +358,12 @@ namespace eka2l1::ios {
 
         std::mutex icon_mutex;
         std::vector<std::size_t> screen_redraw_handles;
-        int present_status = 0;
+        // Double-buffered present fences. Each frame uses one slot and only
+        // blocks on the slot it reused two frames ago, so the guest CPU can run
+        // one frame ahead while the graphics thread is still doing the (vsync-
+        // gated) swap of the previous frame instead of serialising against it.
+        int present_status[2] = { 0, 0 };
+        int present_slot = 0;
         std::atomic<std::uint64_t> rendered_frame_count{0};
 
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
@@ -438,12 +443,14 @@ namespace eka2l1::ios {
             return;
         }
 
-        // Same semantics as the Qt / Android frontends: wait_for blocks
-        // while present_status == -100 (in-flight) and returns immediately
-        // once the driver thread has called finish(). Initial 0 also
-        // returns immediately. Only set -100 right before submitting the
-        // next present.
-        state->graphics_driver->wait_for(&state->present_status);
+        // wait_for blocks while the slot is -100 (in-flight) and returns
+        // immediately once the driver thread has called finish() (or for the
+        // initial 0). With two ping-ponging slots this blocks on the present
+        // from two frames ago, so at most two frames are ever in flight: the
+        // guest computes the next frame while the graphics thread does the
+        // (synchronous, vsync-gated) swap of the previous one.
+        const int slot = state->present_slot;
+        state->graphics_driver->wait_for(&state->present_status[slot]);
 
         eka2l1::drivers::graphics_command_builder builder;
         const eka2l1::vec2 swapchain_size = state->window->window_fb_size();
@@ -506,10 +513,11 @@ namespace eka2l1::ios {
             static_cast<float>(scr->ui_rotation), flags);
 
         builder.load_backup_state();
-        state->present_status = -100;
-        builder.present(&state->present_status);
+        state->present_status[slot] = -100;
+        builder.present(&state->present_status[slot]);
         eka2l1::drivers::command_list commands = builder.retrieve_command_list();
         state->graphics_driver->submit_command_list(commands);
+        state->present_slot ^= 1;
         state->rendered_frame_count.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -965,6 +973,12 @@ namespace eka2l1::ios {
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
     _state->rendered_frame_count.store(0, std::memory_order_relaxed);
+    // Drop any present fences left in-flight by the previous session so the
+    // first frame of the new one doesn't block waiting on a finish() that the
+    // torn-down graphics driver will never deliver.
+    _state->present_status[0] = 0;
+    _state->present_status[1] = 0;
+    _state->present_slot = 0;
 
     eka2l1::system_create_components comp;
     comp.audio_ = _state->audio_driver.get();
