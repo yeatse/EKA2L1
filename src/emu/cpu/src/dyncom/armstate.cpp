@@ -190,12 +190,7 @@ void ARMul_State::RaiseSystemCall(std::uint32_t val) {
     core->system_call_handler(val);
 }
 
-std::uint8_t ARMul_State::ReadMemory8(std::uint32_t address) const {
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint8_t *ptr = cache->lookup(address)) {
-        return *ptr;
-    }
-
+std::uint8_t ARMul_State::ReadMemory8Slow(std::uint32_t address) const {
     std::uint8_t value = 0;
     bool result = core->read_8bit(address, &value);
 
@@ -212,12 +207,7 @@ std::uint8_t ARMul_State::ReadMemory8(std::uint32_t address) const {
     return value;
 }
 
-std::uint16_t ARMul_State::ReadMemory16(std::uint32_t address) const {
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(cache->lookup(address))) {
-        return *ptr;
-    }
-
+std::uint16_t ARMul_State::ReadMemory16Slow(std::uint32_t address) const {
     std::uint16_t value = 0;
     bool result = core->read_16bit(address, &value);
 
@@ -237,12 +227,7 @@ std::uint16_t ARMul_State::ReadMemory16(std::uint32_t address) const {
     return value;
 }
 
-std::uint32_t ARMul_State::ReadMemory32(std::uint32_t address) const {
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(cache->lookup(address))) {
-        return *ptr;
-    }
-
+std::uint32_t ARMul_State::ReadMemory32Slow(std::uint32_t address) const {
     std::uint32_t value = 0;
     bool result = core->read_32bit(address, &value);
 
@@ -288,12 +273,7 @@ std::uint32_t ARMul_State::ReadCode(std::uint32_t address) const {
     return value;
 }
 
-std::uint64_t ARMul_State::ReadMemory64(std::uint32_t address) const {
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint64_t *ptr = reinterpret_cast<std::uint64_t *>(cache->lookup(address))) {
-        return *ptr;
-    }
-
+std::uint64_t ARMul_State::ReadMemory64Slow(std::uint32_t address) const {
     std::uint64_t value = 0;
     bool result = core->read_64bit(address, &value);
 
@@ -313,13 +293,7 @@ std::uint64_t ARMul_State::ReadMemory64(std::uint32_t address) const {
     return value;
 }
 
-void ARMul_State::WriteMemory8(std::uint32_t address, std::uint8_t data) {
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint8_t *ptr = cache->lookup(address)) {
-        *ptr = data;
-        return;
-    }
-
+void ARMul_State::WriteMemory8Slow(std::uint32_t address, std::uint8_t data) {
     bool result = core->write_8bit(address, &data);
 
     if (!result) {
@@ -333,16 +307,7 @@ void ARMul_State::WriteMemory8(std::uint32_t address, std::uint8_t data) {
     }
 }
 
-void ARMul_State::WriteMemory16(std::uint32_t address, std::uint16_t data) {
-    if (InBigEndianMode())
-        data = eka2l1::common::byte_swap(data);
-
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(cache->lookup(address))) {
-        *ptr = data;
-        return;
-    }
-
+void ARMul_State::WriteMemory16Slow(std::uint32_t address, std::uint16_t data) {
     bool result = core->write_16bit(address, &data);
 
     if (!result) {
@@ -356,16 +321,7 @@ void ARMul_State::WriteMemory16(std::uint32_t address, std::uint16_t data) {
     }
 }
 
-void ARMul_State::WriteMemory32(std::uint32_t address, std::uint32_t data) {
-    if (InBigEndianMode())
-        data = eka2l1::common::byte_swap(data);
-
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(cache->lookup(address))) {
-        *ptr = data;
-        return;
-    }
-
+void ARMul_State::WriteMemory32Slow(std::uint32_t address, std::uint32_t data) {
     bool result = core->write_32bit(address, &data);
 
     if (!result) {
@@ -379,16 +335,7 @@ void ARMul_State::WriteMemory32(std::uint32_t address, std::uint32_t data) {
     }
 }
 
-void ARMul_State::WriteMemory64(std::uint32_t address, std::uint64_t data) {
-    if (InBigEndianMode())
-        data = eka2l1::common::byte_swap(data);
-
-    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
-    if (std::uint64_t *ptr = reinterpret_cast<std::uint64_t *>(cache->lookup(address))) {
-        *ptr = data;
-        return;
-    }
-
+void ARMul_State::WriteMemory64Slow(std::uint32_t address, std::uint64_t data) {
     bool result = core->write_64bit(address, &data);
 
     if (!result) {

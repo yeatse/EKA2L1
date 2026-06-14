@@ -18,9 +18,11 @@
 #pragma once
 
 #include <array>
+#include <common/bytes.h>
 #include <common/types.h>
 #include <unordered_map>
 
+#include <cpu/12l1r/tlb.h>
 #include <cpu/dyncom/arm_regformat.h>
 
 namespace eka2l1::arm {
@@ -157,15 +159,79 @@ public:
 
     // Reads/writes data in big/little endian format based on the
     // state of the E (endian) bit in the APSR.
-    std::uint8_t ReadMemory8(std::uint32_t address) const;
-    std::uint16_t ReadMemory16(std::uint32_t address) const;
-    std::uint32_t ReadMemory32(std::uint32_t address) const;
-    std::uint64_t ReadMemory64(std::uint32_t address) const;
+    // The common case (the address is in the dyncom TLB) is inlined here so the
+    // load/store handlers pay no call overhead; a miss falls through to the
+    // out-of-line slow path (page-table walk, fault handling, big-endian,
+    // logging). mem_cache_ is the same TLB as core->mem_cache(), cached so this
+    // header needn't see the full dyncom_core. Read fast paths return the raw
+    // little-endian value (matching the previous TLB-hit behaviour); writes swap
+    // first so the stored bytes match.
+    std::uint8_t ReadMemory8(std::uint32_t address) const {
+        if (std::uint8_t *ptr = mem_cache_->lookup(address))
+            return *ptr;
+        return ReadMemory8Slow(address);
+    }
+    std::uint16_t ReadMemory16(std::uint32_t address) const {
+        if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(mem_cache_->lookup(address)))
+            return *ptr;
+        return ReadMemory16Slow(address);
+    }
+    std::uint32_t ReadMemory32(std::uint32_t address) const {
+        if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(mem_cache_->lookup(address)))
+            return *ptr;
+        return ReadMemory32Slow(address);
+    }
+    std::uint64_t ReadMemory64(std::uint32_t address) const {
+        if (std::uint64_t *ptr = reinterpret_cast<std::uint64_t *>(mem_cache_->lookup(address)))
+            return *ptr;
+        return ReadMemory64Slow(address);
+    }
     std::uint32_t ReadCode(std::uint32_t address) const;
-    void WriteMemory8(std::uint32_t address, std::uint8_t data);
-    void WriteMemory16(std::uint32_t address, std::uint16_t data);
-    void WriteMemory32(std::uint32_t address, std::uint32_t data);
-    void WriteMemory64(std::uint32_t address, std::uint64_t data);
+    void WriteMemory8(std::uint32_t address, std::uint8_t data) {
+        if (std::uint8_t *ptr = mem_cache_->lookup(address)) {
+            *ptr = data;
+            return;
+        }
+        WriteMemory8Slow(address, data);
+    }
+    void WriteMemory16(std::uint32_t address, std::uint16_t data) {
+        if (InBigEndianMode())
+            data = eka2l1::common::byte_swap(data);
+        if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(mem_cache_->lookup(address))) {
+            *ptr = data;
+            return;
+        }
+        WriteMemory16Slow(address, data);
+    }
+    void WriteMemory32(std::uint32_t address, std::uint32_t data) {
+        if (InBigEndianMode())
+            data = eka2l1::common::byte_swap(data);
+        if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(mem_cache_->lookup(address))) {
+            *ptr = data;
+            return;
+        }
+        WriteMemory32Slow(address, data);
+    }
+    void WriteMemory64(std::uint32_t address, std::uint64_t data) {
+        if (InBigEndianMode())
+            data = eka2l1::common::byte_swap(data);
+        if (std::uint64_t *ptr = reinterpret_cast<std::uint64_t *>(mem_cache_->lookup(address))) {
+            *ptr = data;
+            return;
+        }
+        WriteMemory64Slow(address, data);
+    }
+
+    // Slow paths (TLB miss): out-of-line in armstate.cpp. Reads apply the
+    // big-endian swap themselves; writes receive data already swapped.
+    std::uint8_t ReadMemory8Slow(std::uint32_t address) const;
+    std::uint16_t ReadMemory16Slow(std::uint32_t address) const;
+    std::uint32_t ReadMemory32Slow(std::uint32_t address) const;
+    std::uint64_t ReadMemory64Slow(std::uint32_t address) const;
+    void WriteMemory8Slow(std::uint32_t address, std::uint8_t data);
+    void WriteMemory16Slow(std::uint32_t address, std::uint16_t data);
+    void WriteMemory32Slow(std::uint32_t address, std::uint32_t data);
+    void WriteMemory64Slow(std::uint32_t address, std::uint64_t data);
 
     void RaiseException(const int type, const std::uint32_t data);
     void RaiseSystemCall(std::uint32_t val);
@@ -237,6 +303,11 @@ public:
     unsigned NtransSig;
     unsigned bigendSig;
     unsigned syscallSig;
+
+    // Data TLB shared with the owning dyncom_core (== core->mem_cache()), cached
+    // here so the inline memory accessors above don't need the full dyncom_core
+    // definition. Set by dyncom_core right after construction.
+    eka2l1::arm::r12l1::tlb *mem_cache_ = nullptr;
 
     char trans_cache_buf[TRANS_CACHE_SIZE];
     size_t trans_cache_buf_top = 0;
