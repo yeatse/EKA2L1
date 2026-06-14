@@ -147,3 +147,22 @@ is the product, so squeeze dispatch (Stages 2 + 5) hardest.
 1 → 3a (quick, safe, bankable) → 2 block chaining → 5 instruction fusion (the two
 dispatch-share wins, with the test harness in place) → 4 shifter specialization
 (if still short).
+
+## Status (2026-06-14)
+Landed and committed: **Stage 1a** (ReadCode via TLB), **Stage 3a** (inline
+AddWithCarry), **Stage 2** (direct-mapped L1 in front of the block map). Snakes
+gameplay went from a steady ~30-32 to a steady ~34 FPS; regression 8/8 throughout.
+ReadCode self-time dropped ~90→~22 and AddWithCarry left the profile; the block-L1
+gain was within noise (the per-block lookup was already amortised) but is correct
+and not harmful.
+
+**Stage 5 (instruction fusion) deliberately not done.** Assessment: it only
+removes per-pair *dispatch* overhead (not the CMP/branch execution), so ~3-5%;
+retrofitting look-ahead matching into dyncom's one-instruction-at-a-time
+translation pipeline + a synthesized dispatch-table entry is invasive and
+correctness is only verifiable here via the regression script (no interpreter
+differential harness). Risk/reward judged unfavourable — banked stages 1-3
+instead. If revisited, build a differential interpreter test harness first
+(Stage 5 verification note above). **Stage 4 (shifter specialization)** likewise
+deferred. No JIT (iOS W^X) — the interpreter is the product, so further gains
+need the fusion/specialization work behind a proper test harness.
