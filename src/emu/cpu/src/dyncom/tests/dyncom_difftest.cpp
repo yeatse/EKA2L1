@@ -374,6 +374,90 @@ cpu_state gen_state(rng &r) {
 }
 
 // ---------------------------------------------------------------------------
+// Load/store (single data transfer: LDR/STR/LDRB/STRB, immediate offset)
+// ---------------------------------------------------------------------------
+constexpr std::uint32_t LS_DATA_LO = 0x1000;       // data window (one page)
+constexpr std::uint32_t LS_DATA_HI = 0x2000;
+constexpr std::uint32_t LS_DATA_BASE = 0x1800;     // base register points here
+
+// Generate a single-data-transfer instruction whose base register is pointed
+// into the data window so the access always lands in mapped memory. Word
+// accesses keep an aligned offset (unaligned word rotation belongs in a later
+// edge corpus). Returns the encoding; sets init.reg[Rn] = base.
+std::uint32_t gen_load_store(rng &r, cpu_state &init) {
+    const std::uint32_t cond = (r.range(4) == 0) ? r.range(14) : 0xE;
+    const std::uint32_t P = r.flip() ? 1 : 0;
+    const std::uint32_t U = r.flip() ? 1 : 0;
+    const std::uint32_t B = r.flip() ? 1 : 0;            // 1 = byte, 0 = word
+    const std::uint32_t W = (P == 1) ? (r.flip() ? 1 : 0) : 0; // post-index: no W (would be LDRT)
+    const std::uint32_t L = r.flip() ? 1 : 0;            // 1 = load, 0 = store
+
+    const std::uint32_t rn = r.range(15);                // base, never PC
+    std::uint32_t rd = r.range(15);
+    while (rd == rn) {
+        rd = r.range(15);                                // base==dest writeback is unpredictable
+    }
+
+    std::uint32_t offset = r.range(0x100);               // small, stays in window
+    if (B == 0) {
+        offset &= ~0x3u;                                 // word: aligned
+    }
+
+    init.reg[rn] = LS_DATA_BASE;
+
+    return (cond << 28) | (0x1u << 26) | (0u << 25) | (P << 24) | (U << 23) | (B << 22) | (W << 21) | (L << 20) | (rn << 16) | (rd << 12) | offset;
+}
+
+// Golden model for single data transfer, operating on a memory image.
+cpu_state golden_load_store(std::uint32_t inst, const cpu_state &in, std::uint8_t *mem) {
+    cpu_state out = in;
+    out.reg[15] = in.reg[15] + 4;
+
+    const std::uint32_t cond = inst >> 28;
+    if (!cond_passed(cond, in.cpsr)) {
+        return out;
+    }
+
+    const std::uint32_t P = (inst >> 24) & 1;
+    const std::uint32_t U = (inst >> 23) & 1;
+    const std::uint32_t B = (inst >> 22) & 1;
+    const std::uint32_t W = (inst >> 21) & 1;
+    const std::uint32_t L = (inst >> 20) & 1;
+    const std::uint32_t rn = (inst >> 16) & 0xF;
+    const std::uint32_t rd = (inst >> 12) & 0xF;
+    const std::uint32_t offset = inst & 0xFFF;
+
+    const std::uint32_t base = in.reg[rn];
+    const std::uint32_t off_applied = U ? (base + offset) : (base - offset);
+    const std::uint32_t addr = P ? off_applied : base;
+
+    if (L) {
+        std::uint32_t val;
+        if (B) {
+            val = mem[addr];
+        } else {
+            std::memcpy(&val, mem + addr, 4);
+        }
+        out.reg[rd] = val;
+    } else {
+        if (B) {
+            mem[addr] = static_cast<std::uint8_t>(in.reg[rd]);
+        } else {
+            std::uint32_t v = in.reg[rd];
+            std::memcpy(mem + addr, &v, 4);
+        }
+    }
+
+    if (!P) {
+        out.reg[rn] = off_applied; // post-indexed always writes back
+    } else if (W) {
+        out.reg[rn] = off_applied; // pre-indexed with W
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
 void dump_state(const char *tag, const cpu_state &s) {
@@ -400,24 +484,38 @@ int main(int argc, char **argv) {
     if (argc > 1) base_seed = static_cast<std::uint32_t>(std::strtoul(argv[1], nullptr, 0));
     if (argc > 2) count = static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0));
 
-    std::printf("dyncom_difftest: data-processing, %u cases from seed %u\n", count, base_seed);
+    std::printf("dyncom_difftest: data-processing + load/store, %u cases from seed %u\n", count, base_seed);
 
     diff_env env_a, env_b;
     auto core_a = make_core(env_a);
     auto core_b = make_core(env_b);
+    std::vector<std::uint8_t> golden_mem(MEM_SIZE, 0);
 
     std::uint32_t failures = 0;
+    auto window_eq = [](const std::vector<std::uint8_t> &x, const std::vector<std::uint8_t> &y) {
+        return std::memcmp(x.data() + LS_DATA_LO, y.data() + LS_DATA_LO, LS_DATA_HI - LS_DATA_LO) == 0;
+    };
 
     for (std::uint32_t i = 0; i < count; i++) {
         const std::uint32_t seed = base_seed + i;
         rng r(seed);
 
-        const std::uint32_t inst = gen_data_processing(r);
-        const cpu_state init = gen_state(r);
+        cpu_state init = gen_state(r);
+        const bool is_ls = (r.range(3) == 0); // ~1/3 load/store, ~2/3 data-processing
+        const std::uint32_t inst = is_ls ? gen_load_store(r, init) : gen_data_processing(r);
 
-        // Place the instruction (+ a NOP-ish guard) at PC 0 in both envs.
+        // Place the instruction at PC 0 in both envs and seed the data window
+        // identically in A, B and the golden image (only for load/store cases).
         std::memcpy(env_a.mem.data(), &inst, 4);
         std::memcpy(env_b.mem.data(), &inst, 4);
+        if (is_ls) {
+            for (std::uint32_t a = LS_DATA_LO; a < LS_DATA_HI; a += 4) {
+                const std::uint32_t w = r.u32();
+                std::memcpy(env_a.mem.data() + a, &w, 4);
+                std::memcpy(env_b.mem.data() + a, &w, 4);
+                std::memcpy(golden_mem.data() + a, &w, 4);
+            }
+        }
 
         core_a->imb_range(0, 8);
         core_b->imb_range(0, 8);
@@ -432,16 +530,17 @@ int main(int argc, char **argv) {
 
         const cpu_state got_a = read_state(*core_a);
         const cpu_state got_b = read_state(*core_b);
-        const cpu_state golden = golden_data_processing(inst, init);
+        const cpu_state golden = is_ls ? golden_load_store(inst, init, golden_mem.data())
+                                       : golden_data_processing(inst, init);
 
-        // (a) dyncom vs the independent golden model.
-        if (!(got_a == golden)) {
-            report_mismatch("dyncom != golden", inst, seed, golden, got_a);
+        // (a) dyncom vs the independent golden model (registers + memory).
+        if (!(got_a == golden) || (is_ls && !window_eq(env_a.mem, golden_mem))) {
+            report_mismatch(is_ls ? "dyncom != golden (load/store)" : "dyncom != golden", inst, seed, golden, got_a);
             if (++failures >= 20) break;
             continue;
         }
         // (b) self-A/B (determinism today; a flag-gated optimization later).
-        if (!(got_a == got_b)) {
+        if (!(got_a == got_b) || (is_ls && !window_eq(env_a.mem, env_b.mem))) {
             report_mismatch("core A != core B", inst, seed, got_a, got_b);
             if (++failures >= 20) break;
         }
