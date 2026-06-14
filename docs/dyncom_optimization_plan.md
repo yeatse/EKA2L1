@@ -250,6 +250,22 @@ script can't give for shared CPU code.
 > the committed Stage 1a/2/3a micro-opts (600k cases exercise ReadCode, the block
 > L1 and the inlined AddWithCarry with zero divergence).
 
+### First harness-gated optimization landed: inline memory fast-path
+`perf(dyncom): inline the TLB-hit memory fast path`. ReadMemory8/16/32/64 +
+WriteMemory8/16/32/64 split into an inline fast path (TLB hit) in `armstate.h`
+(cached `mem_cache_` TLB pointer → no circular include) and an out-of-line
+`...Slow` path (miss/fault/BE/log). Names unchanged → interpreter handlers
+untouched. **Verified** by the harness (600k data-proc + load/store cases incl.
+memory diff, PASS) + `ios_regression_test.sh` 8/8; Snakes profile shows
+ReadMemory32 self-time ~161→~7, WriteMemory32 ~112→~2 (call overhead gone).
+
+Remaining harness-gated wins, in order of risk: **shifter-operand
+specialization** (precompute the immediate operand / inline common shifts to drop
+the `shtop_func` indirect call — moderate, carry-flag-sensitive, fully covered by
+the Phase-3 shifter golden) and **lazy condition flags** (highest reward, highest
+risk; needs the edge corpus + careful S-bit/MSR/SPSR coverage). Fusion still needs
+Phase 4 (instruction-stream self-A/B).
+
 - **Design: self-A/B (no external dependency).** For an optimization that should
   be behaviour-preserving, the reference is the *same* dyncom with the
   optimization disabled. Gate each optimization behind a flag (compile-time
