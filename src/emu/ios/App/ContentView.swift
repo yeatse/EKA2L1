@@ -44,14 +44,16 @@ struct ContentView: View {
     // Defaults to false so the list shows only what the user installed.
     @AppStorage("appListShowSystemApps") private var showSystemApps = false
 
-    // Dev/testing convenience: launch straight into a given app on startup,
-    // skipping the scroll-and-tap. Pass the UID as an iOS launch argument, e.g.
-    //   xcrun simctl launch booted com.eka2l1.emulator -LaunchAppUID 0x2000023D
-    // (decimal also accepted). simctl forwards "-Key Value" pairs into the
-    // NSArgumentDomain, so UserDefaults picks it up; it is volatile per-launch.
+    // Dev/testing convenience: choose a firmware, then launch straight into a
+    // given app on startup, skipping the scroll-and-tap. Pass launch arguments
+    // as iOS NSArgumentDomain pairs, e.g.
+    //   xcrun simctl launch booted com.eka2l1.emulator \
+    //     -LaunchROMCode rm-320 -LaunchAppUID 0x2000023D
+    // (decimal UID also accepted).
     @State private var autoLaunchUID: UInt32?
     @State private var showingAutoLaunch = false
     @State private var autoLaunchHandled = false
+    @State private var launchRomHandled = false
 
     // App pending uninstall confirmation (set from the long-press context menu).
     @State private var pendingUninstall: EKA2L1AppItem?
@@ -284,15 +286,48 @@ struct ContentView: View {
         if EKA2L1Bridge.shared.start(documentsPath: documentsRoot()) {
             booted = true
             refresh()
-            maybeAutoLaunch()
+            selectLaunchRomThenAutoLaunch()
         } else {
             bootError = "Check Console for details."
         }
     }
 
-    // If launched with -LaunchAppUID, navigate straight into that app once a
-    // device is booted. EmulatorViewController waits for the graphics driver
-    // before calling launchApp, so no extra readiness gate is needed here.
+    // If launched with -LaunchROMCode, boot that device before any auto app
+    // navigation. EmulatorViewController waits for the graphics driver before
+    // calling launchApp.
+    private func selectLaunchRomThenAutoLaunch() {
+        guard !launchRomHandled, let code = Self.launchRomCodeArgument() else {
+            maybeAutoLaunch()
+            return
+        }
+        launchRomHandled = true
+
+        guard let target = devices.first(where: { $0.firmwareCode.caseInsensitiveCompare(code) == .orderedSame }) else {
+            bootError = "Launch ROM code \(code) is missing."
+            return
+        }
+        guard target.index != currentIndex else {
+            maybeAutoLaunch()
+            return
+        }
+
+        switching = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = EKA2L1Bridge.bootDevice(at: target.index)
+            DispatchQueue.main.async {
+                switching = false
+                guard ok else {
+                    bootError = "Failed to boot ROM code \(target.firmwareCode)."
+                    return
+                }
+                currentIndex = target.index
+                apps = EKA2L1Bridge.shared.rescanApps()
+                banner = "Booted \(target.displayName) (\(target.firmwareCode))."
+                maybeAutoLaunch()
+            }
+        }
+    }
+
     private func maybeAutoLaunch() {
         guard !autoLaunchHandled, currentIndex >= 0, let uid = Self.launchAppUIDArgument() else { return }
         autoLaunchHandled = true
@@ -310,6 +345,16 @@ struct ContentView: View {
             return UInt32(raw.dropFirst(2), radix: 16)
         }
         return UInt32(raw)
+    }
+
+    private static func launchRomCodeArgument() -> String? {
+        for key in ["LaunchROMCode", "LaunchROM", "LaunchDeviceCode", "LaunchDevice"] {
+            if let raw = UserDefaults.standard.string(forKey: key)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+                return raw
+            }
+        }
+        return nil
     }
 
     private func refresh() {

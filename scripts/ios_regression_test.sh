@@ -122,7 +122,7 @@ shot() {
 launch_uid() {
     xcrun simctl terminate "$SIM" "$BUNDLE_ID" >/dev/null 2>&1 || true
     wait_s 2
-    xcrun simctl launch "$SIM" "$BUNDLE_ID" -LaunchAppUID "$1" >/dev/null 2>&1
+    xcrun simctl launch "$SIM" "$BUNDLE_ID" -LaunchROMCode rm-320 -LaunchAppUID "$1" >/dev/null 2>&1
 }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
