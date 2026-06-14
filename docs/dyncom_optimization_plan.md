@@ -156,13 +156,97 @@ ReadCode self-time dropped ~90→~22 and AddWithCarry left the profile; the bloc
 gain was within noise (the per-block lookup was already amortised) but is correct
 and not harmful.
 
-**Stage 5 (instruction fusion) deliberately not done.** Assessment: it only
-removes per-pair *dispatch* overhead (not the CMP/branch execution), so ~3-5%;
-retrofitting look-ahead matching into dyncom's one-instruction-at-a-time
-translation pipeline + a synthesized dispatch-table entry is invasive and
-correctness is only verifiable here via the regression script (no interpreter
-differential harness). Risk/reward judged unfavourable — banked stages 1-3
-instead. If revisited, build a differential interpreter test harness first
-(Stage 5 verification note above). **Stage 4 (shifter specialization)** likewise
-deferred. No JIT (iOS W^X) — the interpreter is the product, so further gains
-need the fusion/specialization work behind a proper test harness.
+**Stage 5 (instruction fusion) and Stage 4 (shifter specialization) deferred** —
+see "Harness-gated work" below.
+
+### Batched execution-quantum check — investigated, rejected (unsafe)
+A tempting "free" win: `GOTO_NEXT_INST` runs `if (num_instrs >=
+cpu->NumInstrsToExecute) goto END` on **every** instruction; moving it to block
+boundaries (DISPATCH) would drop a load+compare+branch per instruction. **It is
+not safe.** That same check is how a thread is stopped *immediately* after a
+blocking syscall: the `SWI_INST` handler (interpreter ~L3829) runs the HLE, which
+for a blocking SVC calls `prepare_reschedule → dyncom_core::stop()` →
+`NumInstrsToExecute = 0`; with the PC unchanged the handler falls through to
+`FETCH_INST; GOTO_NEXT_INST`, and only the per-instruction check there exits
+before the just-blocked thread executes past its `WaitForRequest`. Polling at
+block granularity would let a blocked thread run extra instructions — a
+correctness break in the reschedule path, which is the emulator's most fragile
+area (past stray-signal panics live here). The only safe residue (keeping the
+counter in a host local to drop the per-instruction memory RMW, while leaving the
+check itself per-instruction) is ~1% and still brushes the SVC path — not worth
+it. **Not done.**
+
+---
+
+## Harness-gated work (lazy flags · inline mem · shifter specialization · fusion)
+Everything bankable without a test harness is now done. The remaining
+interpreter wins all change instruction *semantics* or *dispatch shape* in ways
+the regression script (real ROM execution) can catch only opportunistically, not
+exhaustively. They should be built **behind a differential interpreter test
+harness**, in this order once it exists:
+
+1. **Inline memory fast-path** (~3-5%, lowest risk of the four). Inline the TLB
+   hit path of `ReadMemory32`/`WriteMemory32`/`ReadMemory8/16` into the LDR/STR/
+   LDM/STM handlers (they are out-of-line calls today, ~273 samples). Mechanical;
+   the harness just confirms loads/stores are bit-identical incl. unaligned,
+   big-endian, and TLB-miss fallback.
+2. **Shifter-operand specialization** (~2-4%). Replace the per-data-processing
+   `shtop_func` indirect call with dedicated handlers for the common shifters
+   (immediate, LSL/LSR/ASR by immediate, plain register), leaving the indirect
+   path for register-specified shifts. Harness covers every shifter form incl.
+   carry-out and the `Rs==15`/`Rn==15` PC cases.
+3. **Instruction fusion / superinstructions** (~3-5%). CMP/CMN/SUBS+conditional-B
+   and SUBS+BNE first. Needs a synthesized dispatch-table/InstLabel entry + a
+   fused cream + handler, and look-ahead in `InterpreterTranslateBlock`. Harness
+   must cover the fused flag+branch equivalence and the "jump lands on the 2nd
+   op" (start-PC-keyed cache re-translates from there) case.
+4. **Lazy condition flags** (QEMU `cc_op` style, biggest *potential* but
+   highest risk and uncertain payoff). Defer NZCV computation to first read.
+   Diluted for ARM (predication reads flags often) and flags are already
+   denormalised (`NFlag/ZFlag/CFlag/VFlag` separate u32 "for speed"). Only
+   attempt with the harness fully trusted; covers every S-bit op, `MSR/MRS`,
+   `SPSR`, shifter carry-out, and conditional execution.
+
+### Differential test harness — landing plan
+Goal: prove an optimized interpreter is **bit-identical** to the reference over
+large, edge-case-heavy instruction streams — the verification the regression
+script can't give for shared CPU code.
+
+- **Design: self-A/B (no external dependency).** For an optimization that should
+  be behaviour-preserving, the reference is the *same* dyncom with the
+  optimization disabled. Gate each optimization behind a flag (compile-time
+  `EKA2L1_DYNCOM_<OPT>` or a runtime bool on `dyncom_core`); the harness runs the
+  identical input through an optimized and an unoptimized `dyncom_core` and
+  asserts equal state. This catches any divergence the optimization introduces
+  (which is exactly the regression we care about) without needing a golden
+  oracle. (An external oracle — Unicorn/QEMU TCG — could be added later to also
+  flag *pre-existing* dyncom bugs, but that is a heavier, separate effort.)
+- **Inputs:**
+  - *Randomized single instructions:* a constrained generator emits valid
+    ARM (and Thumb) encodings across classes — data-processing (all shifter
+    forms, S bit, all conditions), load/store (imm/reg/scaled, pre/post, byte/
+    half/word, LDM/STM reg lists incl. PC), multiply/long-multiply, branch
+    (B/BL/BX/BLX), `MSR/MRS`, `SWP`, saturating/`CLZ`. Seed registers/CPSR/
+    memory randomly (incl. flag-boundary values, PC-as-operand, mode bits).
+  - *Targeted edge corpus:* hand-written cases for the known footguns —
+    `Rd/Rn/Rm == 15`, condition-code boundaries, shifter carry-out, unaligned
+    access, mode/Thumb switches, and (for fusion/chaining) cross-page blocks,
+    SMC via `imb_range`, process-switch (`set_asid`), and translation-buffer
+    overflow.
+  - *Trace replay (optional, high value):* capture an instruction+initial-state
+    trace from a real Snakes/Final Battle run and replay it through A and B —
+    real-workload coverage on top of the random corpus.
+- **Oracle/compare:** after each step (instruction for single-op tests, block for
+  fusion/chaining), diff the full guest-visible state: `Reg[0..15]`, CPSR +
+  `N/Z/C/V/Q`, mode/Thumb, exclusive-monitor state, and every byte of memory the
+  step could have touched. Report the first divergence with the offending
+  encoding, both states, and a minimal repro seed (deterministic RNG).
+- **Build/run:** a standalone test target (extend
+  `src/emu/cpu/src/12l1r/tests/`, which already stands up a CPU with flat memory)
+  driven by `scripts/cpu_difftest.sh`; runs N random seeds + the edge corpus +
+  any captured traces, exits non-zero on first divergence. Cheap enough for CI
+  and a pre-land gate for each harness-gated optimization.
+- **Effort:** harness ≈ a focused mini-project (generator + state-diff +
+  A/B wiring), then each optimization lands against it with its own corpus
+  additions. This is the prerequisite for items 1-4 above; without it, those
+  changes shouldn't go into shared CPU code.
