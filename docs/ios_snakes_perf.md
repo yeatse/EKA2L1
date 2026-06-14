@@ -77,13 +77,13 @@ capped surface is visually indistinguishable while cutting the software fill ~4�
 Touch-coordinate mapping uses the same `renderScale` so guest pointer input stays
 aligned.
 
-(A double-buffered present — two ping-ponging `present_status` fences so the guest
-runs a frame ahead of the vsync swap — was prototyped and gave a small extra gain
-(~32–34 FPS) but was **reverted**: it once coincided with a one-off Snakes guest
-stall (os_thread spinning in `InterpreterMainLoop`, not blocked on the fence) and
-the frame-ahead timing change is a plausible trigger for Snakes' residual
-scheduling fragility, so it wasn't worth the marginal gain. The present stays
-single-buffered.)
+A double-buffered present — two ping-ponging `present_status` fences so the guest
+runs a frame ahead of the vsync swap — was first prototyped, reverted over a
+one-off Snakes stall, then **re-added on request**. With the later CPU-side
+optimizations (ASID cache, inline mem, etc.) the stall did not reproduce across an
+extended session (gameplay/death/restart/steady), and it lifts active 3D gameplay
+to ~36–40 FPS (CPU ~127%, guest emulation and the present blit/swap now
+overlapping instead of serialising).
 
 ## Result
 Snakes active 3D gameplay: **~22–23 FPS → ~30–32 FPS** on the iPhone 16 Pro
