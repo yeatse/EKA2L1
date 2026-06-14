@@ -222,19 +222,33 @@ script can't give for shared CPU code.
 > plus a negative control. Passes 200k–500k random cases. iOS/Android/desktop
 > builds unchanged.
 >
-> **Next phases (before/with each optimization):**
-> - *Phase 2 — load/store corpus:* generate LDR/STR/LDRB/STRB/LDM/STM with Rn
->   constrained into a mapped data window; diff registers **and** memory. Unlocks
->   verifying the inline memory fast-path.
-> - *Phase 3 — register-shift-by-register + edge corpus:* `Rs`-specified shifts,
->   and the hand-written footguns (`Rn/Rm == 15`, condition boundaries, RRX,
->   mode/Thumb). Unlocks shifter specialization + lazy flags.
+> **Phase 2 landed** (`difftest harness phase 2 -- load/store + memory diff`):
+> single data transfers (LDR/STR/LDRB/STRB, immediate offset, pre/post-index,
+> up/down, writeback) with `Rn` constrained into a mapped data window; each case
+> diffs registers **and** the window bytes vs the golden + self-A/B. The
+> load/store comparison was confirmed live by injecting a deliberate golden bug.
+> Unlocks verifying the inline memory fast-path.
+>
+> **Phase 3 landed** (`difftest harness phase 3 -- register-specified shifts`):
+> the golden barrel shifter + generator now cover register-specified shifts
+> (`Rs`-amount, LSL/LSR/ASR/ROR incl. the >=32 carry-out rules), so every ARM
+> data-processing operand2 form is exercised. Passes 600k cases. Unlocks shifter
+> specialization + lazy flags.
+>
+> **Remaining phases:**
+> - *Phase 3b — edge corpus:* hand-written footguns (`Rn/Rm == 15`, condition
+>   boundaries, RRX, mode/Thumb, register/scaled load-store offsets, LDM/STM,
+>   halfword/signed transfers).
 > - *Phase 4 — instruction streams + self-A/B toggle:* random basic blocks ending
 >   in a backward branch (loops), run for a fixed budget; add runtime flags to
 >   toggle the block-L1 / fusion so A=opt, B=no-opt must match. Unlocks fusion and
 >   re-validates block chaining/L1.
 > - *Phase 5 — trace replay (optional):* capture a real Snakes/FBattle
 >   instruction+state trace and replay through A/B for real-workload coverage.
+>
+> Note: the data-processing + load/store golden already retroactively validates
+> the committed Stage 1a/2/3a micro-opts (600k cases exercise ReadCode, the block
+> L1 and the inlined AddWithCarry with zero divergence).
 
 - **Design: self-A/B (no external dependency).** For an optimization that should
   be behaviour-preserving, the reference is the *same* dyncom with the
