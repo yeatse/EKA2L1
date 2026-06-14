@@ -434,12 +434,27 @@ std::uint32_t gen_load_store(rng &r, cpu_state &init) {
         rd = r.range(15);                                // base==dest writeback is unpredictable
     }
 
-    std::uint32_t offset = r.range(0x100);               // small, stays in window
+    init.reg[rn] = LS_DATA_BASE;
+
+    const bool reg_off = r.flip();
+    if (reg_off) {
+        // Scaled-register offset (I=1), LSL-scaled so a word access stays
+        // aligned; Rm holds a small value (!= base) so the address stays in the
+        // window. This is the classic [Rn, Rm, LSL #k] array-index form.
+        std::uint32_t rm = r.range(15);
+        while (rm == rn) {
+            rm = r.range(15);
+        }
+        const std::uint32_t shamt = (B == 0) ? 2 : (r.flip() ? 0 : 1); // word: <<2 (aligned)
+        init.reg[rm] = r.range(0x40);                    // 0..0x3F -> offset <= 0xFC
+        const std::uint32_t off_field = (shamt << 7) | (0u << 5) | rm; // LSL, bit4=0
+        return (cond << 28) | (0x1u << 26) | (1u << 25) | (P << 24) | (U << 23) | (B << 22) | (W << 21) | (L << 20) | (rn << 16) | (rd << 12) | off_field;
+    }
+
+    std::uint32_t offset = r.range(0x100);               // small immediate, stays in window
     if (B == 0) {
         offset &= ~0x3u;                                 // word: aligned
     }
-
-    init.reg[rn] = LS_DATA_BASE;
 
     return (cond << 28) | (0x1u << 26) | (0u << 25) | (P << 24) | (U << 23) | (B << 22) | (W << 21) | (L << 20) | (rn << 16) | (rd << 12) | offset;
 }
@@ -461,7 +476,25 @@ cpu_state golden_load_store(std::uint32_t inst, const cpu_state &in, std::uint8_
     const std::uint32_t L = (inst >> 20) & 1;
     const std::uint32_t rn = (inst >> 16) & 0xF;
     const std::uint32_t rd = (inst >> 12) & 0xF;
-    const std::uint32_t offset = inst & 0xFFF;
+
+    std::uint32_t offset;
+    if ((inst >> 25) & 1) {
+        // Scaled-register offset (same shift forms as a data-processing
+        // immediate shift, but no carry-out is needed for an address).
+        const std::uint32_t rm = in.reg[inst & 0xF];
+        const std::uint32_t shtype = (inst >> 5) & 0x3;
+        const std::uint32_t shamt = (inst >> 7) & 0x1F;
+        switch (shtype) {
+        case 0: offset = shamt ? (rm << shamt) : rm; break;                                   // LSL (#0 = Rm)
+        case 1: offset = shamt ? (rm >> shamt) : 0; break;                                     // LSR (#0 = #32 -> 0)
+        case 2: offset = shamt ? (std::uint32_t)((std::int32_t)rm >> shamt)
+                               : ((rm & N_BIT) ? 0xFFFFFFFF : 0); break;                       // ASR (#0 = #32)
+        default: offset = shamt ? ((rm >> shamt) | (rm << (32 - shamt)))
+                                : (((in.cpsr & C_BIT) ? N_BIT : 0) | (rm >> 1)); break;        // ROR / RRX
+        }
+    } else {
+        offset = inst & 0xFFF;
+    }
 
     const std::uint32_t base = in.reg[rn];
     const std::uint32_t off_applied = U ? (base + offset) : (base - offset);
@@ -494,6 +527,156 @@ cpu_state golden_load_store(std::uint32_t inst, const cpu_state &in, std::uint8_
 }
 
 // ---------------------------------------------------------------------------
+// Block transfer (LDM/STM) -- the heaviest user of the inline memory accessors
+// ---------------------------------------------------------------------------
+// Generate an LDM/STM whose base points into the data window; the register list
+// is a non-empty subset of r0..r14 excluding the base (so writeback / base-in-
+// list edge cases don't apply) and excluding PC (no branch). S (PSR/user-bank)
+// is always 0.
+std::uint32_t gen_ldm_stm(rng &r, cpu_state &init) {
+    const std::uint32_t cond = (r.range(4) == 0) ? r.range(14) : 0xE;
+    const std::uint32_t P = r.flip() ? 1 : 0;
+    const std::uint32_t U = r.flip() ? 1 : 0;
+    const std::uint32_t W = r.flip() ? 1 : 0;
+    const std::uint32_t L = r.flip() ? 1 : 0;
+    const std::uint32_t rn = r.range(15); // base, 0..14
+
+    std::uint32_t list = 0;
+    while (list == 0) {
+        list = (r.u32() & 0x7FFF) & ~(1u << rn); // bits 0..14, exclude base
+    }
+
+    init.reg[rn] = LS_DATA_BASE;
+    return (cond << 28) | (0x4u << 25) | (P << 24) | (U << 23) | (0u << 22) | (W << 21) | (L << 20) | (rn << 16) | list;
+}
+
+cpu_state golden_ldm_stm(std::uint32_t inst, const cpu_state &in, std::uint8_t *mem) {
+    cpu_state out = in;
+    out.reg[15] = in.reg[15] + 4;
+
+    const std::uint32_t cond = inst >> 28;
+    if (!cond_passed(cond, in.cpsr)) {
+        return out;
+    }
+
+    const std::uint32_t P = (inst >> 24) & 1;
+    const std::uint32_t U = (inst >> 23) & 1;
+    const std::uint32_t W = (inst >> 21) & 1;
+    const std::uint32_t L = (inst >> 20) & 1;
+    const std::uint32_t rn = (inst >> 16) & 0xF;
+    const std::uint32_t list = inst & 0x7FFF; // bits 0..14 (PC excluded by gen)
+    const std::uint32_t n = static_cast<std::uint32_t>(__builtin_popcount(list));
+    const std::uint32_t base = in.reg[rn];
+
+    // Lowest-numbered register always goes to the lowest address.
+    std::uint32_t addr = U ? (P ? base + 4 : base) : (P ? base - 4 * n : base - 4 * (n - 1));
+
+    for (std::uint32_t i = 0; i < 15; i++) {
+        if (!(list & (1u << i))) {
+            continue;
+        }
+        if (L) {
+            std::uint32_t v;
+            std::memcpy(&v, mem + addr, 4);
+            out.reg[i] = v;
+        } else {
+            std::uint32_t v = in.reg[i];
+            std::memcpy(mem + addr, &v, 4);
+        }
+        addr += 4;
+    }
+
+    if (W) {
+        out.reg[rn] = U ? base + 4 * n : base - 4 * n;
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Halfword / signed transfers (LDRH/STRH/LDRSB/LDRSH, immediate offset)
+// ---------------------------------------------------------------------------
+std::uint32_t gen_halfword(rng &r, cpu_state &init) {
+    const std::uint32_t cond = (r.range(4) == 0) ? r.range(14) : 0xE;
+    const std::uint32_t P = r.flip() ? 1 : 0;
+    const std::uint32_t U = r.flip() ? 1 : 0;
+    const std::uint32_t W = (P == 1) ? (r.flip() ? 1 : 0) : 0;
+
+    std::uint32_t L, S, H;
+    switch (r.range(4)) {
+    case 0: L = 1; S = 0; H = 1; break; // LDRH
+    case 1: L = 0; S = 0; H = 1; break; // STRH
+    case 2: L = 1; S = 1; H = 1; break; // LDRSH
+    default: L = 1; S = 1; H = 0; break; // LDRSB (byte)
+    }
+
+    const std::uint32_t rn = r.range(15);
+    std::uint32_t rd = r.range(15);
+    while (rd == rn) {
+        rd = r.range(15);
+    }
+
+    std::uint32_t offset = r.range(0x40);
+    if (H == 1) {
+        offset &= ~1u; // halfword aligned
+    }
+    init.reg[rn] = LS_DATA_BASE;
+
+    const std::uint32_t immH = (offset >> 4) & 0xF;
+    const std::uint32_t immL = offset & 0xF;
+    return (cond << 28) | (0u << 25) | (P << 24) | (U << 23) | (1u << 22) | (W << 21) | (L << 20) | (rn << 16) | (rd << 12) | (immH << 8) | (1u << 7) | (S << 6) | (H << 5) | (1u << 4) | immL;
+}
+
+cpu_state golden_halfword(std::uint32_t inst, const cpu_state &in, std::uint8_t *mem) {
+    cpu_state out = in;
+    out.reg[15] = in.reg[15] + 4;
+
+    const std::uint32_t cond = inst >> 28;
+    if (!cond_passed(cond, in.cpsr)) {
+        return out;
+    }
+
+    const std::uint32_t P = (inst >> 24) & 1;
+    const std::uint32_t U = (inst >> 23) & 1;
+    const std::uint32_t W = (inst >> 21) & 1;
+    const std::uint32_t L = (inst >> 20) & 1;
+    const std::uint32_t S = (inst >> 6) & 1;
+    const std::uint32_t H = (inst >> 5) & 1;
+    const std::uint32_t rn = (inst >> 16) & 0xF;
+    const std::uint32_t rd = (inst >> 12) & 0xF;
+    const std::uint32_t offset = (((inst >> 8) & 0xF) << 4) | (inst & 0xF);
+
+    const std::uint32_t base = in.reg[rn];
+    const std::uint32_t off_applied = U ? (base + offset) : (base - offset);
+    const std::uint32_t addr = P ? off_applied : base;
+
+    if (L) {
+        if (!H) { // LDRSB
+            out.reg[rd] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(mem[addr])));
+        } else if (S) { // LDRSH
+            std::uint16_t h;
+            std::memcpy(&h, mem + addr, 2);
+            out.reg[rd] = static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(h)));
+        } else { // LDRH
+            std::uint16_t h;
+            std::memcpy(&h, mem + addr, 2);
+            out.reg[rd] = h;
+        }
+    } else { // STRH
+        std::uint16_t h = static_cast<std::uint16_t>(in.reg[rd]);
+        std::memcpy(mem + addr, &h, 2);
+    }
+
+    if (!P) {
+        out.reg[rn] = off_applied;
+    } else if (W) {
+        out.reg[rn] = off_applied;
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Reporting
 // ---------------------------------------------------------------------------
 void dump_state(const char *tag, const cpu_state &s) {
@@ -520,7 +703,7 @@ int main(int argc, char **argv) {
     if (argc > 1) base_seed = static_cast<std::uint32_t>(std::strtoul(argv[1], nullptr, 0));
     if (argc > 2) count = static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0));
 
-    std::printf("dyncom_difftest: data-processing + load/store, %u cases from seed %u\n", count, base_seed);
+    std::printf("dyncom_difftest: data-processing + load/store + ldm/stm + halfword, %u cases from seed %u\n", count, base_seed);
 
     diff_env env_a, env_b;
     auto core_a = make_core(env_a);
@@ -537,14 +720,29 @@ int main(int argc, char **argv) {
         rng r(seed);
 
         cpu_state init = gen_state(r);
-        const bool is_ls = (r.range(3) == 0); // ~1/3 load/store, ~2/3 data-processing
-        const std::uint32_t inst = is_ls ? gen_load_store(r, init) : gen_data_processing(r);
+        const std::uint32_t kind = r.range(5); // 0,1 data-proc; 2 single; 3 ldm/stm; 4 halfword
+        const bool touches_mem = (kind >= 2);
+        std::uint32_t inst;
+        const char *kind_name;
+        if (kind < 2) {
+            inst = gen_data_processing(r);
+            kind_name = "dyncom != golden";
+        } else if (kind == 2) {
+            inst = gen_load_store(r, init);
+            kind_name = "dyncom != golden (load/store)";
+        } else if (kind == 3) {
+            inst = gen_ldm_stm(r, init);
+            kind_name = "dyncom != golden (ldm/stm)";
+        } else {
+            inst = gen_halfword(r, init);
+            kind_name = "dyncom != golden (halfword)";
+        }
 
         // Place the instruction at PC 0 in both envs and seed the data window
-        // identically in A, B and the golden image (only for load/store cases).
+        // identically in A, B and the golden image (memory-touching cases only).
         std::memcpy(env_a.mem.data(), &inst, 4);
         std::memcpy(env_b.mem.data(), &inst, 4);
-        if (is_ls) {
+        if (touches_mem) {
             for (std::uint32_t a = LS_DATA_LO; a < LS_DATA_HI; a += 4) {
                 const std::uint32_t w = r.u32();
                 std::memcpy(env_a.mem.data() + a, &w, 4);
@@ -566,17 +764,25 @@ int main(int argc, char **argv) {
 
         const cpu_state got_a = read_state(*core_a);
         const cpu_state got_b = read_state(*core_b);
-        const cpu_state golden = is_ls ? golden_load_store(inst, init, golden_mem.data())
-                                       : golden_data_processing(inst, init);
+        cpu_state golden;
+        if (kind < 2) {
+            golden = golden_data_processing(inst, init);
+        } else if (kind == 2) {
+            golden = golden_load_store(inst, init, golden_mem.data());
+        } else if (kind == 3) {
+            golden = golden_ldm_stm(inst, init, golden_mem.data());
+        } else {
+            golden = golden_halfword(inst, init, golden_mem.data());
+        }
 
         // (a) dyncom vs the independent golden model (registers + memory).
-        if (!(got_a == golden) || (is_ls && !window_eq(env_a.mem, golden_mem))) {
-            report_mismatch(is_ls ? "dyncom != golden (load/store)" : "dyncom != golden", inst, seed, golden, got_a);
+        if (!(got_a == golden) || (touches_mem && !window_eq(env_a.mem, golden_mem))) {
+            report_mismatch(kind_name, inst, seed, golden, got_a);
             if (++failures >= 20) break;
             continue;
         }
         // (b) self-A/B (determinism today; a flag-gated optimization later).
-        if (!(got_a == got_b) || (is_ls && !window_eq(env_a.mem, env_b.mem))) {
+        if (!(got_a == got_b) || (touches_mem && !window_eq(env_a.mem, env_b.mem))) {
             report_mismatch("core A != core B", inst, seed, got_a, got_b);
             if (++failures >= 20) break;
         }
