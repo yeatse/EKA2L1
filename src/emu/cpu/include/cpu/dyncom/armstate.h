@@ -256,6 +256,32 @@ public:
         return (static_cast<std::uint64_t>(instruction_cache_asid) << 32) | vaddr;
     }
 
+    // Direct-mapped L1 in front of instruction_cache. DISPATCH runs on every
+    // taken branch; an index+compare here turns the common case into a hit that
+    // skips the unordered_map hash/bucket-walk/modulo. Entries are tagged with
+    // the full (asid|vpc) key so they coexist across processes; they only need
+    // clearing when the block map / translation buffer is flushed. Keys are
+    // seeded to a value no real key can take (real high word = asid <= 255).
+    static constexpr std::size_t BLOCK_L1_BITS = 11; // 2048 entries (~32 KB)
+    static constexpr std::size_t BLOCK_L1_COUNT = 1 << BLOCK_L1_BITS;
+    static constexpr std::uint64_t BLOCK_L1_EMPTY = ~static_cast<std::uint64_t>(0);
+
+    struct block_l1_entry {
+        std::uint64_t key;
+        std::size_t ptr;
+    };
+    block_l1_entry block_l1_cache[BLOCK_L1_COUNT];
+
+    void flush_block_l1_cache() {
+        for (std::size_t i = 0; i < BLOCK_L1_COUNT; i++) {
+            block_l1_cache[i].key = BLOCK_L1_EMPTY;
+        }
+    }
+
+    static std::size_t block_l1_index(std::uint64_t key) {
+        return (key ^ (key >> 32)) & (BLOCK_L1_COUNT - 1);
+    }
+
 private:
     void ResetMPCoreCP15Registers();
     eka2l1::arm::dyncom_core *core;

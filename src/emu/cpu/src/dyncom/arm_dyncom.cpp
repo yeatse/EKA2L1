@@ -166,6 +166,7 @@ namespace eka2l1::arm {
     void dyncom_core::clear_instruction_cache() {
         state_->instruction_cache.clear();
         state_->trans_cache_buf_top = 0;
+        state_->flush_block_l1_cache();
     }
 
     void dyncom_core::imb_range(address addr, std::size_t size) {

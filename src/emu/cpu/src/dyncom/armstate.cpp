@@ -11,6 +11,7 @@
 
 ARMul_State::ARMul_State(eka2l1::arm::dyncom_core *core, PrivilegeMode initial_mode)
     : core(core) {
+    flush_block_l1_cache();
     Reset();
     ChangePrivilegeMode(initial_mode);
 }

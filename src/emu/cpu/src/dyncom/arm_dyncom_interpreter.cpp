@@ -1601,28 +1601,43 @@ DISPATCH : {
         cpu->Reg[15] &= 0xfffffffc;
 
     // Find the cached instruction cream, otherwise translate it...
-    auto itr = cpu->instruction_cache.find(cpu->make_instruction_cache_key(cpu->Reg[15]));
-    if (itr != cpu->instruction_cache.end()) {
-        ptr = itr->second;
+    const std::uint64_t block_key = cpu->make_instruction_cache_key(cpu->Reg[15]);
+    ARMul_State::block_l1_entry &l1 = cpu->block_l1_cache[ARMul_State::block_l1_index(block_key)];
+    if (l1.key == block_key) {
+        // Fast path: hot blocks skip the unordered_map entirely.
+        ptr = l1.ptr;
     } else {
-        // The translation buffer is a bump allocator that is no longer reset on
-        // every context switch (blocks are kept across processes via the asid
-        // tag). Flush everything if a fresh block could run past the buffer end.
-        // TRANS_CACHE_FLUSH_RESERVE comfortably exceeds the largest possible
-        // single basic block (capped at one page of instructions).
-        constexpr std::size_t TRANS_CACHE_FLUSH_RESERVE = 2 * 1024 * 1024;
-        if (cpu->trans_cache_buf_top + TRANS_CACHE_FLUSH_RESERVE > TRANS_CACHE_SIZE) {
-            cpu->instruction_cache.clear();
-            cpu->trans_cache_buf_top = 0;
+        auto itr = cpu->instruction_cache.find(block_key);
+        if (itr != cpu->instruction_cache.end()) {
+            ptr = itr->second;
+        } else {
+            // The translation buffer is a bump allocator that is no longer reset
+            // on every context switch (blocks are kept across processes via the
+            // asid tag). Flush everything if a fresh block could run past the
+            // buffer end. TRANS_CACHE_FLUSH_RESERVE comfortably exceeds the
+            // largest possible single basic block (capped at one page).
+            constexpr std::size_t TRANS_CACHE_FLUSH_RESERVE = 2 * 1024 * 1024;
+            if (cpu->trans_cache_buf_top + TRANS_CACHE_FLUSH_RESERVE > TRANS_CACHE_SIZE) {
+                cpu->instruction_cache.clear();
+                cpu->trans_cache_buf_top = 0;
+                cpu->flush_block_l1_cache();
+            }
+
+            if (cpu->NumInstrsToExecute != 1) {
+                if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
+                    goto END;
+            } else {
+                if (InterpreterTranslateSingle(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
+                    goto END;
+            }
         }
 
-        if (cpu->NumInstrsToExecute != 1) {
-            if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-                goto END;
-        } else {
-            if (InterpreterTranslateSingle(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-                goto END;
-        }
+        // Re-index: a flush above may have moved the slot; refill from the live
+        // key so the next visit hits. (l1 reference is still valid -- the cache
+        // is a fixed array -- but recompute defensively after a possible flush.)
+        ARMul_State::block_l1_entry &slot = cpu->block_l1_cache[ARMul_State::block_l1_index(block_key)];
+        slot.key = block_key;
+        slot.ptr = ptr;
     }
 
     inst_base = (arm_inst *)&cpu->trans_cache_buf[ptr];
