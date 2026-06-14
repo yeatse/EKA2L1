@@ -129,7 +129,13 @@ namespace eka2l1::arm {
     }
 
     void dyncom_core::load_context(const thread_context &ctx) {
-        clear_instruction_cache();
+        // When the scheduler drives asids (primary core), translated blocks are
+        // tagged per address space and stay valid across thread/process switches,
+        // so there is no need to wipe the cache here. Only the fallback-embedded
+        // interpreter, which never receives an asid, still clears eagerly.
+        if (!asid_instruction_cache_) {
+            clear_instruction_cache();
+        }
 
         for (uint8_t i = 0; i < 16; i++) {
             state_->Reg[i] = ctx.cpu_registers[i];
@@ -164,6 +170,11 @@ namespace eka2l1::arm {
 
     void dyncom_core::imb_range(address addr, std::size_t size) {
         clear_instruction_cache();
+    }
+
+    void dyncom_core::set_asid(const std::uint32_t asid) {
+        state_->instruction_cache_asid = asid;
+        asid_instruction_cache_ = true;
     }
 
     std::uint32_t dyncom_core::get_num_instruction_executed() {

@@ -241,9 +241,20 @@ public:
     char trans_cache_buf[TRANS_CACHE_SIZE];
     size_t trans_cache_buf_top = 0;
 
-    // TODO(bunnei): Move this cache to a better place - it should be per codeset (likely per
-    // process for our purposes), not per ARMul_State (which tracks CPU core state).
-    std::unordered_map<std::uint32_t, std::size_t> instruction_cache;
+    // Translated basic blocks are tagged with the address space (asid) they were
+    // decoded in, so blocks from different processes coexist and survive the
+    // frequent guest thread/process switches instead of being thrown away on
+    // every context switch. Key = (asid << 32) | virtual_pc. The asid is pushed
+    // in by the scheduler through dyncom_core::set_asid on every process switch.
+    // In the multiple memory model (used by all current frontends) asids are
+    // never recycled within a session, so cached blocks stay valid until the
+    // code itself changes (handled separately via imb_range / clear).
+    std::unordered_map<std::uint64_t, std::size_t> instruction_cache;
+    std::uint32_t instruction_cache_asid = 0;
+
+    std::uint64_t make_instruction_cache_key(std::uint32_t vaddr) const {
+        return (static_cast<std::uint64_t>(instruction_cache_asid) << 32) | vaddr;
+    }
 
 private:
     void ResetMPCoreCP15Registers();

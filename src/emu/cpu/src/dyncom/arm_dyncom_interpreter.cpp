@@ -855,7 +855,7 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
         ret = inst_base->br;
     };
 
-    cpu->instruction_cache[pc_start] = bb_start;
+    cpu->instruction_cache[cpu->make_instruction_cache_key(pc_start)] = bb_start;
 
     return KEEP_GOING;
 }
@@ -873,7 +873,7 @@ static int InterpreterTranslateSingle(ARMul_State *cpu, std::size_t &bb_start, s
         inst_base->br = TransExtData::SINGLE_STEP;
     }
 
-    cpu->instruction_cache[pc_start] = bb_start;
+    cpu->instruction_cache[cpu->make_instruction_cache_key(pc_start)] = bb_start;
 
     return KEEP_GOING;
 }
@@ -1601,15 +1601,28 @@ DISPATCH : {
         cpu->Reg[15] &= 0xfffffffc;
 
     // Find the cached instruction cream, otherwise translate it...
-    auto itr = cpu->instruction_cache.find(cpu->Reg[15]);
+    auto itr = cpu->instruction_cache.find(cpu->make_instruction_cache_key(cpu->Reg[15]));
     if (itr != cpu->instruction_cache.end()) {
         ptr = itr->second;
-    } else if (cpu->NumInstrsToExecute != 1) {
-        if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-            goto END;
     } else {
-        if (InterpreterTranslateSingle(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
-            goto END;
+        // The translation buffer is a bump allocator that is no longer reset on
+        // every context switch (blocks are kept across processes via the asid
+        // tag). Flush everything if a fresh block could run past the buffer end.
+        // TRANS_CACHE_FLUSH_RESERVE comfortably exceeds the largest possible
+        // single basic block (capped at one page of instructions).
+        constexpr std::size_t TRANS_CACHE_FLUSH_RESERVE = 2 * 1024 * 1024;
+        if (cpu->trans_cache_buf_top + TRANS_CACHE_FLUSH_RESERVE > TRANS_CACHE_SIZE) {
+            cpu->instruction_cache.clear();
+            cpu->trans_cache_buf_top = 0;
+        }
+
+        if (cpu->NumInstrsToExecute != 1) {
+            if (InterpreterTranslateBlock(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
+                goto END;
+        } else {
+            if (InterpreterTranslateSingle(cpu, ptr, cpu->Reg[15]) == FETCH_EXCEPTION)
+                goto END;
+        }
     }
 
     inst_base = (arm_inst *)&cpu->trans_cache_buf[ptr];
