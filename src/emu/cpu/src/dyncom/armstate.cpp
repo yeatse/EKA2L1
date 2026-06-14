@@ -262,6 +262,15 @@ std::uint32_t ARMul_State::ReadMemory32(std::uint32_t address) const {
 }
 
 std::uint32_t ARMul_State::ReadCode(std::uint32_t address) const {
+    // Instruction fetch can use the same direct-mapped TLB as data reads: a code
+    // page that is already cached (its host pointer was resolved on a prior fetch
+    // or data read) skips the page-directory walk. SMC invalidates the entry via
+    // make_dirty just like data, so this stays consistent.
+    eka2l1::arm::r12l1::tlb *cache = core->mem_cache();
+    if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(cache->lookup(address))) {
+        return *ptr;
+    }
+
     std::uint32_t value = 0;
     bool result = core->read_code(address, &value);
 
