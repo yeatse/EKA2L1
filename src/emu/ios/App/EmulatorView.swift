@@ -269,9 +269,7 @@ private struct VirtualKeypad: View {
             arrow("chevron.left", scan: Scan.left).offset(x: -45)
             arrow("chevron.right", scan: Scan.right).offset(x: 45)
 
-            Button {
-                tap(Scan.select)
-            } label: {
+            HoldableRawKey(scan: Scan.select) { pressed in
                 Text("OK")
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
@@ -285,23 +283,25 @@ private struct VirtualKeypad: View {
                         )
                     )
                     .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                    .scaleEffect(pressed ? 0.85 : 1)
+                    .opacity(pressed ? 0.7 : 1)
+                    .animation(.easeOut(duration: 0.12), value: pressed)
             }
-            .buttonStyle(PressableStyle())
         }
         .frame(width: 130, height: 130)
     }
 
     private func arrow(_ symbol: String, scan: UInt32) -> some View {
-        Button {
-            tap(scan)
-        } label: {
+        HoldableRawKey(scan: scan) { pressed in
             Image(systemName: symbol)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.9))
                 .frame(width: 38, height: 38)
                 .contentShape(Circle())
+                .scaleEffect(pressed ? 0.85 : 1)
+                .opacity(pressed ? 0.7 : 1)
+                .animation(.easeOut(duration: 0.12), value: pressed)
         }
-        .buttonStyle(PressableStyle())
     }
 
     // MARK: Right side – numeric pad.
@@ -311,9 +311,7 @@ private struct VirtualKeypad: View {
         // (soft row + call row + d-pad), keeping both columns top/bottom aligned.
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(digits, id: \.label) { digit in
-                Button {
-                    tap(digit.scan)
-                } label: {
+                HoldableRawKey(scan: digit.scan) { pressed in
                     VStack(spacing: 1) {
                         Text(digit.label)
                             .font(.system(size: 20, weight: .semibold, design: .rounded))
@@ -325,8 +323,8 @@ private struct VirtualKeypad: View {
                         }
                     }
                     .frame(width: 48, height: 49)
+                    .keyCap(kind: .digit, pressed: pressed)
                 }
-                .buttonStyle(KeyStyle(kind: .digit))
             }
         }
     }
@@ -337,9 +335,7 @@ private struct VirtualKeypad: View {
     }
 
     private func key(_ label: KeyLabel, scan: UInt32, kind: KeyKind) -> some View {
-        Button {
-            tap(scan)
-        } label: {
+        HoldableRawKey(scan: scan) { pressed in
             Group {
                 switch label {
                 case .text(let value):
@@ -349,13 +345,8 @@ private struct VirtualKeypad: View {
                 }
             }
             .frame(width: 58, height: 38)
+            .keyCap(kind: kind, pressed: pressed)
         }
-        .buttonStyle(KeyStyle(kind: kind))
-    }
-
-    private func tap(_ scan: UInt32) {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        EKA2L1Bridge.shared.tapRawKey(scan)
     }
 }
 
@@ -363,22 +354,66 @@ private enum KeyKind {
     case digit, soft, call, end
 }
 
-private struct KeyStyle: ButtonStyle {
-    let kind: KeyKind
+private struct HoldableRawKey<Label: View>: View {
+    let scan: UInt32
+    @ViewBuilder let label: (Bool) -> Label
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+    @State private var pressed = false
+    @State private var sentDown = false
+
+    var body: some View {
+        label(pressed)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                EKA2L1Bridge.shared.tapRawKey(scan)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        press()
+                    }
+                    .onEnded { _ in
+                        release()
+                    }
+            )
+            .onDisappear(perform: release)
+    }
+
+    private func press() {
+        guard !sentDown else { return }
+        sentDown = true
+        pressed = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
+    }
+
+    private func release() {
+        guard sentDown else { return }
+        sentDown = false
+        pressed = false
+        EKA2L1Bridge.shared.submitRawKey(scan, pressed: false)
+    }
+}
+
+private struct KeyCapModifier: ViewModifier {
+    let kind: KeyKind
+    let pressed: Bool
+
+    func body(content: Content) -> some View {
+        content
             .foregroundStyle(foreground)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(background(pressed: configuration.isPressed))
+                    .fill(background)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(.white.opacity(kind == .digit || kind == .soft ? 0.12 : 0.0), lineWidth: 1)
             )
-            .scaleEffect(configuration.isPressed ? 0.93 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(pressed ? 0.93 : 1)
+            .animation(.easeOut(duration: 0.12), value: pressed)
     }
 
     private var foreground: Color {
@@ -388,7 +423,7 @@ private struct KeyStyle: ButtonStyle {
         }
     }
 
-    private func background(pressed: Bool) -> Color {
+    private var background: Color {
         switch kind {
         case .digit:
             return .white.opacity(pressed ? 0.24 : 0.10)
@@ -402,11 +437,8 @@ private struct KeyStyle: ButtonStyle {
     }
 }
 
-private struct PressableStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.85 : 1)
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+private extension View {
+    func keyCap(kind: KeyKind, pressed: Bool) -> some View {
+        modifier(KeyCapModifier(kind: kind, pressed: pressed))
     }
 }
