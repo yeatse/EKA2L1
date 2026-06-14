@@ -73,6 +73,113 @@ static bool CondPassed(const ARMul_State *cpu, unsigned int cond) {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Optional guest-execution profiler (-DEKA2L1_DYNCOM_PROFILE). Counts, per
+// executed instruction, the opcode and the (previous,current) consecutive pair
+// within a basic block, plus the per-block instruction-count distribution, and
+// periodically logs the hottest opcodes / pairs. Used to pick which instruction
+// patterns are worth fusing into super-ops. Zero overhead when not defined.
+// ---------------------------------------------------------------------------
+#ifdef EKA2L1_DYNCOM_PROFILE
+#include <algorithm>
+#include <vector>
+namespace {
+    constexpr int PROF_NUM_OPS = 202; // == arm_instruction_trans_len
+    const char *kProfOpNames[PROF_NUM_OPS] = {
+        "VMLA","VMLS","VNMLA","VNMLS","VNMUL","VMUL","VADD","VSUB","VDIV","VMOVI","VMOVR","VABS","VNEG","VSQRT","VCMP",
+        "VCMP2","VCVTBDS","VCVTBFF","VCVTBFI","VMOVBRS","VMSR","VMOVBRC","VMRS","VMOVBCR","VMOVBRRSS","VMOVBRRD","VSTR",
+        "VPUSH","VSTM","VPOP","VLDR","VLDM","SRS","RFE","BKPT","BLX","CPS","PLD","SETEND","CLREX","REV16","USAD8","SXTB",
+        "UXTB","SXTH","SXTB16","UXTH","UXTB16","CPY","UXTAB","SSUB8","SHSUB8","SSUBADDX","STREX","STREXB","SWP","SWPB",
+        "SSUB16","SSAT16","SHSUBADDX","QSUBADDX","SHADDSUBX","SHADD8","SHADD16","SEL","SADDSUBX","SADD8","SADD16","SHSUB16",
+        "UMAAL","UXTAB16","USUBADDX","USUB8","USUB16","USAT16","USADA8","UQSUBADDX","UQSUB8","UQSUB16","UQADDSUBX","UQADD8",
+        "UQADD16","SXTAB","UHSUBADDX","UHSUB8","UHSUB16","UHADDSUBX","UHADD8","UHADD16","UADDSUBX","UADD8","UADD16","SXTAH",
+        "SXTAB16","QADD8","BXJ","CLZ","UXTAH","BX","REV","BLX2","REVSH","QADD","QADD16","QADDSUBX","LDREX","QDADD","QDSUB",
+        "QSUB","LDREXB","QSUB8","QSUB16","SMUAD","SMMUL","SMUSD","SMLSD","SMLSLD","SMMLA","SMMLS","SMLALD","SMLAD","SMLAW",
+        "SMULW","PKHTB","PKHBT","SMUL","SMLALXY","SMLA","MCRR","MRRC","CMP","TST","TEQ","CMN","SMULL","UMULL","UMLAL",
+        "SMLAL","MUL","MLA","SSAT","USAT","MRS","MSR","AND","BIC","LDM","EOR","ADD","RSB","RSC","SBC","ADC","SUB","ORR",
+        "MVN","MOV","STM","LDM2","LDRSH","STM2","LDM3","LDRSB","STRD","LDRH","STRH","LDRD","STRT","STRBT","LDRBT","LDRT",
+        "MRC","MCR","MSR2","MSR3","MSR4","MSR5","MSR6","LDRB","STRB","LDR","LDRCOND","STR","CDP","STC","LDC","LDREXD",
+        "STREXD","LDREXH","STREXH","NOP","YIELD","WFE","WFI","SEV","SWI","BBL","B_2_THUMB","B_COND_THUMB","BL_1_THUMB",
+        "BL_2_THUMB","BLX_1_THUMB"
+    };
+    inline const char *prof_op_name(int idx) {
+        return (idx >= 0 && idx < PROF_NUM_OPS) ? kProfOpNames[idx] : "?";
+    }
+    struct dyncom_profiler {
+        std::uint64_t op_count[PROF_NUM_OPS] = {};
+        std::vector<std::uint64_t> pair_count;
+        std::uint64_t block_len[64] = {};
+        std::uint64_t total_insts = 0;
+        std::uint64_t total_blocks = 0;
+        std::uint64_t next_dump = 50000000ull;
+        dyncom_profiler()
+            : pair_count(static_cast<std::size_t>(PROF_NUM_OPS) * PROF_NUM_OPS, 0) {}
+    };
+    dyncom_profiler g_dyncom_profiler;
+
+    void dyncom_profile_dump() {
+        dyncom_profiler &p = g_dyncom_profiler;
+        if (p.total_insts == 0)
+            return;
+        // Write to a plain file in the cwd (Documents/data on iOS) so the output
+        // bypasses the per-category log filter (CPU.DynCom is silenced there).
+        std::FILE *f = std::fopen("dyncom_profile.txt", "w");
+        if (!f)
+            return;
+        std::fprintf(f, "=== dyncom profile: %llu insts, %llu blocks, %.2f insts/block ===\n",
+            (unsigned long long)p.total_insts, (unsigned long long)p.total_blocks,
+            p.total_blocks ? (double)p.total_insts / p.total_blocks : 0.0);
+        std::vector<int> ops(PROF_NUM_OPS);
+        for (int i = 0; i < PROF_NUM_OPS; i++) ops[i] = i;
+        std::sort(ops.begin(), ops.end(), [&](int a, int b) { return p.op_count[a] > p.op_count[b]; });
+        for (int i = 0; i < 25 && p.op_count[ops[i]]; i++)
+            std::fprintf(f, "  op   %-12s %13llu (%.1f%%)\n", prof_op_name(ops[i]), (unsigned long long)p.op_count[ops[i]],
+                100.0 * (double)p.op_count[ops[i]] / p.total_insts);
+        std::vector<std::size_t> pairs;
+        for (std::size_t i = 0; i < p.pair_count.size(); i++)
+            if (p.pair_count[i]) pairs.push_back(i);
+        std::sort(pairs.begin(), pairs.end(), [&](std::size_t a, std::size_t b) { return p.pair_count[a] > p.pair_count[b]; });
+        for (std::size_t i = 0; i < 40 && i < pairs.size(); i++) {
+            const int a = static_cast<int>(pairs[i] / PROF_NUM_OPS);
+            const int b = static_cast<int>(pairs[i] % PROF_NUM_OPS);
+            std::fprintf(f, "  pair %-10s -> %-10s %13llu (%.1f%%)\n", prof_op_name(a), prof_op_name(b),
+                (unsigned long long)p.pair_count[pairs[i]], 100.0 * (double)p.pair_count[pairs[i]] / p.total_insts);
+        }
+        for (int i = 0; i < 16; i++)
+            if (p.block_len[i])
+                std::fprintf(f, "  blocklen %2d : %13llu\n", i, (unsigned long long)p.block_len[i]);
+        std::fclose(f);
+    }
+}
+#define PROF_STEP(cpu, the_idx)                                                              \
+    do {                                                                                     \
+        dyncom_profiler &pp_ = g_dyncom_profiler;                                            \
+        const int idx_ = (the_idx);                                                          \
+        pp_.op_count[idx_]++;                                                                 \
+        pp_.total_insts++;                                                                    \
+        if ((cpu)->prof_prev >= 0)                                                            \
+            pp_.pair_count[static_cast<std::size_t>((cpu)->prof_prev) * PROF_NUM_OPS + idx_]++; \
+        (cpu)->prof_prev = idx_;                                                              \
+        if ((cpu)->prof_block_len < 63)                                                       \
+            (cpu)->prof_block_len++;                                                          \
+        if (pp_.total_insts >= pp_.next_dump) {                                               \
+            dyncom_profile_dump();                                                            \
+            pp_.next_dump += 50000000ull;                                                    \
+        }                                                                                     \
+    } while (0)
+#define PROF_BLOCK_ENTER(cpu)                                                                \
+    do {                                                                                     \
+        dyncom_profiler &pp_ = g_dyncom_profiler;                                            \
+        pp_.total_blocks++;                                                                   \
+        pp_.block_len[(cpu)->prof_block_len & 63]++;                                          \
+        (cpu)->prof_block_len = 0;                                                            \
+        (cpu)->prof_prev = -1;                                                                \
+    } while (0)
+#else
+#define PROF_STEP(cpu, the_idx) ((void)0)
+#define PROF_BLOCK_ENTER(cpu) ((void)0)
+#endif
+
 static unsigned int DPO(Immediate)(ARMul_State *cpu, unsigned int sht_oper) {
     unsigned int immed_8 = BITS(sht_oper, 0, 7);
     unsigned int rotate_imm = BITS(sht_oper, 8, 11);
@@ -934,12 +1041,14 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 // clunky switch statement.
 #if defined __GNUC__ || defined __clang__
 #define GOTO_NEXT_INST                         \
+    PROF_STEP(cpu, inst_base->idx);            \
     if (num_instrs >= cpu->NumInstrsToExecute) \
         goto END;                              \
     num_instrs++;                              \
     goto *InstLabel[inst_base->idx]
 #else
 #define GOTO_NEXT_INST                         \
+    PROF_STEP(cpu, inst_base->idx);            \
     if (num_instrs >= cpu->NumInstrsToExecute) \
         goto END;                              \
     num_instrs++;                              \
@@ -1589,6 +1698,7 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 
     LOAD_NZCVT;
 DISPATCH : {
+    PROF_BLOCK_ENTER(cpu);
     if (!cpu->NirqSig) {
         if (!(cpu->Cpsr & 0x80)) {
             goto END;

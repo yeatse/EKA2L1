@@ -96,6 +96,11 @@ add_library(cpu
 # libc++ via boost's removed std::unary_function). Default OFF.
 option(EKA2L1_CPU_DYNCOM_ONLY "Build the CPU module with the dyncom interpreter only (no dynarmic)" OFF)
 
+# Instrument the dyncom interpreter to log guest opcode / instruction-pair /
+# block-length frequencies (used to target super-instruction fusion). Opt-in,
+# default OFF -> zero overhead in normal builds.
+option(EKA2L1_DYNCOM_PROFILE "Profile guest instruction/pair frequencies in the dyncom interpreter" OFF)
+
 if (ARCHITECTURE_ARM32)
     target_sources(cpu PRIVATE ${SOURCE_12L1R})
     target_link_libraries(cpu PRIVATE Catch2)
@@ -116,6 +121,12 @@ else()
     target_link_libraries(cpu
             PRIVATE
             dynarmic)
+endif()
+
+if (EKA2L1_DYNCOM_PROFILE)
+    # PUBLIC so the ARMul_State layout (which gains two profiling fields) is
+    # consistent in every TU that includes armstate.h, avoiding an ODR mismatch.
+    target_compile_definitions(cpu PUBLIC EKA2L1_DYNCOM_PROFILE=1)
 endif()
 
 target_include_directories(cpu PUBLIC include)

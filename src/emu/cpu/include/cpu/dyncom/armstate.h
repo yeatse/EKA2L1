@@ -323,6 +323,14 @@ public:
     std::unordered_map<std::uint64_t, std::size_t> instruction_cache;
     std::uint32_t instruction_cache_asid = 0;
 
+#ifdef EKA2L1_DYNCOM_PROFILE
+    // Guest-execution profiler scratch (see arm_dyncom_interpreter.cpp): the
+    // previous executed opcode index within the current block and the running
+    // block length. -1 prev means "block start".
+    int prof_prev = -1;
+    std::uint32_t prof_block_len = 0;
+#endif
+
     std::uint64_t make_instruction_cache_key(std::uint32_t vaddr) const {
         return (static_cast<std::uint64_t>(instruction_cache_asid) << 32) | vaddr;
     }
