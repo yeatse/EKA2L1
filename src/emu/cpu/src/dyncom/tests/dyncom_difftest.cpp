@@ -217,6 +217,36 @@ std::uint32_t golden_shifter(std::uint32_t op2_field, bool is_immediate, const s
 
     const std::uint32_t rm = regs[op2_field & 0xF];
     const std::uint32_t shift_type = (op2_field >> 5) & 0x3;
+
+    // Register-specified shift (bit 4 set): the amount is the low byte of Rs and
+    // the >=32 cases have their own carry-out rules.
+    if (op2_field & 0x10) {
+        const std::uint32_t amt = regs[(op2_field >> 8) & 0xF] & 0xFF;
+        if (amt == 0) {
+            *carry_out = carry_in;
+            return rm;
+        }
+        switch (shift_type) {
+        case 0: // LSL
+            if (amt < 32) { *carry_out = (rm >> (32 - amt)) & 1; return rm << amt; }
+            if (amt == 32) { *carry_out = rm & 1; return 0; }
+            *carry_out = false; return 0;
+        case 1: // LSR
+            if (amt < 32) { *carry_out = (rm >> (amt - 1)) & 1; return rm >> amt; }
+            if (amt == 32) { *carry_out = (rm >> 31) & 1; return 0; }
+            *carry_out = false; return 0;
+        case 2: // ASR
+            if (amt < 32) { *carry_out = (rm >> (amt - 1)) & 1; return (std::uint32_t)((std::int32_t)rm >> amt); }
+            *carry_out = (rm >> 31) & 1; return (rm & N_BIT) ? 0xFFFFFFFF : 0;
+        default: { // ROR
+            const std::uint32_t a = amt & 0x1F;
+            if (a == 0) { *carry_out = (rm >> 31) & 1; return rm; } // amount a non-zero multiple of 32
+            *carry_out = (rm >> (a - 1)) & 1;
+            return (rm >> a) | (rm << (32 - a));
+        }
+        }
+    }
+
     const std::uint32_t amount = (op2_field >> 7) & 0x1F; // immediate shift amount
 
     switch (shift_type) {
@@ -355,8 +385,14 @@ std::uint32_t gen_data_processing(rng &r) {
     } else {
         const std::uint32_t rm = r.range(15);     // 0..14
         const std::uint32_t shtype = r.range(4);
-        const std::uint32_t amount = r.range(32);
-        op2 = (amount << 7) | (shtype << 5) | rm; // bit4 = 0 -> immediate shift
+        if (r.flip()) {
+            // Register-specified shift: bit4 = 1, amount = Rs[11:8] (0..14).
+            const std::uint32_t rs = r.range(15);
+            op2 = (rs << 8) | (shtype << 5) | (1u << 4) | rm;
+        } else {
+            const std::uint32_t amount = r.range(32);
+            op2 = (amount << 7) | (shtype << 5) | rm; // bit4 = 0 -> immediate shift
+        }
     }
 
     return (cond << 28) | (0u << 26) | ((is_imm ? 1u : 0u) << 25) | (opcode << 21) | ((S ? 1u : 0u) << 20) | (rn << 16) | (rd << 12) | op2;
