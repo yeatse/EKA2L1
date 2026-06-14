@@ -24,8 +24,13 @@
 #include <cpu/dyncom/arm_dyncom.h>
 
 // iOS device builds have no JIT backend wired up yet; simulator builds run as
-// host macOS processes and can use dynarmic for acceptance coverage.
-#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && (!EKA2L1_PLATFORM(IOS) || EKA2L1_IOS_SIMULATOR_DYNARMIC))
+// host macOS processes and can use dynarmic for acceptance coverage. The
+// dyncom-only build (e.g. the differential test harness) forces dynarmic off on
+// any host so it doesn't drag in the dynarmic headers/library.
+#if !defined(EKA2L1_CPU_DYNCOM_ONLY_BUILD)
+#define EKA2L1_CPU_DYNCOM_ONLY_BUILD 0
+#endif
+#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && (!EKA2L1_PLATFORM(IOS) || EKA2L1_IOS_SIMULATOR_DYNARMIC) && !EKA2L1_CPU_DYNCOM_ONLY_BUILD)
 
 #if EKA2L1_ARCH(ARM)
 #include <cpu/12l1r/arm_12l1r.h>

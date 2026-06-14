@@ -1,0 +1,466 @@
+/*
+ * Copyright (c) 2026 EKA2L1 Team.
+ *
+ * Differential test harness for the dyncom interpreter.
+ *
+ * Standalone host tool (no Catch2 dependency) that runs randomized ARM
+ * instruction cases through the dyncom interpreter and checks the guest-visible
+ * result against:
+ *   (a) an independent golden ALU model (data-processing semantics + the ARM
+ *       barrel-shifter carry-out rules) -- the fixed reference that the
+ *       semantic optimizations (shifter specialization, lazy flags, inline
+ *       AddWithCarry) must keep matching, and
+ *   (b) a second dyncom instance (self-A/B) -- so a dispatch-shape optimization
+ *       gated behind a flag can be proven behaviour-preserving by toggling it
+ *       on one side.
+ *
+ * A negative-control case deliberately perturbs the result to prove the
+ * comparator actually detects a divergence (a harness that can never fail is
+ * useless).
+ *
+ * Build:  cmake -DEKA2L1_BUILD_DYNCOM_DIFFTEST=ON -DEKA2L1_CPU_DYNCOM_ONLY=ON ...
+ * Run:    scripts/cpu_difftest.sh   (exits non-zero on the first divergence)
+ */
+
+#include <cpu/dyncom/arm_dyncom.h>
+#include <cpu/12l1r/exclusive_monitor.h>
+
+#include <common/types.h>
+
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <random>
+#include <vector>
+
+using namespace eka2l1;
+using namespace eka2l1::arm;
+
+namespace {
+
+constexpr std::uint32_t MEM_SIZE = 0x10000; // 64 KB flat memory
+constexpr std::size_t PAGE_BITS = 12;
+constexpr std::uint32_t PAGE_MASK = (1u << PAGE_BITS) - 1;
+
+// ---------------------------------------------------------------------------
+// dyncom core over a flat memory buffer
+// ---------------------------------------------------------------------------
+struct diff_env {
+    std::vector<std::uint8_t> mem;
+    r12l1::exclusive_monitor monitor;
+    diff_env()
+        : mem(MEM_SIZE, 0)
+        , monitor(1) {
+    }
+};
+
+std::unique_ptr<dyncom_core> make_core(diff_env &env) {
+    auto core = std::make_unique<dyncom_core>(&env.monitor, PAGE_BITS);
+    std::uint8_t *base = env.mem.data();
+    dyncom_core *cp = core.get();
+
+    auto seed_tlb = [cp, base](std::uint32_t addr) {
+        const std::uint32_t page = addr & ~PAGE_MASK;
+        cp->set_tlb_page(page, base + page, prot_read_write);
+    };
+
+    core->read_code = [base](const address a, std::uint32_t *r) -> bool {
+        if (a + 4 > MEM_SIZE)
+            return false;
+        std::memcpy(r, base + a, 4);
+        return true;
+    };
+    core->read_8bit = [base, seed_tlb](const address a, std::uint8_t *r) -> bool {
+        if (a >= MEM_SIZE)
+            return false;
+        *r = base[a];
+        seed_tlb(a);
+        return true;
+    };
+    core->read_16bit = [base, seed_tlb](const address a, std::uint16_t *r) -> bool {
+        if (a + 2 > MEM_SIZE)
+            return false;
+        std::memcpy(r, base + a, 2);
+        seed_tlb(a);
+        return true;
+    };
+    core->read_32bit = [base, seed_tlb](const address a, std::uint32_t *r) -> bool {
+        if (a + 4 > MEM_SIZE)
+            return false;
+        std::memcpy(r, base + a, 4);
+        seed_tlb(a);
+        return true;
+    };
+    core->read_64bit = [base, seed_tlb](const address a, std::uint64_t *r) -> bool {
+        if (a + 8 > MEM_SIZE)
+            return false;
+        std::memcpy(r, base + a, 8);
+        seed_tlb(a);
+        return true;
+    };
+    core->write_8bit = [base, seed_tlb](const address a, std::uint8_t *v) -> bool {
+        if (a >= MEM_SIZE)
+            return false;
+        base[a] = *v;
+        seed_tlb(a);
+        return true;
+    };
+    core->write_16bit = [base, seed_tlb](const address a, std::uint16_t *v) -> bool {
+        if (a + 2 > MEM_SIZE)
+            return false;
+        std::memcpy(base + a, v, 2);
+        seed_tlb(a);
+        return true;
+    };
+    core->write_32bit = [base, seed_tlb](const address a, std::uint32_t *v) -> bool {
+        if (a + 4 > MEM_SIZE)
+            return false;
+        std::memcpy(base + a, v, 4);
+        seed_tlb(a);
+        return true;
+    };
+    core->write_64bit = [base, seed_tlb](const address a, std::uint64_t *v) -> bool {
+        if (a + 8 > MEM_SIZE)
+            return false;
+        std::memcpy(base + a, v, 8);
+        seed_tlb(a);
+        return true;
+    };
+
+    core->exception_handler = [](exception_type, const std::uint32_t) -> bool { return false; };
+    core->system_call_handler = [](const std::uint32_t) {};
+
+    return core;
+}
+
+// ---------------------------------------------------------------------------
+// Guest-visible state snapshot
+// ---------------------------------------------------------------------------
+struct cpu_state {
+    std::uint32_t reg[16];
+    std::uint32_t cpsr;
+
+    bool operator==(const cpu_state &o) const {
+        return std::memcmp(this, &o, sizeof(cpu_state)) == 0;
+    }
+};
+
+cpu_state read_state(dyncom_core &c) {
+    cpu_state s{};
+    for (std::size_t i = 0; i < 16; i++) {
+        s.reg[i] = c.get_reg(i);
+    }
+    s.cpsr = c.get_cpsr();
+    return s;
+}
+
+void write_state(dyncom_core &c, const cpu_state &s) {
+    for (std::size_t i = 0; i < 16; i++) {
+        c.set_reg(i, s.reg[i]);
+    }
+    c.set_cpsr(s.cpsr);
+}
+
+// ---------------------------------------------------------------------------
+// Golden ALU model (independent reference) -- ARM data-processing
+// ---------------------------------------------------------------------------
+constexpr std::uint32_t N_BIT = 1u << 31;
+constexpr std::uint32_t Z_BIT = 1u << 30;
+constexpr std::uint32_t C_BIT = 1u << 29;
+constexpr std::uint32_t V_BIT = 1u << 28;
+
+bool cond_passed(std::uint32_t cond, std::uint32_t cpsr) {
+    const bool n = cpsr & N_BIT, z = cpsr & Z_BIT, c = cpsr & C_BIT, v = cpsr & V_BIT;
+    switch (cond) {
+    case 0x0: return z;                       // EQ
+    case 0x1: return !z;                      // NE
+    case 0x2: return c;                       // CS
+    case 0x3: return !c;                      // CC
+    case 0x4: return n;                       // MI
+    case 0x5: return !n;                      // PL
+    case 0x6: return v;                       // VS
+    case 0x7: return !v;                      // VC
+    case 0x8: return c && !z;                 // HI
+    case 0x9: return !c || z;                 // LS
+    case 0xA: return n == v;                  // GE
+    case 0xB: return n != v;                  // LT
+    case 0xC: return !z && (n == v);          // GT
+    case 0xD: return z || (n != v);           // LE
+    case 0xE: return true;                    // AL
+    default: return true;
+    }
+}
+
+// Independent add-with-carry (64-bit; deliberately NOT the interpreter's
+// __builtin version, so it cross-checks rather than mirrors a bug).
+std::uint32_t golden_addc(std::uint32_t a, std::uint32_t b, std::uint32_t cin, bool *carry, bool *overflow) {
+    const std::uint64_t usum = (std::uint64_t)a + (std::uint64_t)b + (std::uint64_t)cin;
+    const std::int64_t ssum = (std::int64_t)(std::int32_t)a + (std::int64_t)(std::int32_t)b + (std::int64_t)cin;
+    const std::uint32_t r = (std::uint32_t)usum;
+    *carry = (usum >> 32) != 0;
+    *overflow = ((std::int64_t)(std::int32_t)r != ssum);
+    return r;
+}
+
+// Barrel shifter (immediate-specified shifts + the immediate-operand rotate).
+// Returns the operand value and the shifter carry-out.
+std::uint32_t golden_shifter(std::uint32_t op2_field, bool is_immediate, const std::uint32_t *regs,
+    bool carry_in, bool *carry_out) {
+    if (is_immediate) {
+        const std::uint32_t imm8 = op2_field & 0xFF;
+        const std::uint32_t rot = ((op2_field >> 8) & 0xF) * 2;
+        const std::uint32_t val = (rot == 0) ? imm8 : ((imm8 >> rot) | (imm8 << (32 - rot)));
+        *carry_out = (rot == 0) ? carry_in : ((val >> 31) & 1);
+        return val;
+    }
+
+    const std::uint32_t rm = regs[op2_field & 0xF];
+    const std::uint32_t shift_type = (op2_field >> 5) & 0x3;
+    const std::uint32_t amount = (op2_field >> 7) & 0x1F; // immediate shift amount
+
+    switch (shift_type) {
+    case 0: // LSL
+        if (amount == 0) {
+            *carry_out = carry_in;
+            return rm;
+        }
+        *carry_out = (rm >> (32 - amount)) & 1;
+        return rm << amount;
+    case 1: // LSR (amount 0 means 32)
+        if (amount == 0) {
+            *carry_out = (rm >> 31) & 1;
+            return 0;
+        }
+        *carry_out = (rm >> (amount - 1)) & 1;
+        return rm >> amount;
+    case 2: // ASR (amount 0 means 32)
+        if (amount == 0) {
+            *carry_out = (rm >> 31) & 1;
+            return (rm & N_BIT) ? 0xFFFFFFFF : 0;
+        }
+        *carry_out = (rm >> (amount - 1)) & 1;
+        return (std::uint32_t)((std::int32_t)rm >> amount);
+    default:  // ROR / RRX (amount 0 means RRX)
+        if (amount == 0) { // RRX
+            *carry_out = rm & 1;
+            return (rm >> 1) | (carry_in ? N_BIT : 0);
+        }
+        *carry_out = (rm >> (amount - 1)) & 1;
+        return (rm >> amount) | (rm << (32 - amount));
+    }
+}
+
+// Apply one data-processing instruction to a golden state. Returns the expected
+// post-state. Mirrors ARM semantics for the 16 DP opcodes (no PC writes, no
+// S+Rd==15 SPSR restore -- the generator never emits those).
+cpu_state golden_data_processing(std::uint32_t inst, const cpu_state &in) {
+    cpu_state out = in;
+    out.reg[15] = in.reg[15] + 4; // PC advances one ARM instruction
+
+    const std::uint32_t cond = inst >> 28;
+    if (!cond_passed(cond, in.cpsr)) {
+        return out; // condition failed: only PC advanced
+    }
+
+    const bool is_imm = (inst >> 25) & 1;
+    const std::uint32_t opcode = (inst >> 21) & 0xF;
+    const bool S = (inst >> 20) & 1;
+    const std::uint32_t rn = (inst >> 16) & 0xF;
+    const std::uint32_t rd = (inst >> 12) & 0xF;
+    const std::uint32_t op2_field = inst & 0xFFF;
+
+    const bool cin = (in.cpsr & C_BIT) != 0;
+    bool shifter_carry = cin;
+    const std::uint32_t b = golden_shifter(op2_field, is_imm, in.reg, cin, &shifter_carry);
+    const std::uint32_t a = in.reg[rn];
+
+    std::uint32_t result = 0;
+    bool write_rd = true;
+    bool logical = true;
+    bool carry = cin, overflow = (in.cpsr & V_BIT) != 0;
+
+    switch (opcode) {
+    case 0x0: result = a & b; break;                                   // AND
+    case 0x1: result = a ^ b; break;                                   // EOR
+    case 0x2: result = golden_addc(a, ~b, 1, &carry, &overflow); logical = false; break;       // SUB
+    case 0x3: result = golden_addc(~a, b, 1, &carry, &overflow); logical = false; break;       // RSB
+    case 0x4: result = golden_addc(a, b, 0, &carry, &overflow); logical = false; break;        // ADD
+    case 0x5: result = golden_addc(a, b, cin, &carry, &overflow); logical = false; break;      // ADC
+    case 0x6: result = golden_addc(a, ~b, cin, &carry, &overflow); logical = false; break;     // SBC
+    case 0x7: result = golden_addc(~a, b, cin, &carry, &overflow); logical = false; break;     // RSC
+    case 0x8: result = a & b; write_rd = false; break;                 // TST
+    case 0x9: result = a ^ b; write_rd = false; break;                 // TEQ
+    case 0xA: result = golden_addc(a, ~b, 1, &carry, &overflow); logical = false; write_rd = false; break; // CMP
+    case 0xB: result = golden_addc(a, b, 0, &carry, &overflow); logical = false; write_rd = false; break;  // CMN
+    case 0xC: result = a | b; break;                                   // ORR
+    case 0xD: result = b; break;                                       // MOV
+    case 0xE: result = a & ~b; break;                                  // BIC
+    case 0xF: result = ~b; break;                                      // MVN
+    default: break;
+    }
+
+    if (write_rd) {
+        out.reg[rd] = result;
+    }
+
+    if (S) {
+        std::uint32_t cpsr = out.cpsr & ~(N_BIT | Z_BIT | C_BIT | V_BIT);
+        if (result & N_BIT) cpsr |= N_BIT;
+        if (result == 0) cpsr |= Z_BIT;
+        if (logical) {
+            if (shifter_carry) cpsr |= C_BIT;
+            cpsr |= (in.cpsr & V_BIT); // V unchanged for logical
+        } else {
+            if (carry) cpsr |= C_BIT;
+            if (overflow) cpsr |= V_BIT;
+        }
+        out.cpsr = cpsr;
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// Random instruction + state generation
+// ---------------------------------------------------------------------------
+struct rng {
+    std::mt19937 e;
+    explicit rng(std::uint32_t seed)
+        : e(seed) {
+    }
+    std::uint32_t u32() { return e(); }
+    std::uint32_t range(std::uint32_t n) { return e() % n; }
+    bool flip() { return e() & 1; }
+};
+
+// A random data-processing instruction. cond is AL most of the time but
+// sometimes a real condition (to exercise the conditional path). Operand
+// registers are kept out of R15 (PC) so there are no PC-as-operand / PC-write
+// edge cases -- those belong in a dedicated edge corpus.
+std::uint32_t gen_data_processing(rng &r) {
+    const std::uint32_t cond = (r.range(4) == 0) ? r.range(14) : 0xE; // 0..13 or AL
+    std::uint32_t opcode = r.range(16);
+    const bool is_imm = r.flip();
+    bool S = r.flip();
+    if (opcode >= 0x8 && opcode <= 0xB) {
+        S = true; // TST/TEQ/CMP/CMN always set flags
+    }
+    const std::uint32_t rn = r.range(15);  // 0..14
+    const std::uint32_t rd = r.range(15);  // 0..14 (never PC)
+
+    std::uint32_t op2;
+    if (is_imm) {
+        op2 = (r.range(16) << 8) | r.range(256); // rotate(4) + imm8(8)
+    } else {
+        const std::uint32_t rm = r.range(15);     // 0..14
+        const std::uint32_t shtype = r.range(4);
+        const std::uint32_t amount = r.range(32);
+        op2 = (amount << 7) | (shtype << 5) | rm; // bit4 = 0 -> immediate shift
+    }
+
+    return (cond << 28) | (0u << 26) | ((is_imm ? 1u : 0u) << 25) | (opcode << 21) | ((S ? 1u : 0u) << 20) | (rn << 16) | (rd << 12) | op2;
+}
+
+cpu_state gen_state(rng &r) {
+    cpu_state s{};
+    for (int i = 0; i < 15; i++) {
+        s.reg[i] = r.u32();
+    }
+    s.reg[15] = 0; // PC at the instruction under test
+    // USER mode, ARM state, IRQ/FIQ disabled; random NZCV.
+    s.cpsr = 0x10 | (0xF0000000u & r.u32());
+    return s;
+}
+
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
+void dump_state(const char *tag, const cpu_state &s) {
+    std::printf("  %s:", tag);
+    for (int i = 0; i < 16; i++) {
+        std::printf(" r%d=%08X", i, s.reg[i]);
+    }
+    std::printf(" cpsr=%08X\n", s.cpsr);
+}
+
+bool report_mismatch(const char *what, std::uint32_t inst, std::uint32_t seed,
+    const cpu_state &expect, const cpu_state &got) {
+    std::printf("[DIVERGENCE] %s  inst=%08X seed=%u\n", what, inst, seed);
+    dump_state("expect", expect);
+    dump_state("got   ", got);
+    return false;
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+    std::uint32_t base_seed = 1;
+    std::uint32_t count = 200000;
+    if (argc > 1) base_seed = static_cast<std::uint32_t>(std::strtoul(argv[1], nullptr, 0));
+    if (argc > 2) count = static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 0));
+
+    std::printf("dyncom_difftest: data-processing, %u cases from seed %u\n", count, base_seed);
+
+    diff_env env_a, env_b;
+    auto core_a = make_core(env_a);
+    auto core_b = make_core(env_b);
+
+    std::uint32_t failures = 0;
+
+    for (std::uint32_t i = 0; i < count; i++) {
+        const std::uint32_t seed = base_seed + i;
+        rng r(seed);
+
+        const std::uint32_t inst = gen_data_processing(r);
+        const cpu_state init = gen_state(r);
+
+        // Place the instruction (+ a NOP-ish guard) at PC 0 in both envs.
+        std::memcpy(env_a.mem.data(), &inst, 4);
+        std::memcpy(env_b.mem.data(), &inst, 4);
+
+        core_a->imb_range(0, 8);
+        core_b->imb_range(0, 8);
+
+        write_state(*core_a, init);
+        write_state(*core_b, init);
+
+        core_a->set_pc(0);
+        core_b->set_pc(0);
+        core_a->run(1);
+        core_b->run(1);
+
+        const cpu_state got_a = read_state(*core_a);
+        const cpu_state got_b = read_state(*core_b);
+        const cpu_state golden = golden_data_processing(inst, init);
+
+        // (a) dyncom vs the independent golden model.
+        if (!(got_a == golden)) {
+            report_mismatch("dyncom != golden", inst, seed, golden, got_a);
+            if (++failures >= 20) break;
+            continue;
+        }
+        // (b) self-A/B (determinism today; a flag-gated optimization later).
+        if (!(got_a == got_b)) {
+            report_mismatch("core A != core B", inst, seed, got_a, got_b);
+            if (++failures >= 20) break;
+        }
+    }
+
+    // Negative control: prove the comparator catches a deliberate divergence.
+    {
+        cpu_state x{}, y{};
+        y.reg[3] = 1;
+        if (x == y) {
+            std::printf("[HARNESS BUG] comparator failed to detect an injected divergence\n");
+            failures++;
+        }
+    }
+
+    if (failures == 0) {
+        std::printf("dyncom_difftest: PASS (%u cases, golden + self-A/B + negative control)\n", count);
+        return 0;
+    }
+    std::printf("dyncom_difftest: FAIL (%u divergences)\n", failures);
+    return 1;
+}
