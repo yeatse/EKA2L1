@@ -391,6 +391,50 @@ namespace eka2l1::ios {
         std::uint64_t launch_generation = 0;
     };
 
+    // Typed service-server accessors. The window / applist / fbs servers are
+    // all looked up by their epoc-version-specific name, so wrap the verbose
+    // get_by_name<server>(name_by_epocver(...)) + reinterpret_cast that would
+    // otherwise be repeated at every call site. All return nullptr for a null
+    // kernel so callers can chain without a separate guard.
+    static eka2l1::window_server *get_window_server(eka2l1::kernel_system *kern) {
+        if (!kern) {
+            return nullptr;
+        }
+        return reinterpret_cast<eka2l1::window_server *>(
+            kern->get_by_name<eka2l1::service::server>(
+                eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+    }
+
+    static eka2l1::applist_server *get_applist_server(eka2l1::kernel_system *kern) {
+        if (!kern) {
+            return nullptr;
+        }
+        return reinterpret_cast<eka2l1::applist_server *>(
+            kern->get_by_name<eka2l1::service::server>(
+                eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
+    }
+
+    static eka2l1::fbs_server *get_fbs_server(eka2l1::kernel_system *kern) {
+        if (!kern) {
+            return nullptr;
+        }
+        return reinterpret_cast<eka2l1::fbs_server *>(
+            kern->get_by_name<eka2l1::service::server>(
+                eka2l1::epoc::get_fbs_server_name_by_epocver(kern->get_epoc_version())));
+    }
+
+    // The component bundle handed to each new eka2l1::system. iOS never feeds a
+    // graphics driver through here (it is bound later, once the EAGL context is
+    // live); audio / conf / settings live for the emulator's whole lifetime.
+    static eka2l1::system_create_components make_system_components(emulator *state) {
+        eka2l1::system_create_components comp;
+        comp.audio_ = state->audio_driver.get();
+        comp.graphics_ = nullptr;
+        comp.conf_ = &state->conf;
+        comp.settings_ = state->settings.get();
+        return comp;
+    }
+
     static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
         if (!state) {
             return false;
@@ -417,6 +461,18 @@ namespace eka2l1::ios {
         }
     }
 
+    // Stop the os_thread from ticking symsys->loop() and wait out any tick in
+    // flight, returning the held loop lock so the caller can mutate symsys /
+    // kernel state exclusively. Mirrors the prologue used by device install,
+    // boot and app-close. The caller owns `mounted` afterwards: boot flips it
+    // back true, a failed install restores the previous value, app-close leaves
+    // it false.
+    [[nodiscard]] static std::unique_lock<std::mutex> pause_loop_and_lock(emulator *state) {
+        state->mounted = false;
+        break_core_idling(state);
+        return std::unique_lock<std::mutex>(state->loop_mutex);
+    }
+
     static bool bind_graphics_driver(emulator *state) {
         if (!state || !state->symsys || !state->graphics_driver) {
             return false;
@@ -424,10 +480,8 @@ namespace eka2l1::ios {
 
         state->symsys->set_graphics_driver(state->graphics_driver.get());
         auto *kern = state->symsys->get_kernel_system();
-        if (!state->winserv && kern) {
-            state->winserv = reinterpret_cast<eka2l1::window_server *>(
-                kern->get_by_name<eka2l1::service::server>(
-                    eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+        if (!state->winserv) {
+            state->winserv = get_window_server(kern);
         }
         if (state->winserv) {
             for (eka2l1::epoc::screen *scr = state->winserv->get_screens(); scr; scr = scr->next) {
@@ -523,6 +577,20 @@ namespace eka2l1::ios {
         state->graphics_driver->submit_command_list(commands);
         state->present_slot ^= 1;
         state->rendered_frame_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Force the primary screen to (re)create its texture and present a frame.
+    // The first frames after launch can land before the guest has drawn, so the
+    // launch path schedules a couple of these to kick a stale/black screen.
+    static void kick_screen_redraw(emulator *state) {
+        eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
+        if (scr && !scr->screen_texture && state->graphics_driver) {
+            scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
+        }
+        if (scr && state->graphics_driver) {
+            scr->redraw(state->graphics_driver.get());
+        }
+        submit_screen_frame(state, scr);
     }
 
     static void install_required_rom_patches(emulator *state) {
@@ -745,12 +813,7 @@ namespace eka2l1::ios {
             "iOS audio: cubeb_audio_driver instance is null; services will fall back to silence");
     }
 
-    eka2l1::system_create_components comp;
-    comp.audio_ = _state->audio_driver.get();
-    comp.graphics_ = nullptr;
-    comp.conf_ = &_state->conf;
-    comp.settings_ = _state->settings.get();
-
+    auto comp = eka2l1::ios::make_system_components(_state.get());
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     _state->window = std::make_unique<eka2l1::drivers::emu_window_ios>();
 
@@ -913,9 +976,7 @@ namespace eka2l1::ios {
     // (a device may already be booted) and let it keep ticking. On success the
     // frontend boots the new device, which rebuilds the system and remounts.
     const bool was_mounted = _state->mounted;
-    _state->mounted = false;
-    break_core_idling(_state.get());
-    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
 
     auto *sys = _state->symsys.get();
     auto *dvc = sys->get_device_manager();
@@ -977,9 +1038,7 @@ namespace eka2l1::ios {
     // kernel comes up clean for the selected device. device_manager only
     // reads devices.yml on construction. Stop + drain the os_thread first so
     // the symsys reset below doesn't race a loop in flight.
-    _state->mounted = false;
-    break_core_idling(_state.get());
-    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
     _state->rendered_frame_count.store(0, std::memory_order_relaxed);
@@ -990,11 +1049,7 @@ namespace eka2l1::ios {
     _state->present_status[1] = 0;
     _state->present_slot = 0;
 
-    eka2l1::system_create_components comp;
-    comp.audio_ = _state->audio_driver.get();
-    comp.graphics_ = nullptr;
-    comp.conf_ = &_state->conf;
-    comp.settings_ = _state->settings.get();
+    auto comp = eka2l1::ios::make_system_components(_state.get());
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     auto *sys = _state->symsys.get();
 
@@ -1030,10 +1085,7 @@ namespace eka2l1::ios {
     sys->get_packages()->load_registries();
     sys->get_packages()->migrate_legacy_registries();
 
-    auto *kern = sys->get_kernel_system();
-    _state->winserv = reinterpret_cast<eka2l1::window_server *>(
-        kern->get_by_name<eka2l1::service::server>(
-            eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+    _state->winserv = eka2l1::ios::get_window_server(sys->get_kernel_system());
 
     _state->mounted = true;
     eka2l1::ios::bind_graphics_driver(_state.get());
@@ -1065,13 +1117,7 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return out;
     }
-    auto *kern = _state->symsys->get_kernel_system();
-    if (!kern) {
-        return out;
-    }
-    auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
-        kern->get_by_name<eka2l1::service::server>(
-            eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
+    auto *alserv = eka2l1::ios::get_applist_server(_state->symsys->get_kernel_system());
     if (!alserv) {
         return out;
     }
@@ -1122,9 +1168,7 @@ namespace eka2l1::ios {
     eka2l1::ios::bind_graphics_driver(_state.get());
 
     auto *kern = _state->symsys->get_kernel_system();
-    auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
-        kern->get_by_name<eka2l1::service::server>(
-            eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
+    auto *alserv = eka2l1::ios::get_applist_server(kern);
     if (!alserv) {
         return NO;
     }
@@ -1158,9 +1202,7 @@ namespace eka2l1::ios {
     }
     kern->unlock();
     if (!_state->winserv) {
-        _state->winserv = reinterpret_cast<eka2l1::window_server *>(
-            kern->get_by_name<eka2l1::service::server>(
-                eka2l1::get_winserv_name_by_epocver(kern->get_epoc_version())));
+        _state->winserv = eka2l1::ios::get_window_server(kern);
     }
     if (launched && _state->winserv) {
         auto *state = _state.get();
@@ -1169,28 +1211,14 @@ namespace eka2l1::ios {
             immediate_scr->set_screen_mode(state->winserv, state->graphics_driver.get(), immediate_scr->crr_mode);
         }
         eka2l1::ios::submit_screen_frame(state, immediate_scr);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(0.5 * NSEC_PER_SEC)),
-            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-                eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
-                if (scr && !scr->screen_texture && state->graphics_driver) {
-                    scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
-                }
-                if (scr && state->graphics_driver) {
-                    scr->redraw(state->graphics_driver.get());
-                }
-                eka2l1::ios::submit_screen_frame(state, scr);
-            });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(1.5 * NSEC_PER_SEC)),
-            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-                eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
-                if (scr && !scr->screen_texture && state->graphics_driver) {
-                    scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
-                }
-                if (scr && state->graphics_driver) {
-                    scr->redraw(state->graphics_driver.get());
-                }
-                eka2l1::ios::submit_screen_frame(state, scr);
-            });
+        // The first guest frame can lag the launch, so re-kick the screen a
+        // couple of times to flush any leftover black frame from the swapchain.
+        for (double delay : { 0.5, 1.5 }) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delay * NSEC_PER_SEC)),
+                dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                    eka2l1::ios::kick_screen_redraw(state);
+                });
+        }
     }
     return launched ? YES : NO;
 }
@@ -1228,9 +1256,7 @@ namespace eka2l1::ios {
     // Stop and drain the OS loop before killing the guest process. Otherwise
     // the loop thread can still be executing this process in HLE/active
     // scheduler code while the UI thread tears it down.
-    _state->mounted = false;
-    break_core_idling(_state.get());
-    std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
 
     auto *kern = _state->symsys->get_kernel_system();
     if (!kern) {
@@ -1541,12 +1567,8 @@ namespace eka2l1::ios {
     std::lock_guard<std::mutex> icon_lock(_state->icon_mutex);
     auto *kern = _state->symsys->get_kernel_system();
     if (!kern) return nil;
-    auto *alserv = reinterpret_cast<eka2l1::applist_server *>(
-        kern->get_by_name<eka2l1::service::server>(
-            eka2l1::get_app_list_server_name_by_epocver(kern->get_epoc_version())));
-    auto *fbsserv = reinterpret_cast<eka2l1::fbs_server *>(
-        kern->get_by_name<eka2l1::service::server>(
-            eka2l1::epoc::get_fbs_server_name_by_epocver(kern->get_epoc_version())));
+    auto *alserv = eka2l1::ios::get_applist_server(kern);
+    auto *fbsserv = eka2l1::ios::get_fbs_server(kern);
     if (!alserv) return nil;
     auto *reg = alserv->get_registration(uid);
     if (!reg) return nil;
