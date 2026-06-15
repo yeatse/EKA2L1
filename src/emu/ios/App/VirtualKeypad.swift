@@ -131,8 +131,9 @@ private struct CompactKeypad: View {
     private let topRowHeight: CGFloat = 40
     private let rowSpacing: CGFloat = 8
 
-    // Size the four number rows to exactly fill the space left under the top row.
-    private var numberKeySize: CGFloat {
+    // Height of each number row, sized to exactly fill the space left under the
+    // top row so all four rows reach the bottom of the fixed content height.
+    private var numberKeyHeight: CGFloat {
         (contentHeight - topRowHeight - 10 - rowSpacing * 3) / 4
     }
 
@@ -181,7 +182,7 @@ private struct CompactKeypad: View {
                 cornerSoftKey(scan: Scan.rightSoft, mirrored: false)
             }
             .frame(height: topRowHeight)
-            NativeNumericPad(keySize: numberKeySize, rowSpacing: rowSpacing)
+            NativeNumericPad(keyHeight: numberKeyHeight, rowSpacing: rowSpacing)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -423,36 +424,43 @@ private struct PadDividers: Shape {
     }
 }
 
-// iOS-dialer-style numeric pad: three flexible columns of round keys that spread
-// across the available width instead of clustering in the centre.
+// iOS system-keyboard-style numeric pad: three flexible columns of rounded-rect
+// keys that each fill their whole grid cell, so the tap target is large and the
+// keys spread across the full width instead of clustering in the centre.
 private struct NativeNumericPad: View {
-    var keySize: CGFloat = 56
-    var rowSpacing: CGFloat = 12
+    var keyHeight: CGFloat = 56
+    var rowSpacing: CGFloat = 8
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 14), count: 3)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     var body: some View {
         LazyVGrid(columns: columns, spacing: rowSpacing) {
             ForEach(keypadDigits, id: \.label) { digit in
-                HoldableRawKey(scan: digit.scan, hitShape: AnyShape(Circle())) { pressed in
+                // Default (rectangular) hit shape so the whole cell is tappable.
+                HoldableRawKey(scan: digit.scan) { pressed in
                     VStack(spacing: 0) {
                         Text(digit.label)
-                            .font(.system(size: keySize * 0.46, weight: .regular, design: .rounded))
+                            .font(.system(size: keyHeight * 0.46, weight: .regular, design: .rounded))
                         if !digit.sub.isEmpty {
                             Text(digit.sub)
-                                .font(.system(size: max(7, keySize * 0.16), weight: .semibold))
+                                .font(.system(size: max(8, keyHeight * 0.16), weight: .semibold))
                                 .tracking(1)
                                 .foregroundStyle(.white.opacity(0.55))
                         }
                     }
                     .foregroundStyle(.white)
-                    .frame(width: keySize, height: keySize)
-                    .background(Circle().fill(.white.opacity(pressed ? 0.30 : 0.12)))
-                    .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 1))
-                    .scaleEffect(pressed ? 0.92 : 1)
-                    .animation(.easeOut(duration: 0.12), value: pressed)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: keyHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(.white.opacity(pressed ? 0.30 : 0.14))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(.white.opacity(0.12), lineWidth: 1)
+                    )
+                    .animation(.easeOut(duration: 0.1), value: pressed)
                 }
-                .frame(maxWidth: .infinity)
             }
         }
     }
