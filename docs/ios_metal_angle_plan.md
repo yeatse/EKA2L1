@@ -64,11 +64,19 @@ Phase 4. **Gate (sim): met.**
 `EKA2L1_IOS_USE_ANGLE` (default OFF). **Gate:** app links both slices; binary-size
 delta recorded.
 
-**Phase 2 — Context + surface.** Add `gl_context_angle` (adapt `context_egl.cpp`,
-guard platform bits), selected on iOS when the flag is on. Switch
-`EmulatorViewController.layerClass` to `CAMetalLayer` under the flag; generalize the
-bridge `attachLayer:` / `render_surface` to a `CALayer*`. `swapchain_framebuffer()`
-returns 0 (EGL window FBO). **Gate:** Snakes/Calculator render via ANGLE in the sim.
+**Phase 2 — Context + surface.** _Driver side ✅ (commit `84196e10c`):_
+`gl_context_angle` (`src/emu/drivers/src/graphics/backend/context_angle.{h,mm}`)
+backed by MetalANGLE's `MGLContext` + `MGLLayer` — MGL owns the default FBO,
+depth/stencil and present, so `swapchain_framebuffer()` returns
+`MGLLayer.defaultOpenGLFrameBufferID`. `make_gl_context` selects it when
+`EKA2L1_IOS_ANGLE` is defined; the option moved to the root CMake so the `drivers`
+lib gets the define + `-F` header path. It only adopts `render_surface` if it
+`isKindOfClass:MGLLayer` (else headless), so an enabled build is crash-safe before
+the view is switched. _Remaining:_ the frontend still hands a `CAEAGLLayer`; host
+an `MGLLayer` for rendering (planned: create/own it in the ObjC++ bridge under
+`#ifdef EKA2L1_IOS_ANGLE` and pass it as `render_surface` — avoids Swift/MetalANGLE
+module-map friction), resize it on layout, route the present. **Gate:**
+Snakes/Calculator render via ANGLE in the sim.
 
 **Phase 3 — Shader/feature parity.** Verify GLSL-ES shaders + upscale shaders
 (`resources/gles`, `resources/upscale`) compile through ANGLE's translator; check
