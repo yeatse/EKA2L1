@@ -52,6 +52,8 @@
  */
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <common/log.h>
 #include <cpu/dyncom/vfp/asm_vfp.h>
 #include <cpu/dyncom/vfp/vfp.h>
@@ -1172,6 +1174,17 @@ static struct op fops[] = {
 #define FREG_BANK(x) ((x)&0x0c)
 #define FREG_IDX(x) ((x)&3)
 
+// Host-double fast path for VFP double-precision arithmetic; see the matching
+// comment in vfpsingle.cpp. Same envelope (scalar, default FPSCR mode,
+// normalized operands+result) where host arm64 IEEE-754 RN is bit-identical to
+// the softfloat reference.
+static const bool g_vfp_host_fast = (getenv("EKA2L1_NO_VFP_HOST") == nullptr);
+
+static inline bool vfp_f64_normalized(std::uint64_t bits) {
+    const std::uint64_t e = bits & 0x7FF0000000000000ull;
+    return e != 0ull && e != 0x7FF0000000000000ull;
+}
+
 std::uint32_t vfp_double_cpdo(ARMul_State *state, std::uint32_t inst, std::uint32_t fpscr) {
     std::uint32_t op = inst & FOP_MASK;
     std::uint32_t exceptions = 0;
@@ -1218,6 +1231,39 @@ std::uint32_t vfp_double_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
     if (!fop->fn) {
         LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: could not find double op {}", FEXT_TO_IDX(inst));
         goto invalid;
+    }
+
+    // Host-double fast path (see vfp_f64_normalized comment above).
+    if (g_vfp_host_fast && veclen == 0 && op != FOP_EXT
+        && (fop->flags & (OP_SD | OP_SM)) == 0
+        && (fpscr & (FPSCR_RMODE_MASK | FPSCR_FLUSH_TO_ZERO | FPSCR_DEFAULT_NAN)) == 0) {
+        const std::uint64_t nb = vfp_get_double(state, dn);
+        const std::uint64_t mb = vfp_get_double(state, dm);
+        if (vfp_f64_normalized(nb) && vfp_f64_normalized(mb)) {
+            double dnv, dmv, drv;
+            std::memcpy(&dnv, &nb, sizeof(double));
+            std::memcpy(&dmv, &mb, sizeof(double));
+            bool handled = true;
+            if (fop->fn == vfp_double_fadd)
+                drv = dnv + dmv;
+            else if (fop->fn == vfp_double_fsub)
+                drv = dnv - dmv;
+            else if (fop->fn == vfp_double_fmul)
+                drv = dnv * dmv;
+            else if (fop->fn == vfp_double_fdiv)
+                drv = dnv / dmv;
+            else
+                handled = false;
+
+            if (handled) {
+                std::uint64_t rb;
+                std::memcpy(&rb, &drv, sizeof(double));
+                if (vfp_f64_normalized(rb)) {
+                    vfp_put_double(state, rb, dest);
+                    return 0;
+                }
+            }
+        }
     }
 
     for (vecitr = 0; vecitr <= veclen; vecitr += 1 << FPSCR_LENGTH_BIT) {

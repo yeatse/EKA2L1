@@ -52,6 +52,8 @@
  */
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <common/log.h>
 #include <common/types.h>
 #include <cpu/dyncom/vfp/asm_vfp.h>
@@ -1228,6 +1230,23 @@ static struct op fops[] = {
 #define FREG_BANK(x) ((x)&0x18)
 #define FREG_IDX(x) ((x)&7)
 
+// Host-float fast path for VFP single-precision arithmetic. The interpreter's
+// VFP is the bit-accurate ARM softfloat reference (vfp_single_f*), which is the
+// dominant cost for float-heavy guest code. The host is arm64 / IEEE-754, so for
+// the common case -- scalar op, default FPSCR mode (round-to-nearest, no
+// flush-to-zero / default-NaN), and *normalized* finite operands AND result --
+// a native float op is bit-identical to the reference (both are IEEE-754 RN),
+// at a fraction of the cost. Anything outside that envelope (NaN/Inf/denormal/
+// zero in or out, non-default mode, vectors, MAC ops) falls back to softfloat,
+// which keeps exact flag/special-value semantics. Set EKA2L1_NO_VFP_HOST=1 to
+// force the reference path (A/B).
+static const bool g_vfp_host_fast = (getenv("EKA2L1_NO_VFP_HOST") == nullptr);
+
+static inline bool vfp_f32_normalized(std::int32_t bits) {
+    const std::uint32_t e = static_cast<std::uint32_t>(bits) & 0x7F800000u;
+    return e != 0u && e != 0x7F800000u; // exclude zero/denormal (e==0) and Inf/NaN (e==0xFF)
+}
+
 std::uint32_t vfp_single_cpdo(ARMul_State *state, std::uint32_t inst, std::uint32_t fpscr) {
     std::uint32_t op = inst & FOP_MASK;
     std::uint32_t exceptions = 0;
@@ -1268,6 +1287,41 @@ std::uint32_t vfp_single_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
             FEXT_TO_IDX(inst), inst, state->Reg[15]);
         //Crash();
         goto invalid;
+    }
+
+    // Host-float fast path (see vfp_f32_normalized comment above).
+    if (g_vfp_host_fast && veclen == 0 && op != FOP_EXT
+        && (fpscr & (FPSCR_RMODE_MASK | FPSCR_FLUSH_TO_ZERO | FPSCR_DEFAULT_NAN)) == 0) {
+        const std::int32_t nb = state->ExtReg[sn];
+        const std::int32_t mb = state->ExtReg[sm];
+        if (vfp_f32_normalized(nb) && vfp_f32_normalized(mb)) {
+            float fn, fm, fr;
+            std::memcpy(&fn, &nb, sizeof(float));
+            std::memcpy(&fm, &mb, sizeof(float));
+            bool handled = true;
+            if (fop->fn == vfp_single_fadd)
+                fr = fn + fm;
+            else if (fop->fn == vfp_single_fsub)
+                fr = fn - fm;
+            else if (fop->fn == vfp_single_fmul)
+                fr = fn * fm;
+            else if (fop->fn == vfp_single_fdiv)
+                fr = fn / fm;
+            else
+                handled = false;
+
+            if (handled) {
+                std::int32_t rb;
+                std::memcpy(&rb, &fr, sizeof(float));
+                // Only commit when the result is also normalized -- otherwise the
+                // reference would set overflow/underflow/inexact + apply FZ, which
+                // we don't replicate here.
+                if (vfp_f32_normalized(rb)) {
+                    state->ExtReg[dest] = rb;
+                    return 0;
+                }
+            }
+        }
     }
 
     for (vecitr = 0; vecitr <= veclen; vecitr += 1 << FPSCR_LENGTH_BIT) {
