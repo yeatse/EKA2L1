@@ -1046,7 +1046,23 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 #define RDLO cpu->Reg[inst_cream->RdLo]
 #define LINK_RTN_ADDR (cpu->Reg[14] = cpu->Reg[15] + 4)
 #define SET_PC (cpu->Reg[15] = cpu->Reg[15] + 8 + inst_cream->signed_immed_24)
-#define SHIFTER_OPERAND inst_cream->shtop_func(cpu, inst_cream->shifter_operand)
+// Like LS_GET_ADDR, but for the data-processing shifter operand: inline the
+// dominant immediate form (`#imm` -> rotate of imm8) at the call site behind a
+// single well-predicted pointer compare, instead of the polymorphic indirect
+// shtop_func() call. A statement-expression keeps it usable wherever the old
+// macro was an expression.
+#define SHIFTER_OPERAND ({                                                          \
+    const shtop_fp_t f_ = inst_cream->shtop_func;                                   \
+    const unsigned int so_ = inst_cream->shifter_operand;                           \
+    unsigned int v_;                                                                \
+    if (f_ == DataProcessingOperandsImmediate) {                                    \
+        v_ = ROTATE_RIGHT_32(BITS(so_, 0, 7), BITS(so_, 8, 11) * 2);                \
+        cpu->shifter_carry_out = (BITS(so_, 8, 11) == 0) ? cpu->CFlag : BIT(v_, 31);\
+    } else {                                                                        \
+        v_ = f_(cpu, so_);                                                          \
+    }                                                                               \
+    v_;                                                                             \
+})
 
 #define FETCH_INST                                 \
     if (inst_base->br != TransExtData::NON_BRANCH) \
