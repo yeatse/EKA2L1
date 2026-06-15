@@ -117,7 +117,6 @@ if (EKA2L1_IOS_USE_ANGLE)
     set(EKA2L1_METALANGLE_XCFRAMEWORK
         "${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework")
     message(STATUS "EKA2L1 iOS: MetalANGLE enabled (${EKA2L1_METALANGLE_XCFRAMEWORK})")
-    target_sources(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}/AngleSmoke.mm")
     target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE EKA2L1_IOS_ANGLE=1)
     target_link_libraries(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_METALANGLE_XCFRAMEWORK}")
     set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
