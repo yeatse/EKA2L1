@@ -360,6 +360,25 @@ static void LnSWoUB(ImmediateOffset)(ARMul_State *cpu, unsigned int inst, unsign
     virt_addr = addr;
 }
 
+// Fast path for the dominant single load/store addressing form: immediate
+// offset, no write-back (`[Rn, #+/-imm12]`). The generic path calls
+// inst_cream->get_addr through a function pointer -- a polymorphic indirect
+// branch at the shared handler site. This inlines the trivial base +/- imm12
+// computation for that common form and only falls back to the pointer for the
+// rarer modes; the pointer compare is one well-predicted branch.
+#define LS_GET_ADDR(addr_out)                                                        \
+    do {                                                                             \
+        if (inst_cream->get_addr == LnSWoUBImmediateOffset) {                        \
+            const unsigned int ls_inst_ = inst_cream->inst;                          \
+            const std::uint32_t ls_base_ =                                           \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 16, 19));                    \
+            (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + BITS(ls_inst_, 0, 11))      \
+                                           : (ls_base_ - BITS(ls_inst_, 0, 11));     \
+        } else {                                                                     \
+            inst_cream->get_addr(cpu, inst_cream->inst, (addr_out));                 \
+        }                                                                            \
+    } while (0)
+
 static void LnSWoUB(RegisterOffset)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
     unsigned int Rn = BITS(inst, 16, 19);
     unsigned int Rm = BITS(inst, 0, 3);
@@ -2150,7 +2169,7 @@ LDC_INST : {
 LDM_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         // The register list maps to contiguous, ascending addresses -- resolve the
         // host page once and reuse it for the whole run (see block_cursor).
@@ -2241,7 +2260,7 @@ SXTH_INST : {
 }
 LDR_INST : {
     ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-    inst_cream->get_addr(cpu, inst_cream->inst, addr);
+    LS_GET_ADDR(addr);
 
     unsigned int value = cpu->ReadMemory32(addr);
     cpu->Reg[BITS(inst_cream->inst, 12, 15)] = value;
@@ -2262,7 +2281,7 @@ LDR_INST : {
 LDRCOND_INST : {
     if (CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         unsigned int value = cpu->ReadMemory32(addr);
         cpu->Reg[BITS(inst_cream->inst, 12, 15)] = value;
@@ -2305,7 +2324,7 @@ UXTAH_INST : {
 LDRB_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         cpu->Reg[BITS(inst_cream->inst, 12, 15)] = cpu->ReadMemory8(addr);
     }
@@ -2317,7 +2336,7 @@ LDRB_INST : {
 LDRBT_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         const std::uint32_t dest_index = BITS(inst_cream->inst, 12, 15);
         const std::uint32_t previous_mode = cpu->Mode;
@@ -2338,7 +2357,7 @@ LDRD_INST : {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
         // Should check if RD is even-numbered, Rd != 14, addr[0:1] == 0, (CP15_reg1_U == 1 ||
         // addr[2] == 0)
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         // The 3DS doesn't have LPAE (Large Physical Access Extension), so it
         // wouldn't do this as a single read.
@@ -2409,7 +2428,7 @@ LDREXD_INST : {
 LDRH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         cpu->Reg[BITS(inst_cream->inst, 12, 15)] = cpu->ReadMemory16(addr);
     }
@@ -2421,7 +2440,7 @@ LDRH_INST : {
 LDRSB_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
         unsigned int value = cpu->ReadMemory8(addr);
         if (BIT(value, 7)) {
             value |= 0xffffff00;
@@ -2436,7 +2455,7 @@ LDRSB_INST : {
 LDRSH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         unsigned int value = cpu->ReadMemory16(addr);
         if (BIT(value, 15)) {
@@ -2452,7 +2471,7 @@ LDRSH_INST : {
 LDRT_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         const std::uint32_t dest_index = BITS(inst_cream->inst, 12, 15);
         const std::uint32_t previous_mode = cpu->Mode;
@@ -3666,7 +3685,7 @@ STM_INST : {
         unsigned int Rn = BITS(inst, 16, 19);
         unsigned int old_RN = cpu->Reg[Rn];
 
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         // Contiguous, ascending stores -- resolve the host page once (see block_cursor).
         ARMul_State::block_cursor stm_cur;
@@ -3740,7 +3759,7 @@ SXTB_INST : {
 STR_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         unsigned int reg = BITS(inst_cream->inst, 12, 15);
         unsigned int value = cpu->Reg[reg];
@@ -3780,7 +3799,7 @@ UXTAB_INST : {
 STRB_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
         unsigned int value = cpu->Reg[BITS(inst_cream->inst, 12, 15)] & 0xff;
         cpu->WriteMemory8(addr, value);
     }
@@ -3792,7 +3811,7 @@ STRB_INST : {
 STRBT_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         const std::uint32_t previous_mode = cpu->Mode;
         const std::uint32_t value = cpu->Reg[BITS(inst_cream->inst, 12, 15)] & 0xff;
@@ -3809,7 +3828,7 @@ STRBT_INST : {
 STRD_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         // The 3DS doesn't have the Large Physical Access Extension (LPAE)
         // so STRD wouldn't store these as a single write.
@@ -3881,7 +3900,7 @@ STREXH_INST : {
 STRH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         unsigned int value = cpu->Reg[BITS(inst_cream->inst, 12, 15)] & 0xffff;
         cpu->WriteMemory16(addr, value);
@@ -3894,7 +3913,7 @@ STRH_INST : {
 STRT_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        inst_cream->get_addr(cpu, inst_cream->inst, addr);
+        LS_GET_ADDR(addr);
 
         const std::uint32_t previous_mode = cpu->Mode;
         const std::uint32_t rt_index = BITS(inst_cream->inst, 12, 15);
