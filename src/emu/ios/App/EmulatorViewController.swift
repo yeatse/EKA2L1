@@ -114,15 +114,22 @@ private final class EKA2L1RenderView: UIView {
         EKA2L1Bridge.shared.tapRawKey(gesture.scale >= 1.0 ? 0x10 : 0x11)
     }
 
+    // Map a hardware-keyboard press to an EPOC standard scan code (see
+    // services/window/keys.h `std_scan_code`). Alphanumerics use their uppercase
+    // ASCII value as the scan code — that's the EPOC convention, which is why the
+    // digits/letters can be forwarded straight through; space/backspace/tab and
+    // the soft keys do not follow ASCII and are mapped by keyCode instead.
     private func scanCode(for press: UIPress) -> UInt32 {
         let chars = press.key?.charactersIgnoringModifiers.lowercased() ?? ""
         if chars.count == 1, let scalar = chars.unicodeScalars.first {
             switch scalar.value {
-            case 48...57:
+            case 48...57:           // 0-9
                 return UInt32(scalar.value)
-            case 42:
+            case 97...122:          // a-z -> uppercase ASCII == std scan code
+                return UInt32(scalar.value) - 0x20
+            case 42:                // *
                 return 0x2a
-            case 35:
+            case 35:                // #
                 return 0x7f
             default:
                 break
@@ -131,17 +138,29 @@ private final class EKA2L1RenderView: UIView {
 
         switch press.key?.keyCode {
         case .keyboardUpArrow:
-            return 0x10
+            return 0x10             // std_key_up_arrow
         case .keyboardDownArrow:
-            return 0x11
+            return 0x11             // std_key_down_arrow
         case .keyboardLeftArrow:
-            return 0x0e
+            return 0x0e             // std_key_left_arrow
         case .keyboardRightArrow:
-            return 0x0f
-        case .keyboardReturnOrEnter:
-            return 0xA7
-        case .keyboardEscape:
-            return 0xA5
+            return 0x0f             // std_key_right_arrow
+        case .keyboardReturnOrEnter, .keypadEnter:
+            return 0xA7             // std_key_device_3 (select / OK)
+        case .keyboardSpacebar:
+            return 0x05             // std_key_space
+        case .keyboardDeleteOrBackspace:
+            return 0x01             // std_key_backspace
+        case .keyboardTab:
+            return 0x02             // std_key_tab
+        case .keyboardF1:
+            return 0xA4             // std_key_device_0 (left soft key)
+        case .keyboardF2, .keyboardEscape:
+            return 0xA5             // std_key_device_1 (right soft key / back)
+        case .keyboardF3:
+            return 0xB4             // std_key_application_0 (green call)
+        case .keyboardF4:
+            return 0xB5             // std_key_application_1 (red end)
         default:
             return 0
         }
