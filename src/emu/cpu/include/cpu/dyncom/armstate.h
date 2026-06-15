@@ -222,6 +222,50 @@ public:
         WriteMemory64Slow(address, data);
     }
 
+    // Cursor for bulk word transfers (LDM/STM). A register-list transfer touches a
+    // run of contiguous addresses that, in practice, all fall in one guest page, yet
+    // the naive loop pays a full TLB lookup per word. The cursor caches the resolved
+    // host page so a same-page run costs one lookup instead of one per word, and it
+    // re-resolves automatically when the run crosses a page boundary. Semantics are
+    // identical to ReadMemory32/WriteMemory32 (raw little-endian on a TLB hit, the
+    // out-of-line slow path on a miss, and the same big-endian write swap), so it is
+    // a drop-in replacement inside a single instruction's transfer loop.
+    struct block_cursor {
+        std::uint8_t *page_host = nullptr;
+        std::uint32_t page_base = 1; // sentinel: never equals a page-aligned address
+    };
+
+    std::uint32_t ReadMemory32Block(std::uint32_t address, block_cursor &c) const {
+        const std::uint32_t page_off = address & static_cast<std::uint32_t>(mem_cache_->page_mask);
+        if (c.page_host && (address - page_off) == c.page_base)
+            return *reinterpret_cast<std::uint32_t *>(c.page_host + page_off);
+        if (std::uint8_t *ptr = mem_cache_->lookup(address)) {
+            c.page_host = ptr - page_off;
+            c.page_base = address - page_off;
+            return *reinterpret_cast<std::uint32_t *>(ptr);
+        }
+        c.page_host = nullptr;
+        return ReadMemory32Slow(address);
+    }
+
+    void WriteMemory32Block(std::uint32_t address, std::uint32_t data, block_cursor &c) {
+        if (InBigEndianMode())
+            data = eka2l1::common::byte_swap(data);
+        const std::uint32_t page_off = address & static_cast<std::uint32_t>(mem_cache_->page_mask);
+        if (c.page_host && (address - page_off) == c.page_base) {
+            *reinterpret_cast<std::uint32_t *>(c.page_host + page_off) = data;
+            return;
+        }
+        if (std::uint8_t *ptr = mem_cache_->lookup(address)) {
+            c.page_host = ptr - page_off;
+            c.page_base = address - page_off;
+            *reinterpret_cast<std::uint32_t *>(ptr) = data;
+            return;
+        }
+        c.page_host = nullptr;
+        WriteMemory32Slow(address, data);
+    }
+
     // Slow paths (TLB miss): out-of-line in armstate.cpp. Reads apply the
     // big-endian swap themselves; writes receive data already swapped.
     std::uint8_t ReadMemory8Slow(std::uint32_t address) const;

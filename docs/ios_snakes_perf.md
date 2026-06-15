@@ -111,5 +111,40 @@ graphics thread is ~80 % idle. os_thread leaf weights (of 3746 samples):
   unused `execute_addr`. Routing `ReadCode` through the TLB execute slot is the
   main remaining bounded dyncom win (~2-3 %); note the data TLB is also flushed on
   every process switch so it re-warms after each IPC.
-</content>
-</invoke>
+
+## 2026-06 follow-up: dispatch-reduction is the wrong lever; sim is render-bound
+
+After the double-buffer was re-added, Snakes 3D gameplay steadies at **~38 FPS
+(36–40, ±2 noise)** on the iPhone Air simulator (Release/O3). A fresh `sample`
+shows the frame is now **co-limited**: the guest interpreter thread is saturated
+*and* a second thread is busy in the simulator's **software GLES**
+(`glDrawElements → gldRenderFillTriangles` in `GLRendererFloat`). The
+double-buffered present makes the guest thread wait on the GPU fence, so the
+software rasterizer caps FPS — CPU-side interpreter wins cannot surface in the
+sim for this scene. (On a real device GLES is hardware-accelerated, so that fence
+is not the limiter and the interpreter is the more likely bottleneck.)
+
+Two CPU optimizations were measured against this, both via controlled A/B on a
+single Release build:
+
+- **CMP + B_COND_THUMB super-instruction fusion** (the data-driven #1 guest
+  pair). Correct (8/8 regression on real Thumb code) but FPS-neutral
+  (~38.8 ON vs ~38.3 OFF = noise). The interpreter's cost is in instruction
+  *execution* (the `LdnStM*`/`LnSWoUB*` load-store helpers, `DataProcessing*`),
+  not threaded-dispatch overhead, so removing a dispatch hop changes nothing.
+  **Reverted.**
+- **LDM/STM block-cursor** (`armstate.h` `block_cursor` +
+  `ReadMemory32Block`/`WriteMemory32Block`): a register-list transfer touches a
+  contiguous run that almost always sits in one guest page, yet the naive loop
+  paid a full dyncom-TLB lookup per word. The cursor resolves the host page once
+  and reuses it, re-resolving on page crossings; semantics are identical to
+  `ReadMemory32`/`WriteMemory32`. Validated by 1,000,000 difftest cases (5 seeds,
+  golden + self-A/B) and 8/8 regression. FPS-neutral in the (render-bound) sim,
+  but it cuts real interpreter work in the hottest functions and should help on
+  device / in CPU-bound apps. **Kept.**
+
+Conclusion: the dyncom interpreter is at the point of diminishing returns for the
+simulator; further FPS work on Snakes needs either hardware-accelerated rendering
+(device, or a Metal/HW-GL sim path) or a JIT (off-limits on iOS). Remaining bounded
+CPU ideas (route `ReadCode` through the TLB execute slot; block linking) are
+predicted neutral *in the sim* for the same render-bound reason.

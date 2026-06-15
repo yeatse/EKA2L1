@@ -2152,34 +2152,38 @@ LDM_INST : {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
         inst_cream->get_addr(cpu, inst_cream->inst, addr);
 
+        // The register list maps to contiguous, ascending addresses -- resolve the
+        // host page once and reuse it for the whole run (see block_cursor).
+        ARMul_State::block_cursor ldm_cur;
+
         unsigned int inst = inst_cream->inst;
         if (BIT(inst, 22) && !BIT(inst, 15)) {
             for (int i = 0; i < 13; i++) {
                 if (BIT(inst, i)) {
-                    cpu->Reg[i] = cpu->ReadMemory32(addr);
+                    cpu->Reg[i] = cpu->ReadMemory32Block(addr, ldm_cur);
                     addr += 4;
                 }
             }
             if (BIT(inst, 13)) {
                 if (cpu->Mode == USER32MODE)
-                    cpu->Reg[13] = cpu->ReadMemory32(addr);
+                    cpu->Reg[13] = cpu->ReadMemory32Block(addr, ldm_cur);
                 else
-                    cpu->Reg_usr[0] = cpu->ReadMemory32(addr);
+                    cpu->Reg_usr[0] = cpu->ReadMemory32Block(addr, ldm_cur);
 
                 addr += 4;
             }
             if (BIT(inst, 14)) {
                 if (cpu->Mode == USER32MODE)
-                    cpu->Reg[14] = cpu->ReadMemory32(addr);
+                    cpu->Reg[14] = cpu->ReadMemory32Block(addr, ldm_cur);
                 else
-                    cpu->Reg_usr[1] = cpu->ReadMemory32(addr);
+                    cpu->Reg_usr[1] = cpu->ReadMemory32Block(addr, ldm_cur);
 
                 addr += 4;
             }
         } else if (!BIT(inst, 22)) {
             for (int i = 0; i < 16; i++) {
                 if (BIT(inst, i)) {
-                    unsigned int ret = cpu->ReadMemory32(addr);
+                    unsigned int ret = cpu->ReadMemory32Block(addr, ldm_cur);
 
                     // For armv5t, should enter thumb when bits[0] is non-zero.
                     if (i == 15) {
@@ -2194,7 +2198,7 @@ LDM_INST : {
         } else if (BIT(inst, 22) && BIT(inst, 15)) {
             for (int i = 0; i < 15; i++) {
                 if (BIT(inst, i)) {
-                    cpu->Reg[i] = cpu->ReadMemory32(addr);
+                    cpu->Reg[i] = cpu->ReadMemory32Block(addr, ldm_cur);
                     addr += 4;
                 }
             }
@@ -2205,7 +2209,7 @@ LDM_INST : {
                 LOAD_NZCVT;
             }
 
-            cpu->Reg[15] = cpu->ReadMemory32(addr);
+            cpu->Reg[15] = cpu->ReadMemory32Block(addr, ldm_cur);
         }
 
         if (BIT(inst, 15)) {
@@ -3663,39 +3667,43 @@ STM_INST : {
         unsigned int old_RN = cpu->Reg[Rn];
 
         inst_cream->get_addr(cpu, inst_cream->inst, addr);
+
+        // Contiguous, ascending stores -- resolve the host page once (see block_cursor).
+        ARMul_State::block_cursor stm_cur;
+
         if (BIT(inst_cream->inst, 22) == 1) {
             for (int i = 0; i < 13; i++) {
                 if (BIT(inst_cream->inst, i)) {
-                    cpu->WriteMemory32(addr, cpu->Reg[i]);
+                    cpu->WriteMemory32Block(addr, cpu->Reg[i], stm_cur);
                     addr += 4;
                 }
             }
             if (BIT(inst_cream->inst, 13)) {
                 if (cpu->Mode == USER32MODE)
-                    cpu->WriteMemory32(addr, cpu->Reg[13]);
+                    cpu->WriteMemory32Block(addr, cpu->Reg[13], stm_cur);
                 else
-                    cpu->WriteMemory32(addr, cpu->Reg_usr[0]);
+                    cpu->WriteMemory32Block(addr, cpu->Reg_usr[0], stm_cur);
 
                 addr += 4;
             }
             if (BIT(inst_cream->inst, 14)) {
                 if (cpu->Mode == USER32MODE)
-                    cpu->WriteMemory32(addr, cpu->Reg[14]);
+                    cpu->WriteMemory32Block(addr, cpu->Reg[14], stm_cur);
                 else
-                    cpu->WriteMemory32(addr, cpu->Reg_usr[1]);
+                    cpu->WriteMemory32Block(addr, cpu->Reg_usr[1], stm_cur);
 
                 addr += 4;
             }
             if (BIT(inst_cream->inst, 15)) {
-                cpu->WriteMemory32(addr, cpu->Reg[15] + 8);
+                cpu->WriteMemory32Block(addr, cpu->Reg[15] + 8, stm_cur);
             }
         } else {
             for (unsigned int i = 0; i < 15; i++) {
                 if (BIT(inst_cream->inst, i)) {
                     if (i == Rn)
-                        cpu->WriteMemory32(addr, old_RN);
+                        cpu->WriteMemory32Block(addr, old_RN, stm_cur);
                     else
-                        cpu->WriteMemory32(addr, cpu->Reg[i]);
+                        cpu->WriteMemory32Block(addr, cpu->Reg[i], stm_cur);
 
                     addr += 4;
                 }
@@ -3703,7 +3711,7 @@ STM_INST : {
 
             // Check PC reg
             if (BIT(inst_cream->inst, 15)) {
-                cpu->WriteMemory32(addr, cpu->Reg[15] + 8);
+                cpu->WriteMemory32Block(addr, cpu->Reg[15] + 8, stm_cur);
             }
         }
     }
