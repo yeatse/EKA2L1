@@ -122,7 +122,11 @@ shot() {
 launch_uid() {
     xcrun simctl terminate "$SIM" "$BUNDLE_ID" >/dev/null 2>&1 || true
     wait_s 2
-    xcrun simctl launch "$SIM" "$BUNDLE_ID" -LaunchROMCode rm-320 -LaunchAppUID "$1" >/dev/null 2>&1
+    # -EKA2L1RegressionMode forces the classic keypad layout regardless of the
+    # persisted preference, so the soft-key assertions below stay stable no
+    # matter which layout the developer last selected (lands in NSArgumentDomain,
+    # so it never overwrites the saved value).
+    xcrun simctl launch "$SIM" "$BUNDLE_ID" -EKA2L1RegressionMode 1 -LaunchROMCode rm-320 -LaunchAppUID "$1" >/dev/null 2>&1
 }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
