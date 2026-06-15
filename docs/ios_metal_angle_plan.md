@@ -78,17 +78,25 @@ an `MGLLayer` for rendering (planned: create/own it in the ObjC++ bridge under
 module-map friction), resize it on layout, route the present. **Gate:**
 Snakes/Calculator render via ANGLE in the sim.
 
-**Phase 3 — Shader/feature parity.** Verify GLSL-ES shaders + upscale shaders
-(`resources/gles`, `resources/upscale`) compile through ANGLE's translator; check
-resize (`update`/`update_surface`), viewport, framebuffer bind, texture formats
-(incl. PVRTC path). **Gate:** `scripts/ios_regression_test.sh` 8/8 on ANGLE.
+**Phase 3 — Shader/feature parity — effectively covered.** The default-render
+controls all pass: `ios_regression_test.sh` is **8/8** under ANGLE (Calculator
+default UI + number input + Options menu; Final Battle to in-game) and Snakes 3D
+renders correctly, so the GLSL-ES + upscale shaders translate and the
+framebuffer/viewport/format paths work through ANGLE. (Deeper format coverage —
+e.g. the PVRTC path — only matters for titles that use it; revisit if one breaks.)
 
-**Phase 4 — Measure + decide.** Snakes FPS A/B (overlay-crop method) ANGLE vs EAGL
-in the sim — expect a real jump now that rendering is hardware, and the CPU work
-(block-cursor etc.) should finally surface. Verify on iPhone Air (needs unlocked
-device + visual confirmation; device can't be screenshotted via CLI). **Gate:** sim
-FPS materially up, device non-regressed; keep ANGLE behind the flag until device-
-confirmed, then flip the default.
+**Phase 4 — Measure + decide — PARTIAL (sim measured).** Snakes Release FPS A/B
+(overlay-crop): **ANGLE ≈ EAGL ≈ 38 FPS — neutral**, NOT the hoped-for jump. Why:
+the present is already double-buffered, so the software-GL render latency was
+*hidden* off the guest thread's critical path; the interpreter is the true ~38 FPS
+cap. Swapping the renderer to hardware Metal therefore doesn't raise sim FPS (it
+does move triangle fill off a host CPU core onto the GPU — better dev
+thermals/battery, FPS-neutral). The standing value of ANGLE is then: render
+correctness on Metal, future-proofing against Apple's GLES deprecation, and a
+hardware-accelerated sim. **Remaining:** device A/B on the iPhone Air (needs
+unlocked device + visual confirmation; device EAGL is already HW-accelerated, so
+likely also neutral) before deciding whether to flip the default. ANGLE stays
+behind the default-OFF flag until then.
 
 ## Risks / watch-items
 ANGLE shader-translator edge cases; EGL config selection; present/vsync semantics
