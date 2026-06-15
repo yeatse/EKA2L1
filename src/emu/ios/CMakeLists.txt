@@ -109,11 +109,10 @@ target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     sqlite3
     yaml-cpp)
 
-# --- MetalANGLE (GLES -> Metal) spike / opt-in backend ------------------------
-# Off by default: the app keeps the EAGL GLES path. When ON we link + embed the
-# vendored MetalANGLE.xcframework and compile the Phase-0 ANGLE smoke. See
-# docs/ios_metal_angle_plan.md.
-option(EKA2L1_IOS_USE_ANGLE "Use/spike MetalANGLE (GLES->Metal) on iOS" OFF)
+# --- MetalANGLE (GLES -> Metal) opt-in backend --------------------------------
+# Off by default: the app keeps the EAGL GLES path. When ON (option lives in the
+# root CMakeLists so the drivers lib sees it too) we link + embed the vendored
+# MetalANGLE.xcframework. See docs/ios_metal_angle_plan.md.
 if (EKA2L1_IOS_USE_ANGLE)
     set(EKA2L1_METALANGLE_XCFRAMEWORK
         "${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework")

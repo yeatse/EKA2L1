@@ -39,6 +39,25 @@ if (EKA2L1_IOS)
         message(STATUS "iOS simulator build: Dynarmic backend enabled")
     endif()
 
+    # MetalANGLE (GLES -> Metal) backend. Defined here (not just in the ios app
+    # CMake) so the drivers library -- which owns make_gl_context / the context
+    # backends -- also sees the flag and the MetalANGLE headers. The xcframework
+    # is fetched out-of-tree by scripts/fetch_metalangle.sh (build_ios.sh runs it
+    # on demand). See docs/ios_metal_angle_plan.md.
+    option(EKA2L1_IOS_USE_ANGLE "Use MetalANGLE (GLES->Metal) backend on iOS" OFF)
+    if (EKA2L1_IOS_USE_ANGLE)
+        add_compile_definitions(EKA2L1_IOS_ANGLE=1)
+        if (EKA2L1_IOS_SIMULATOR)
+            set(EKA2L1_METALANGLE_SLICE "ios-arm64-simulator")
+        else()
+            set(EKA2L1_METALANGLE_SLICE "ios-arm64")
+        endif()
+        # Framework header search path for `#import <MetalANGLE/...>` (the slice
+        # headers are identical; the app target links the xcframework per-platform).
+        add_compile_options("-F${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework/${EKA2L1_METALANGLE_SLICE}")
+        message(STATUS "iOS: MetalANGLE backend enabled (slice ${EKA2L1_METALANGLE_SLICE})")
+    endif()
+
     set(EKA2L1_BUILD_TOOLS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_BUILD_TESTS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_ENABLE_SCRIPTING_ABILITY OFF CACHE BOOL "Disabled on iOS" FORCE)

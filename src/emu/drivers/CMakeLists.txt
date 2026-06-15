@@ -175,6 +175,13 @@ elseif (EKA2L1_IOS)
         src/graphics/backend/emu_window_ios.mm
         src/ui/input_dialog_ios.mm
     )
+    if (EKA2L1_IOS_USE_ANGLE)
+        # MetalANGLE (GLES->Metal) context; make_gl_context selects it when
+        # EKA2L1_IOS_ANGLE is defined (context_eagl stays compiled but unused).
+        target_sources(drivers PRIVATE
+            src/graphics/backend/context_angle.h
+            src/graphics/backend/context_angle.mm)
+    endif()
 elseif(APPLE)
     target_sources(drivers PRIVATE
         src/graphics/backend/context_agl.h

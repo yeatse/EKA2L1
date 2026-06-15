@@ -23,7 +23,11 @@
 #if EKA2L1_PLATFORM(WIN32)
 #include "backend/context_wgl.h"
 #elif EKA2L1_PLATFORM(IOS)
+#if defined(EKA2L1_IOS_ANGLE)
+#include "backend/context_angle.h"
+#else
 #include "backend/context_eagl.h"
+#endif
 #elif EKA2L1_PLATFORM(MACOS)
 #include "backend/context_agl.h"
 #elif EKA2L1_PLATFORM(ANDROID)
@@ -41,7 +45,11 @@ namespace eka2l1::drivers::graphics {
 #if EKA2L1_PLATFORM(WIN32)
         return std::make_unique<gl_context_wgl>(system_info, stereo, core);
 #elif EKA2L1_PLATFORM(IOS)
+#if defined(EKA2L1_IOS_ANGLE)
+        return std::make_unique<gl_context_angle>(system_info, stereo, core);
+#else
         return std::make_unique<gl_context_eagl>(system_info, stereo, core);
+#endif
 #elif EKA2L1_PLATFORM(MACOS)
         return std::make_unique<gl_context_agl>(system_info, stereo, core);
 #elif EKA2L1_PLATFORM(ANDROID)
