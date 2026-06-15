@@ -54,6 +54,14 @@ build_one() {
 
     scripts/build_ios_ffmpeg.sh "${label}"
 
+    # MetalANGLE (GLES->Metal) is fetched/packaged out-of-tree (the binary is not
+    # vendored in git, mirroring the FFmpeg approach). Pull it on demand when the
+    # ANGLE backend is enabled and it isn't present yet.
+    if [ "${EKA2L1_IOS_USE_ANGLE:-OFF}" = "ON" ] && \
+       [ ! -d "src/external/metalangle/MetalANGLE.xcframework" ]; then
+        scripts/fetch_metalangle.sh
+    fi
+
     echo "==> Configuring ${label} (PLATFORM=${platform}, sdk=${sdk})"
     # CMake 4.x dropped compatibility with cmake_minimum_required < 3.5, and
     # several bundled submodules (glm, ext-boost, ...) still declare older
@@ -68,6 +76,7 @@ build_one() {
         -DEKA2L1_IOS_DEVELOPMENT_TEAM="${team}" \
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
         -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
+        -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
     echo "==> Building ${label}"

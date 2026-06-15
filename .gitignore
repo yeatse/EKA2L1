@@ -20,3 +20,9 @@ cmake-build-*
 .claude/
 # Local ROMs and SIS packages used for iOS porting validation.
 roms/
+
+# MetalANGLE download/patch scratch (see scripts/fetch_metalangle.sh)
+.angle_stage/
+
+# MetalANGLE xcframework is fetched out-of-tree, not committed (scripts/fetch_metalangle.sh)
+/src/external/metalangle/MetalANGLE.xcframework/

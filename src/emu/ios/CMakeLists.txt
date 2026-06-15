@@ -109,6 +109,26 @@ target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     sqlite3
     yaml-cpp)
 
+# --- MetalANGLE (GLES -> Metal) spike / opt-in backend ------------------------
+# Off by default: the app keeps the EAGL GLES path. When ON we link + embed the
+# vendored MetalANGLE.xcframework and compile the Phase-0 ANGLE smoke. See
+# docs/ios_metal_angle_plan.md.
+option(EKA2L1_IOS_USE_ANGLE "Use/spike MetalANGLE (GLES->Metal) on iOS" OFF)
+if (EKA2L1_IOS_USE_ANGLE)
+    set(EKA2L1_METALANGLE_XCFRAMEWORK
+        "${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework")
+    message(STATUS "EKA2L1 iOS: MetalANGLE enabled (${EKA2L1_METALANGLE_XCFRAMEWORK})")
+    target_sources(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}/AngleSmoke.mm")
+    target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE EKA2L1_IOS_ANGLE=1)
+    target_link_libraries(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_METALANGLE_XCFRAMEWORK}")
+    set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
+        XCODE_EMBED_FRAMEWORKS "${EKA2L1_METALANGLE_XCFRAMEWORK}"
+        XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY "YES"
+        # The framework is embedded in <app>/Frameworks; make dyld look there
+        # (the default rpath only covers the Swift runtime paths).
+        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "$(inherited) @executable_path/Frameworks")
+endif()
+
 set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
