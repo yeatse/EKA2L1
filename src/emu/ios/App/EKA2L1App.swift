@@ -24,7 +24,7 @@ struct EKA2L1App: App {
         WindowGroup {
             ContentView()
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             switch newPhase {
             case .active:
                 EKA2L1Bridge.shared.resume()

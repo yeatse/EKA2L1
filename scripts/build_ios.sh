@@ -19,7 +19,7 @@
 #   scripts/build_ios.sh clean           # remove build/ios-* directories
 #
 # Environment variables:
-#   EKA2L1_IOS_DEPLOYMENT_TARGET   default 18.0
+#   EKA2L1_IOS_DEPLOYMENT_TARGET   default 16.0
 #   EKA2L1_IOS_CONFIGURATION       default Debug
 #   EKA2L1_IOS_SCHEME              default EKA2L1
 #   EKA2L1_IOS_DEVELOPMENT_TEAM    Apple Development team id (device signing)
@@ -32,7 +32,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-18.0}"
+DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-16.0}"
+# Propagate the resolved target to the FFmpeg sub-build so its prebuilt static
+# libs carry the same min-version (otherwise ld warns about a 18.0/16.0 mismatch).
+export EKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}"
 CONFIGURATION="${EKA2L1_IOS_CONFIGURATION:-Debug}"
 SCHEME="${EKA2L1_IOS_SCHEME:-EKA2L1}"
 # Set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> to build a code-signed device

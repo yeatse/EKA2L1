@@ -22,6 +22,35 @@ private func documentsRoot() -> String {
     NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
 }
 
+// iOS 16 fallback for ContentUnavailableView (which is iOS 17+). Mimics its
+// centered icon + title + description + optional action layout so the home
+// surface looks consistent across deployment targets.
+private struct FallbackUnavailableView<Actions: View>: View {
+    let title: String
+    let systemImage: String
+    let message: String
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 52))
+                .foregroundColor(.secondary)
+            Text(title)
+                .font(.title2).bold()
+                .multilineTextAlignment(.center)
+            Text(message)
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            actions()
+                .padding(.top, 4)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 struct ContentView: View {
     @State private var booted = false
     @State private var devices: [EKA2L1DeviceItem] = []
@@ -86,9 +115,15 @@ struct ContentView: View {
         NavigationStack {
             Group {
                 if let bootError {
-                    ContentUnavailableView("Emulator failed to initialise",
-                                           systemImage: "exclamationmark.triangle",
-                                           description: Text(bootError))
+                    if #available(iOS 17, *) {
+                        ContentUnavailableView("Emulator failed to initialise",
+                                               systemImage: "exclamationmark.triangle",
+                                               description: Text(bootError))
+                    } else {
+                        FallbackUnavailableView(title: "Emulator failed to initialise",
+                                                systemImage: "exclamationmark.triangle",
+                                                message: bootError) { EmptyView() }
+                    }
                 } else if devices.isEmpty {
                     emptyState
                 } else {
@@ -138,14 +173,24 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No device installed", systemImage: "iphone.slash")
-        } description: {
-            Text(ImportStrings.noDeviceInstalled)
-        } actions: {
-            Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
-                .buttonStyle(.borderedProminent)
+        if #available(iOS 17, *) {
+            ContentUnavailableView {
+                Label("No device installed", systemImage: "iphone.slash")
+            } description: {
+                Text(ImportStrings.noDeviceInstalled)
+            } actions: {
+                Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
+                    .buttonStyle(.borderedProminent)
+            }
+        } else {
+            FallbackUnavailableView(title: "No device installed",
+                                    systemImage: "iphone.slash",
+                                    message: ImportStrings.noDeviceInstalled) {
+                Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
+                    .buttonStyle(.borderedProminent)
+            }
         }
     }
 

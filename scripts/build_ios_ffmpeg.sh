@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FFMPEG_SRC="${ROOT_DIR}/src/external/ffmpeg"
-DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-18.0}"
+DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-16.0}"
 JOBS="${EKA2L1_IOS_FFMPEG_JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || echo 4)}"
 
 common_configure_flags=(
