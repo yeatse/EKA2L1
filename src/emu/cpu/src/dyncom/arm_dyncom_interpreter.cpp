@@ -141,12 +141,23 @@ namespace {
         std::uint64_t total_insts = 0;
         std::uint64_t total_blocks = 0;
         std::uint64_t next_dump = 50000000ull;
+        // Sparse guest-PC histogram (64-byte buckets, sampled every 64th
+        // instruction) to attribute hot loops to guest code regions. The code
+        // bytes are snapshotted on first touch, while the bucket's page is
+        // guaranteed mapped in the current process (reading them at dump time
+        // from an unrelated process faults the guest).
+        struct pc_bucket {
+            std::uint64_t count = 0;
+            std::uint32_t code[16] = {};
+        };
+        std::unordered_map<std::uint32_t, pc_bucket> pc_hist;
+        std::uint64_t pc_samples = 0;
         dyncom_profiler()
             : pair_count(static_cast<std::size_t>(PROF_NUM_OPS) * PROF_NUM_OPS, 0) {}
     };
     dyncom_profiler g_dyncom_profiler;
 
-    void dyncom_profile_dump() {
+    void dyncom_profile_dump(ARMul_State *cpu) {
         dyncom_profiler &p = g_dyncom_profiler;
         if (p.total_insts == 0)
             return;
@@ -177,6 +188,26 @@ namespace {
         for (int i = 0; i < 16; i++)
             if (p.block_len[i])
                 std::fprintf(f, "  blocklen %2d : %13llu\n", i, (unsigned long long)p.block_len[i]);
+        if (p.pc_samples) {
+            std::vector<std::pair<std::uint32_t, const dyncom_profiler::pc_bucket *>> hot;
+            hot.reserve(p.pc_hist.size());
+            for (const auto &kv : p.pc_hist)
+                hot.emplace_back(kv.first, &kv.second);
+            std::sort(hot.begin(), hot.end(),
+                [](const auto &a, const auto &b) { return a.second->count > b.second->count; });
+            std::fprintf(f, "  pc-hist: %llu samples, %zu buckets (64B)\n",
+                (unsigned long long)p.pc_samples, p.pc_hist.size());
+            for (std::size_t i = 0; i < 48 && i < hot.size(); i++)
+                std::fprintf(f, "  pc %08X %13llu (%.2f%%)\n", hot[i].first,
+                    (unsigned long long)hot[i].second->count,
+                    100.0 * (double)hot[i].second->count / p.pc_samples);
+            for (std::size_t i = 0; i < 10 && i < hot.size(); i++) {
+                std::fprintf(f, "  code %08X:", hot[i].first);
+                for (int w = 0; w < 16; w++)
+                    std::fprintf(f, " %08X", hot[i].second->code[w]);
+                std::fprintf(f, "\n");
+            }
+        }
         std::fclose(f);
     }
 }
@@ -186,13 +217,21 @@ namespace {
         const int idx_ = (the_idx);                                                          \
         pp_.op_count[idx_]++;                                                                 \
         pp_.total_insts++;                                                                    \
+        if ((pp_.total_insts & 63) == 0) {                                                    \
+            const std::uint32_t pcb_ = (cpu)->Reg[15] & ~63u;                                 \
+            auto &bkt_ = pp_.pc_hist[pcb_];                                                   \
+            if (bkt_.count++ == 0)                                                            \
+                for (int w_ = 0; w_ < 16; w_++)                                               \
+                    bkt_.code[w_] = (cpu)->ReadMemory32(pcb_ + w_ * 4);                       \
+            pp_.pc_samples++;                                                                 \
+        }                                                                                     \
         if ((cpu)->prof_prev >= 0)                                                            \
             pp_.pair_count[static_cast<std::size_t>((cpu)->prof_prev) * PROF_NUM_OPS + idx_]++; \
         (cpu)->prof_prev = idx_;                                                              \
         if ((cpu)->prof_block_len < 63)                                                       \
             (cpu)->prof_block_len++;                                                          \
         if (pp_.total_insts >= pp_.next_dump) {                                               \
-            dyncom_profile_dump();                                                            \
+            dyncom_profile_dump(cpu);                                                         \
             pp_.next_dump += 50000000ull;                                                    \
         }                                                                                     \
     } while (0)
