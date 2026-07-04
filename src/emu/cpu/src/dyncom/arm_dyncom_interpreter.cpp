@@ -30,12 +30,10 @@
 #define ROTATE_RIGHT_32(n, i) ROTATE_RIGHT(n, i, 32)
 #define ROTATE_LEFT_32(n, i) ROTATE_LEFT(n, i, 32)
 
-static bool CondPassed(const ARMul_State *cpu, unsigned int cond) {
-    const bool n_flag = cpu->NFlag != 0;
-    const bool z_flag = cpu->ZFlag != 0;
-    const bool c_flag = cpu->CFlag != 0;
-    const bool v_flag = cpu->VFlag != 0;
-
+// Reference predicate for one (cond, NZCV) combination; only used at compile
+// time to build the branchless lookup table below.
+static constexpr bool CondPassedRef(unsigned int cond, bool n_flag, bool z_flag, bool c_flag,
+    bool v_flag) {
     switch (cond) {
     case ConditionCode::EQ:
         return z_flag;
@@ -71,6 +69,37 @@ static bool CondPassed(const ARMul_State *cpu, unsigned int cond) {
     }
 
     return false;
+}
+
+// Bit f of kCondPassedTable[cond] answers CondPassedRef for the flag nibble
+// f = N<<3 | Z<<2 | C<<1 | V, turning the per-instruction predicate into one
+// load + shift that the compiler can inline at every handler site.
+static constexpr std::uint16_t BuildCondMask(unsigned int cond) {
+    std::uint16_t mask = 0;
+    for (unsigned int f = 0; f < 16; ++f) {
+        if (CondPassedRef(cond, (f >> 3) & 1, (f >> 2) & 1, (f >> 1) & 1, f & 1))
+            mask = static_cast<std::uint16_t>(mask | (1u << f));
+    }
+    return mask;
+}
+
+static constexpr std::uint16_t kCondPassedTable[16] = {
+    BuildCondMask(0), BuildCondMask(1), BuildCondMask(2), BuildCondMask(3),
+    BuildCondMask(4), BuildCondMask(5), BuildCondMask(6), BuildCondMask(7),
+    BuildCondMask(8), BuildCondMask(9), BuildCondMask(10), BuildCondMask(11),
+    BuildCondMask(12), BuildCondMask(13), BuildCondMask(14), BuildCondMask(15)
+};
+
+#if defined(_MSC_VER)
+#define DYNCOM_FORCE_INLINE __forceinline
+#else
+#define DYNCOM_FORCE_INLINE inline __attribute__((always_inline))
+#endif
+
+static DYNCOM_FORCE_INLINE bool CondPassed(const ARMul_State *cpu, unsigned int cond) {
+    const unsigned int flags = ((cpu->NFlag != 0) << 3) | ((cpu->ZFlag != 0) << 2)
+        | ((cpu->CFlag != 0) << 1) | (cpu->VFlag != 0);
+    return (kCondPassedTable[cond & 15] >> flags) & 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +403,40 @@ static void LnSWoUB(ImmediateOffset)(ARMul_State *cpu, unsigned int inst, unsign
                 CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 16, 19));                    \
             (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + BITS(ls_inst_, 0, 11))      \
                                            : (ls_base_ - BITS(ls_inst_, 0, 11));     \
+        } else if (inst_cream->get_addr == LnSWoUBRegisterOffset) {                  \
+            const unsigned int ls_inst_ = inst_cream->inst;                          \
+            const std::uint32_t ls_base_ =                                           \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 16, 19));                    \
+            const std::uint32_t ls_off_ =                                            \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 0, 3));                      \
+            (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + ls_off_)                    \
+                                           : (ls_base_ - ls_off_);                   \
+        } else {                                                                     \
+            inst_cream->get_addr(cpu, inst_cream->inst, (addr_out));                 \
+        }                                                                            \
+    } while (0)
+
+// LS_GET_ADDR for the miscellaneous (halfword/doubleword) load/store family,
+// whose dominant addressing forms are the split-immediate and register
+// offsets computed by MLnSImmediateOffset / MLnSRegisterOffset.
+#define MLS_GET_ADDR(addr_out)                                                       \
+    do {                                                                             \
+        if (inst_cream->get_addr == MLnSImmediateOffset) {                           \
+            const unsigned int ls_inst_ = inst_cream->inst;                          \
+            const std::uint32_t ls_base_ =                                           \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 16, 19));                    \
+            const std::uint32_t ls_off_ =                                            \
+                (BITS(ls_inst_, 8, 11) << 4) | BITS(ls_inst_, 0, 3);                 \
+            (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + ls_off_)                    \
+                                           : (ls_base_ - ls_off_);                   \
+        } else if (inst_cream->get_addr == MLnSRegisterOffset) {                     \
+            const unsigned int ls_inst_ = inst_cream->inst;                          \
+            const std::uint32_t ls_base_ =                                           \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 16, 19));                    \
+            const std::uint32_t ls_off_ =                                            \
+                CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 0, 3));                      \
+            (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + ls_off_)                    \
+                                           : (ls_base_ - ls_off_);                   \
         } else {                                                                     \
             inst_cream->get_addr(cpu, inst_cream->inst, (addr_out));                 \
         }                                                                            \
@@ -667,16 +730,22 @@ static void MLnS(RegisterPostIndexed)(ARMul_State *cpu, unsigned int inst,
     }
 }
 
+// Register count of an LDM/STM register list, replacing the former 1..16
+// iteration shift loop executed on every block transfer.
+static inline int CountSetBits16(unsigned int v) {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_popcount(v);
+#else
+    v = v - ((v >> 1) & 0x5555);
+    v = (v & 0x3333) + ((v >> 2) & 0x3333);
+    v = (v + (v >> 4)) & 0x0F0F;
+    return static_cast<int>((v + (v >> 8)) & 0x1F);
+#endif
+}
+
 static void LdnStM(DecrementBefore)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
     unsigned int Rn = BITS(inst, 16, 19);
-    unsigned int i = BITS(inst, 0, 15);
-    int count = 0;
-
-    while (i) {
-        if (i & 1)
-            count++;
-        i = i >> 1;
-    }
+    const int count = CountSetBits16(BITS(inst, 0, 15));
 
     virt_addr = CHECK_READ_REG15_WA(cpu, Rn) - count * 4;
 
@@ -686,14 +755,7 @@ static void LdnStM(DecrementBefore)(ARMul_State *cpu, unsigned int inst, unsigne
 
 static void LdnStM(IncrementBefore)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
     unsigned int Rn = BITS(inst, 16, 19);
-    unsigned int i = BITS(inst, 0, 15);
-    int count = 0;
-
-    while (i) {
-        if (i & 1)
-            count++;
-        i = i >> 1;
-    }
+    const int count = CountSetBits16(BITS(inst, 0, 15));
 
     virt_addr = CHECK_READ_REG15_WA(cpu, Rn) + 4;
 
@@ -703,14 +765,7 @@ static void LdnStM(IncrementBefore)(ARMul_State *cpu, unsigned int inst, unsigne
 
 static void LdnStM(IncrementAfter)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
     unsigned int Rn = BITS(inst, 16, 19);
-    unsigned int i = BITS(inst, 0, 15);
-    int count = 0;
-
-    while (i) {
-        if (i & 1)
-            count++;
-        i = i >> 1;
-    }
+    const int count = CountSetBits16(BITS(inst, 0, 15));
 
     virt_addr = CHECK_READ_REG15_WA(cpu, Rn);
 
@@ -720,13 +775,7 @@ static void LdnStM(IncrementAfter)(ARMul_State *cpu, unsigned int inst, unsigned
 
 static void LdnStM(DecrementAfter)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
     unsigned int Rn = BITS(inst, 16, 19);
-    unsigned int i = BITS(inst, 0, 15);
-    int count = 0;
-    while (i) {
-        if (i & 1)
-            count++;
-        i = i >> 1;
-    }
+    const int count = CountSetBits16(BITS(inst, 0, 15));
     unsigned int rn = CHECK_READ_REG15_WA(cpu, Rn);
     unsigned int start_addr = rn - count * 4 + 4;
 
@@ -1047,10 +1096,13 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 #define LINK_RTN_ADDR (cpu->Reg[14] = cpu->Reg[15] + 4)
 #define SET_PC (cpu->Reg[15] = cpu->Reg[15] + 8 + inst_cream->signed_immed_24)
 // Like LS_GET_ADDR, but for the data-processing shifter operand: inline the
-// dominant immediate form (`#imm` -> rotate of imm8) at the call site behind a
-// single well-predicted pointer compare, instead of the polymorphic indirect
-// shtop_func() call. A statement-expression keeps it usable wherever the old
-// macro was an expression.
+// dominant forms at the call site behind well-predicted pointer compares,
+// instead of the polymorphic indirect shtop_func() call. Immediate (`#imm` ->
+// rotate of imm8), plain register (`Rm`, no shift -- the dominant form in
+// Thumb-translated code) and the immediate LSL/ASR/LSR shifts are handled
+// inline; register-specified shifts and rotates fall back. A
+// statement-expression keeps it usable wherever the old macro was an
+// expression.
 #define SHIFTER_OPERAND ({                                                          \
     const shtop_fp_t f_ = inst_cream->shtop_func;                                   \
     const unsigned int so_ = inst_cream->shifter_operand;                           \
@@ -1058,6 +1110,39 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
     if (f_ == DataProcessingOperandsImmediate) {                                    \
         v_ = ROTATE_RIGHT_32(BITS(so_, 0, 7), BITS(so_, 8, 11) * 2);                \
         cpu->shifter_carry_out = (BITS(so_, 8, 11) == 0) ? cpu->CFlag : BIT(v_, 31);\
+    } else if (f_ == DataProcessingOperandsRegister) {                              \
+        v_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));                                \
+        cpu->shifter_carry_out = cpu->CFlag;                                        \
+    } else if (f_ == DataProcessingOperandsLogicalShiftLeftByImmediate) {           \
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
+        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
+        if (imm_ == 0) {                                                            \
+            v_ = rm_;                                                               \
+            cpu->shifter_carry_out = cpu->CFlag;                                    \
+        } else {                                                                    \
+            v_ = rm_ << imm_;                                                       \
+            cpu->shifter_carry_out = BIT(rm_, 32 - imm_);                           \
+        }                                                                           \
+    } else if (f_ == DataProcessingOperandsArithmeticShiftRightByImmediate) {       \
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
+        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
+        if (imm_ == 0) {                                                            \
+            v_ = BIT(rm_, 31) ? 0xFFFFFFFF : 0;                                     \
+            cpu->shifter_carry_out = BIT(rm_, 31);                                  \
+        } else {                                                                    \
+            v_ = static_cast<unsigned int>(static_cast<int>(rm_) >> imm_);          \
+            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);                            \
+        }                                                                           \
+    } else if (f_ == DataProcessingOperandsLogicalShiftRightByImmediate) {          \
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
+        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
+        if (imm_ == 0) {                                                            \
+            v_ = 0;                                                                 \
+            cpu->shifter_carry_out = BIT(rm_, 31);                                  \
+        } else {                                                                    \
+            v_ = rm_ >> imm_;                                                       \
+            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);                            \
+        }                                                                           \
     } else {                                                                        \
         v_ = f_(cpu, so_);                                                          \
     }                                                                               \
@@ -1828,8 +1913,11 @@ ADD_INST : {
         std::uint32_t rn_val = 0;
 
         // The ADR thumb instruction got disguised, under ADD. However unlike the other,
-        // it uses aligned PC. So have to check
-        if (cpu->TFlag) {
+        // it uses aligned PC. So have to check -- but the distinction only matters when
+        // Rn is the PC, so ordinary registers skip the per-execution code re-read.
+        if (inst_cream->Rn != 15) {
+            rn_val = cpu->Reg[inst_cream->Rn];
+        } else if (cpu->TFlag) {
             std::uint32_t inst = cpu->ReadCode(cpu->Reg[15] & 0xFFFFFFFC);
             inst = GetThumbInstruction(inst, cpu->Reg[15]);
 
@@ -2185,7 +2273,7 @@ LDC_INST : {
 LDM_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        inst_cream->get_addr(cpu, inst_cream->inst, addr);
 
         // The register list maps to contiguous, ascending addresses -- resolve the
         // host page once and reuse it for the whole run (see block_cursor).
@@ -2373,7 +2461,7 @@ LDRD_INST : {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
         // Should check if RD is even-numbered, Rd != 14, addr[0:1] == 0, (CP15_reg1_U == 1 ||
         // addr[2] == 0)
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
 
         // The 3DS doesn't have LPAE (Large Physical Access Extension), so it
         // wouldn't do this as a single read.
@@ -2444,7 +2532,7 @@ LDREXD_INST : {
 LDRH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
 
         cpu->Reg[BITS(inst_cream->inst, 12, 15)] = cpu->ReadMemory16(addr);
     }
@@ -2456,7 +2544,7 @@ LDRH_INST : {
 LDRSB_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
         unsigned int value = cpu->ReadMemory8(addr);
         if (BIT(value, 7)) {
             value |= 0xffffff00;
@@ -2471,7 +2559,7 @@ LDRSB_INST : {
 LDRSH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
 
         unsigned int value = cpu->ReadMemory16(addr);
         if (BIT(value, 15)) {
@@ -3701,7 +3789,7 @@ STM_INST : {
         unsigned int Rn = BITS(inst, 16, 19);
         unsigned int old_RN = cpu->Reg[Rn];
 
-        LS_GET_ADDR(addr);
+        inst_cream->get_addr(cpu, inst_cream->inst, addr);
 
         // Contiguous, ascending stores -- resolve the host page once (see block_cursor).
         ARMul_State::block_cursor stm_cur;
@@ -3844,7 +3932,7 @@ STRBT_INST : {
 STRD_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
 
         // The 3DS doesn't have the Large Physical Access Extension (LPAE)
         // so STRD wouldn't store these as a single write.
@@ -3916,7 +4004,7 @@ STREXH_INST : {
 STRH_INST : {
     if (inst_base->cond == ConditionCode::AL || CondPassed(cpu, inst_base->cond)) {
         ldst_inst *inst_cream = (ldst_inst *)inst_base->component;
-        LS_GET_ADDR(addr);
+        MLS_GET_ADDR(addr);
 
         unsigned int value = cpu->Reg[BITS(inst_cream->inst, 12, 15)] & 0xffff;
         cpu->WriteMemory16(addr, value);
