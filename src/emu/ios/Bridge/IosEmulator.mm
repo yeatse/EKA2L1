@@ -701,6 +701,21 @@ namespace eka2l1::ios {
         [fm copyItemAtPath:shaderSource toPath:dataShaders error:nil];
     }
 
+    // TinySoundFont loads the configured SF2 bank through the shared relative
+    // path resources/defaultbank.sf2. Keep it alongside the staged shaders in
+    // data/resources after the shader copy above recreates that directory.
+    NSString *bundleSoundFont = [[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"soundfonts"]
+        stringByAppendingPathComponent:@"defaultbank.sf2"];
+    NSString *sourceSoundFont = [[[@(__FILE__) stringByDeletingLastPathComponent]
+        stringByAppendingPathComponent:@"../../drivers/resources/defaultbank.sf2"] stringByStandardizingPath];
+    NSString *soundFontSource = [fm fileExistsAtPath:bundleSoundFont] ? bundleSoundFont : sourceSoundFont;
+    if ([fm fileExistsAtPath:soundFontSource]) {
+        [fm createDirectoryAtPath:dataShaders withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *dataSoundFont = [dataShaders stringByAppendingPathComponent:@"defaultbank.sf2"];
+        [fm removeItemAtPath:dataSoundFont error:nil];
+        [fm copyItemAtPath:soundFontSource toPath:dataSoundFont error:nil];
+    }
+
     // Stage the HLE patch DLLs/maps into data/patch, which load_patch_libraries
     // scans at boot. Prefer the bundled copy (CMake stages src/patch/*/group/*
     // flat under the .app's "patch/" — see src/emu/ios/CMakeLists.txt); the

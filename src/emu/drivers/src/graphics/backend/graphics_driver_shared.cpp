@@ -22,6 +22,7 @@
 #include <common/platform.h>
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <drivers/graphics/backend/graphics_driver_shared.h>
@@ -271,18 +272,29 @@ namespace eka2l1::drivers {
         translate_bpp_to_format(bmp->bpp, internal_format, data_format, data_type, is_stricted());
 
 #if EKA2L1_PLATFORM(IOS)
-        // Counterpart to the 8/16/24bpp -> RGBA8 promotion in
+        // Counterpart to the 8/16/24/32bpp -> RGBA8 promotion in
         // translate_bpp_to_format. The iOS GLES simulator renders these
         // sub-32bpp window-server bitmaps as solid black (R8 samples 0,
         // GL_RGB/565 textures that AVKON draws glyph runs into come back
-        // empty), so we unpack the source straight to RGBA8 here to match the
-        // RGBA8 texture the create path now allocates. Packed tightly, so the
-        // texture row length is just dim.x.
+        // empty), and GLES has no GL_BGR upload path for 24/32bpp Symbian
+        // BGR/BGRA memory. Unpack the source straight to RGBA8 here to match
+        // the RGBA8 texture the create path now allocates. Packed tightly, so
+        // the texture row length is just dim.x.
         std::vector<std::uint8_t> expanded_rgba;
-        if (data && (bmp->bpp == 8 || bmp->bpp == 16 || bmp->bpp == 24)) {
+        const std::size_t bytes_pp = static_cast<std::size_t>(bmp->bpp) / 8;
+        const bool can_expand = data && (bmp->bpp == 8 || bmp->bpp == 16 || bmp->bpp == 24 || bmp->bpp == 32)
+            && (dim.x > 0) && (dim.y > 0)
+            && (static_cast<std::size_t>(dim.x) <= (std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(dim.y) / 4));
+        if (can_expand) {
             const std::uint8_t *src = reinterpret_cast<const std::uint8_t *>(data);
-            const std::size_t bytes_pp = static_cast<std::size_t>(bmp->bpp) / 8;
             const std::size_t src_stride = (pixels_per_line != 0) ? pixels_per_line : static_cast<std::size_t>(dim.x);
+            const std::size_t source_end = ((static_cast<std::size_t>(dim.y) - 1) * src_stride + static_cast<std::size_t>(dim.x)) * bytes_pp;
+            if (size && (source_end > size)) {
+                bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), pixels_per_line,
+                    data_format, data_type, data, 0, 4);
+                return;
+            }
+
             expanded_rgba.resize(static_cast<std::size_t>(dim.x) * static_cast<std::size_t>(dim.y) * 4);
             for (int y = 0; y < dim.y; y++) {
                 for (int x = 0; x < dim.x; x++) {
@@ -300,8 +312,11 @@ namespace eka2l1::drivers {
                         d[2] = (b5 << 3) | (b5 >> 2);
                         d[3] = 255;
                     } else {
-                        // 24bpp color16m is stored B,G,R (see the desktop swizzle).
+                        // 24/32bpp color16m/u/a is stored B,G,R,(A) in memory.
                         d[0] = s[2]; d[1] = s[1]; d[2] = s[0]; d[3] = 255;
+                        if (bmp->bpp == 32) {
+                            d[3] = s[3];
+                        }
                     }
                 }
             }

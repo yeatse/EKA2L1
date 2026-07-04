@@ -73,6 +73,15 @@ target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_SHADER_FILES})
 set_source_files_properties(${EKA2L1_IOS_SHADER_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "shaders")
 
+# Bundle the default SoundFont separately from the GLES shader resources. The
+# sandbox staging code copies it back into data/resources/defaultbank.sf2, which
+# is the relative path shared audio config expects after chdir(data).
+set(EKA2L1_IOS_DEFAULT_SOUNDFONT
+    "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/defaultbank.sf2")
+target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_DEFAULT_SOUNDFONT})
+set_source_files_properties(${EKA2L1_IOS_DEFAULT_SOUNDFONT} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "soundfonts")
+
 # Bundle the prebuilt HLE patch DLLs + .map files into the .app under "patch/".
 # lib_manager::load_patch_libraries (epoc.cpp) scans data/patch at boot to apply
 # ROM/library patches (audio via mediaclientaudiostream, the scdv screen driver,
