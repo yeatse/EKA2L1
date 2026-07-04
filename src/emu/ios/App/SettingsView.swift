@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
+    @AppStorage("ios.enableControllerInput") private var enableControllerInput = true
     @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
     @AppStorage("ios.orientation") private var orientation = "auto"
@@ -44,6 +45,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+                Toggle("Game controller", isOn: $enableControllerInput)
                 Toggle("FPS overlay", isOn: $showFPSOverlay)
                 Button("Test vibration") {
                     EKA2L1Bridge.shared.testVibration()

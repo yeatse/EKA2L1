@@ -68,11 +68,15 @@
 #include <vfs/vfs.h>
 
 #include <lunasvg.h>
+#include <miniz.h>
 
 @implementation EKA2L1AppEntry
 @end
 
 @implementation EKA2L1DeviceEntry
+@end
+
+@implementation EKA2L1NGageInstallReport
 @end
 
 namespace eka2l1::ios {
@@ -645,6 +649,88 @@ namespace eka2l1::ios {
     // surface (the EAGL layer is then just a container). See context_angle.mm.
     MGLLayer *_angleLayer;
 #endif
+}
+
++ (BOOL)unzipArchiveAtPath:(NSString *)zipPath
+               toDirectory:(NSString *)destination
+                     error:(NSError **)error {
+    auto fail = ^BOOL(NSString *message) {
+        if (error) {
+            *error = [NSError errorWithDomain:@"EKA2L1ZipImport"
+                                         code:1
+                                     userInfo:@{NSLocalizedDescriptionKey: message}];
+        }
+        return NO;
+    };
+
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *destURL = [NSURL fileURLWithPath:destination].URLByStandardizingPath;
+    NSString *destPath = destURL.path;
+    NSString *destPrefix = [destPath hasSuffix:@"/"] ? destPath : [destPath stringByAppendingString:@"/"];
+
+    NSError *dirError = nil;
+    if (![fm createDirectoryAtURL:destURL withIntermediateDirectories:YES attributes:nil error:&dirError]) {
+        return fail(dirError.localizedDescription ?: @"Could not create destination directory.");
+    }
+
+    mz_zip_archive zip {};
+    if (!mz_zip_reader_init_file(&zip, zipPath.fileSystemRepresentation, 0)) {
+        return fail(@"Could not open zip archive.");
+    }
+
+    BOOL ok = YES;
+    NSString *failure = nil;
+    const mz_uint count = mz_zip_reader_get_num_files(&zip);
+    for (mz_uint i = 0; i < count; ++i) {
+        mz_zip_archive_file_stat stat {};
+        if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
+            ok = NO;
+            failure = @"Could not read zip entry metadata.";
+            break;
+        }
+
+        NSString *entryName = [NSString stringWithUTF8String:stat.m_filename];
+        if (entryName.length == 0
+            || [entryName hasPrefix:@"/"]
+            || [entryName containsString:@"../"]
+            || [entryName containsString:@"..\\"]) {
+            ok = NO;
+            failure = @"Zip archive contains an unsafe path.";
+            break;
+        }
+
+        NSString *outPath = [[destination stringByAppendingPathComponent:entryName] stringByStandardizingPath];
+        if (![outPath isEqualToString:destPath] && ![outPath hasPrefix:destPrefix]) {
+            ok = NO;
+            failure = @"Zip archive contains an unsafe path.";
+            break;
+        }
+
+        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+            if (![fm createDirectoryAtPath:outPath withIntermediateDirectories:YES attributes:nil error:&dirError]) {
+                ok = NO;
+                failure = dirError.localizedDescription ?: @"Could not create directory from zip.";
+                break;
+            }
+            continue;
+        }
+
+        NSString *parent = outPath.stringByDeletingLastPathComponent;
+        if (![fm createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:&dirError]) {
+            ok = NO;
+            failure = dirError.localizedDescription ?: @"Could not create parent directory from zip.";
+            break;
+        }
+
+        if (!mz_zip_reader_extract_to_file(&zip, i, outPath.fileSystemRepresentation, 0)) {
+            ok = NO;
+            failure = @"Could not extract zip entry.";
+            break;
+        }
+    }
+
+    mz_zip_reader_end(&zip);
+    return ok ? YES : fail(failure ?: @"Could not extract zip archive.");
 }
 
 + (instancetype)shared {
@@ -1303,6 +1389,29 @@ namespace eka2l1::ios {
     auto result = static_cast<eka2l1::package::installation_result>(
         _state->symsys->install_package(upath, install_drive));
     return result == eka2l1::package::installation_result_success ? YES : NO;
+}
+
+- (EKA2L1NGageInstallReport *)installNGageGameAtFolderPath:(NSString *)folderPath {
+    EKA2L1NGageInstallReport *report = [[EKA2L1NGageInstallReport alloc] init];
+    report.result = eka2l1::ngage_game_card_general_error;
+    report.gameName = @"";
+
+    if (!_state || !_state->symsys) {
+        return report;
+    }
+
+    std::string gameName;
+    eka2l1::ngage_game_card_install_error result = eka2l1::ngage_game_card_general_error;
+    {
+        std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+        result = _state->symsys->install_ngage_game_card(folderPath.UTF8String, [&](std::string name) {
+            gameName = std::move(name);
+        });
+    }
+
+    report.result = result;
+    report.gameName = gameName.empty() ? @"" : [NSString stringWithUTF8String:gameName.c_str()];
+    return report;
 }
 
 - (BOOL)uninstallAppWithUID:(uint32_t)uid {

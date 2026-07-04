@@ -117,7 +117,8 @@ target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     epocservs
     lunasvg
     sqlite3
-    yaml-cpp)
+    yaml-cpp
+    "-framework GameController")
 
 # --- MetalANGLE (GLES -> Metal) opt-in backend --------------------------------
 # Off by default: the app keeps the EAGL GLES path. When ON (option lives in the

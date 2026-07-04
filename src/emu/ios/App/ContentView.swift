@@ -62,6 +62,7 @@ struct ContentView: View {
 
     @State private var showingImportDevice = false
     @State private var showingSisImporter = false
+    @State private var showingNGageImporter = false
     @State private var showingSettings = false
     @State private var showingDiagnostics = false
 
@@ -77,7 +78,7 @@ struct ContentView: View {
     // given app on startup, skipping the scroll-and-tap. Pass launch arguments
     // as iOS NSArgumentDomain pairs, e.g.
     //   xcrun simctl launch booted com.eka2l1.emulator \
-    //     -LaunchROMCode rm-320 -LaunchAppUID 0x2000023D
+    //     -LaunchROMCode rm-409 -LaunchAppUID 0x2000023D
     // (decimal UID also accepted).
     @State private var autoLaunchUID: UInt32?
     @State private var showingAutoLaunch = false
@@ -146,6 +147,9 @@ struct ContentView: View {
             .fileImporter(isPresented: $showingSisImporter,
                           allowedContentTypes: sisTypes,
                           allowsMultipleSelection: true) { handleSisImport($0) }
+            .fileImporter(isPresented: $showingNGageImporter,
+                          allowedContentTypes: [.folder],
+                          allowsMultipleSelection: false) { handleNGageImport($0) }
             .confirmationDialog("Uninstall \(pendingUninstall?.name ?? "")?",
                                 isPresented: uninstallDialogShown,
                                 titleVisibility: .visible) {
@@ -219,7 +223,7 @@ struct ContentView: View {
                 } else {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 16)],
                               spacing: 16) {
-                        ForEach(Array(visibleApps.enumerated()), id: \.offset) { _, app in
+                        ForEach(visibleApps, id: \.uid) { app in
                             NavigationLink(destination: EmulatorView(uid: app.uid)) {
                                 AppGridCell(uid: app.uid, name: app.name)
                             }
@@ -227,6 +231,7 @@ struct ContentView: View {
                             .contextMenu { uninstallMenu(for: app) }
                         }
                     }
+                    .id(currentIndex)
                 }
             }
             .padding()
@@ -243,7 +248,7 @@ struct ContentView: View {
                     Text(emptyAppsHint)
                         .font(.caption).foregroundColor(.secondary)
                 }
-                ForEach(Array(visibleApps.enumerated()), id: \.offset) { _, app in
+                ForEach(visibleApps, id: \.uid) { app in
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
                         AppRow(uid: app.uid, name: app.name)
                     }
@@ -251,6 +256,7 @@ struct ContentView: View {
                 }
             }
         }
+        .id(currentIndex)
     }
 
     @ToolbarContentBuilder
@@ -309,6 +315,12 @@ struct ContentView: View {
                         showingImportDevice = true
                     } label: {
                         Label(ImportStrings.importDeviceTitle, systemImage: "square.and.arrow.down")
+                    }
+
+                    Button {
+                        showingNGageImporter = true
+                    } label: {
+                        Label("Install N-Gage Game", systemImage: "folder.badge.plus")
                     }
 
                     Divider()
@@ -470,6 +482,47 @@ struct ContentView: View {
             banner = "Installed \(installed) package(s)."
         }
     }
+
+    private func handleNGageImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            banner = "N-Gage import failed: \(err.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            switching = true
+            banner = "Installing N-Gage game..."
+            DispatchQueue.global(qos: .userInitiated).async {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let report = EKA2L1Bridge.installNGageGame(folderPath: url.path)
+                DispatchQueue.main.async {
+                    switching = false
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                    if report.succeeded {
+                        let name = report.gameName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        banner = name.isEmpty ? "Installed N-Gage game." : "Installed N-Gage game: \(name)."
+                    } else {
+                        banner = ngageErrorMessage(report.result)
+                    }
+                }
+            }
+        }
+    }
+
+    private func ngageErrorMessage(_ code: Int) -> String {
+        switch code {
+        case 1:
+            return "N-Gage import failed: choose the game card folder that contains the system folder."
+        case 2:
+            return "N-Gage import failed: that folder contains more than one game."
+        case 3:
+            return "N-Gage import failed: the registration file is missing."
+        case 4:
+            return "N-Gage import failed: the registration file is corrupted."
+        default:
+            return "N-Gage import failed (error \(code))."
+        }
+    }
 }
 
 // Device-install Form. ROM file is mandatory; RPKG is supplied only when the
@@ -614,7 +667,7 @@ struct AppGridCell: View {
     let name: String
 
     @State private var icon: UIImage?
-    @State private var attempted = false
+    @State private var loadedUID: UInt32?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -642,16 +695,22 @@ struct AppGridCell: View {
         }
         .padding(.vertical, 8)
         .onAppear(perform: loadIcon)
+        .onChange(of: uid) { _ in
+            icon = nil
+            loadedUID = nil
+            loadIcon()
+        }
     }
 
     private func loadIcon() {
-        guard !attempted else { return }
-        attempted = true
+        guard loadedUID != uid else { return }
         let uid = self.uid
+        loadedUID = uid
         DispatchQueue.global(qos: .userInitiated).async {
             let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 144)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
+                guard self.uid == uid, self.loadedUID == uid else { return }
                 self.icon = image
             }
         }
@@ -666,7 +725,7 @@ struct AppRow: View {
     let name: String
 
     @State private var icon: UIImage?
-    @State private var attempted = false
+    @State private var loadedUID: UInt32?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -692,16 +751,22 @@ struct AppRow: View {
             }
         }
         .onAppear(perform: loadIcon)
+        .onChange(of: uid) { _ in
+            icon = nil
+            loadedUID = nil
+            loadIcon()
+        }
     }
 
     private func loadIcon() {
-        guard !attempted else { return }
-        attempted = true
+        guard loadedUID != uid else { return }
         let uid = self.uid
+        loadedUID = uid
         DispatchQueue.global(qos: .userInitiated).async {
             let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 72)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
+                guard self.uid == uid, self.loadedUID == uid else { return }
                 self.icon = image
             }
         }

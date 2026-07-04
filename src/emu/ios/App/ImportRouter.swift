@@ -43,12 +43,10 @@ final class ImportRouter {
 
     private enum ImportError: LocalizedError {
         case unsupportedExtension(String)
-        case zipUnsupported
 
         var errorDescription: String? {
             switch self {
             case .unsupportedExtension(let ext): return "unsupported file type .\(ext)"
-            case .zipUnsupported: return "ROM .zip import lands in 3.5 follow-up — unzip externally for now"
             }
         }
     }
@@ -67,12 +65,21 @@ final class ImportRouter {
             let dst = (fontsDir as NSString).appendingPathComponent(name)
             try copyReplacing(url: url, to: dst, fm: fm)
         case "zip":
-            // miniz lives in the C++ side; the zip-extract path will surface
-            // through a new Obj-C bridge in the 3.4 follow-up so that ROM
-            // bundles can be authored without scripts/seed_ios_simulator_-
-            // documents.sh. For now, surface a clear error instead of dropping
-            // a half-imported tree.
-            throw ImportError.zipUnsupported
+            let baseName = url.deletingPathExtension().lastPathComponent
+            let romsDir = (documentsRoot as NSString).appendingPathComponent("roms")
+            let tmpDir = (documentsRoot as NSString).appendingPathComponent("import_tmp/\(baseName).unzipped")
+            let dst = (romsDir as NSString).appendingPathComponent(baseName)
+            if fm.fileExists(atPath: tmpDir) {
+                try fm.removeItem(atPath: tmpDir)
+            }
+            try fm.createDirectory(atPath: (tmpDir as NSString).deletingLastPathComponent,
+                                   withIntermediateDirectories: true)
+            try EKA2L1Bridge.unzipArchive(atPath: url.path, toDirectory: tmpDir)
+            if fm.fileExists(atPath: dst) {
+                try fm.removeItem(atPath: dst)
+            }
+            try fm.createDirectory(atPath: romsDir, withIntermediateDirectories: true)
+            try fm.moveItem(atPath: tmpDir, toPath: dst)
         case "rom":
             let baseName = (url.deletingPathExtension().lastPathComponent)
             let firm = baseName.lowercased()

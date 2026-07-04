@@ -1,5 +1,125 @@
+import GameController
 import QuartzCore
 import UIKit
+
+private final class ControllerInputBridge: @unchecked Sendable {
+    private let threshold: Float = 0.45
+    private let lock = NSLock()
+    private var activeScansByToken: [String: UInt32] = [:]
+    private var observers: [NSObjectProtocol] = []
+    private var enabled: Bool {
+        UserDefaults.standard.object(forKey: "ios.enableControllerInput") as? Bool ?? true
+    }
+
+    func start() {
+        guard enabled else { return }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] note in
+            guard let controller = note.object as? GCController else { return }
+            self?.attach(controller)
+        })
+        observers.append(center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            self?.releaseAll()
+        })
+        GCController.startWirelessControllerDiscovery()
+        GCController.controllers().forEach(attach)
+    }
+
+    func stop() {
+        GCController.stopWirelessControllerDiscovery()
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.removeAll()
+        GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
+        releaseAll()
+    }
+
+    private func attach(_ controller: GCController) {
+        guard let gamepad = controller.extendedGamepad else { return }
+        gamepad.valueChangedHandler = { [weak self] pad, element in
+            self?.handle(gamepad: pad, element: element)
+        }
+        handleAll(gamepad)
+    }
+
+    private func handle(gamepad: GCExtendedGamepad, element: GCControllerElement) {
+        if element === gamepad.dpad {
+            updateDirections(prefix: "dpad", x: gamepad.dpad.xAxis.value, y: gamepad.dpad.yAxis.value)
+        } else if element === gamepad.leftThumbstick {
+            updateDirections(prefix: "leftStick", x: gamepad.leftThumbstick.xAxis.value, y: gamepad.leftThumbstick.yAxis.value)
+        } else if element === gamepad.buttonA {
+            updateButton(token: "buttonA", scan: Scan.select, pressed: gamepad.buttonA.isPressed)
+        } else if element === gamepad.buttonB {
+            updateButton(token: "buttonB", scan: Scan.rightSoft, pressed: gamepad.buttonB.isPressed)
+        } else if element === gamepad.buttonX {
+            updateButton(token: "buttonX", scan: Scan.leftSoft, pressed: gamepad.buttonX.isPressed)
+        } else if element === gamepad.buttonY {
+            updateButton(token: "buttonY", scan: Scan.hash, pressed: gamepad.buttonY.isPressed)
+        } else if element === gamepad.leftShoulder {
+            updateButton(token: "leftShoulder", scan: Scan.leftSoft, pressed: gamepad.leftShoulder.isPressed)
+        } else if element === gamepad.rightShoulder {
+            updateButton(token: "rightShoulder", scan: Scan.rightSoft, pressed: gamepad.rightShoulder.isPressed)
+        } else if element === gamepad.leftTrigger {
+            updateButton(token: "leftTrigger", scan: Scan.star, pressed: gamepad.leftTrigger.value > threshold)
+        } else if element === gamepad.rightTrigger {
+            updateButton(token: "rightTrigger", scan: Scan.hash, pressed: gamepad.rightTrigger.value > threshold)
+        } else if element === gamepad.buttonMenu {
+            updateButton(token: "buttonMenu", scan: Scan.rightSoft, pressed: gamepad.buttonMenu.isPressed)
+        }
+    }
+
+    private func handleAll(_ gamepad: GCExtendedGamepad) {
+        updateDirections(prefix: "dpad", x: gamepad.dpad.xAxis.value, y: gamepad.dpad.yAxis.value)
+        updateDirections(prefix: "leftStick", x: gamepad.leftThumbstick.xAxis.value, y: gamepad.leftThumbstick.yAxis.value)
+        updateButton(token: "buttonA", scan: Scan.select, pressed: gamepad.buttonA.isPressed)
+        updateButton(token: "buttonB", scan: Scan.rightSoft, pressed: gamepad.buttonB.isPressed)
+        updateButton(token: "buttonX", scan: Scan.leftSoft, pressed: gamepad.buttonX.isPressed)
+        updateButton(token: "buttonY", scan: Scan.hash, pressed: gamepad.buttonY.isPressed)
+        updateButton(token: "leftShoulder", scan: Scan.leftSoft, pressed: gamepad.leftShoulder.isPressed)
+        updateButton(token: "rightShoulder", scan: Scan.rightSoft, pressed: gamepad.rightShoulder.isPressed)
+        updateButton(token: "leftTrigger", scan: Scan.star, pressed: gamepad.leftTrigger.value > threshold)
+        updateButton(token: "rightTrigger", scan: Scan.hash, pressed: gamepad.rightTrigger.value > threshold)
+        updateButton(token: "buttonMenu", scan: Scan.rightSoft, pressed: gamepad.buttonMenu.isPressed)
+    }
+
+    private func updateDirections(prefix: String, x: Float, y: Float) {
+        updateButton(token: "\(prefix).up", scan: Scan.up, pressed: y > threshold)
+        updateButton(token: "\(prefix).down", scan: Scan.down, pressed: y < -threshold)
+        updateButton(token: "\(prefix).left", scan: Scan.left, pressed: x < -threshold)
+        updateButton(token: "\(prefix).right", scan: Scan.right, pressed: x > threshold)
+    }
+
+    private func updateButton(token: String, scan: UInt32, pressed: Bool) {
+        let event: (UInt32, Bool)?
+        lock.lock()
+        let wasPressed = activeScansByToken[token] != nil
+        if pressed == wasPressed {
+            event = nil
+        } else if pressed {
+            activeScansByToken[token] = scan
+            event = (scan, true)
+        } else if let oldScan = activeScansByToken.removeValue(forKey: token) {
+            event = (oldScan, false)
+        } else {
+            event = nil
+        }
+        lock.unlock()
+
+        if let event {
+            EKA2L1Bridge.submitRawKey(event.0, pressed: event.1)
+        }
+    }
+
+    private func releaseAll() {
+        lock.lock()
+        let activeScans = Array(activeScansByToken.values)
+        activeScansByToken.removeAll()
+        lock.unlock()
+
+        for scan in activeScans {
+            EKA2L1Bridge.submitRawKey(scan, pressed: false)
+        }
+    }
+}
 
 private final class EKA2L1RenderView: UIView {
     var surfaceReady = false
@@ -207,6 +327,7 @@ final class EmulatorViewController: UIViewController {
     // normal termination) so the SwiftUI host can pop this screen.
     var onAppExit: ((String?) -> Void)?
     private var launched = false
+    private let controllerInput = ControllerInputBridge()
     private var gameView: EKA2L1RenderView {
         view as! EKA2L1RenderView
     }
@@ -236,6 +357,7 @@ final class EmulatorViewController: UIViewController {
         super.viewDidAppear(animated)
         gameView.setNeedsLayout()
         gameView.layoutIfNeeded()
+        controllerInput.start()
         EKA2L1Bridge.shared.resume()
         // Launch once: viewDidAppear can re-fire (e.g. returning frontmost),
         // and re-launching would spawn a second guest instance.
@@ -250,6 +372,7 @@ final class EmulatorViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        controllerInput.stop()
         EKA2L1Bridge.shared.detachLayer()
     }
 

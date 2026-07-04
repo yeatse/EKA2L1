@@ -26,6 +26,13 @@ struct EKA2L1DeviceItem: Identifiable, Hashable {
     }
 }
 
+struct EKA2L1NGageInstallItem {
+    let result: Int
+    let gameName: String
+
+    var succeeded: Bool { result == 0 }
+}
+
 struct CpuSmokeReport {
     enum Backend {
         case dyncom
@@ -79,6 +86,10 @@ final class EKA2L1Bridge {
         EKA2L1Emulator.shared().bootDevice(at: UInt(index))
     }
 
+    nonisolated static func unzipArchive(atPath path: String, toDirectory destination: String) throws {
+        try EKA2L1Emulator.unzipArchive(atPath: path, toDirectory: destination)
+    }
+
     func rescanApps() -> [EKA2L1AppItem] {
         emulator.rescanApps().map {
             EKA2L1AppItem(uid: $0.uid, name: $0.name, system: $0.system)
@@ -103,6 +114,11 @@ final class EKA2L1Bridge {
 
     func installSis(atPath path: String) -> Bool {
         emulator.installSis(atPath: path)
+    }
+
+    nonisolated static func installNGageGame(folderPath: String) -> EKA2L1NGageInstallItem {
+        let report = EKA2L1Emulator.shared().installNGageGame(atFolderPath: folderPath)
+        return EKA2L1NGageInstallItem(result: report.result, gameName: report.gameName)
     }
 
     func uninstallApp(uid: UInt32) -> Bool {
@@ -131,6 +147,10 @@ final class EKA2L1Bridge {
 
     func submitRawKey(_ scanCode: UInt32, pressed: Bool) {
         emulator.submitRawKey(scanCode, pressed: pressed)
+    }
+
+    nonisolated static func submitRawKey(_ scanCode: UInt32, pressed: Bool) {
+        EKA2L1Emulator.shared().submitRawKey(scanCode, pressed: pressed)
     }
 
     func tapRawKey(_ scanCode: UInt32) {

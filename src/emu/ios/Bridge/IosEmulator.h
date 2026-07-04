@@ -30,6 +30,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *model;
 @end
 
+@interface EKA2L1NGageInstallReport : NSObject
+@property(nonatomic, assign) NSInteger result;
+@property(nonatomic, copy) NSString *gameName;
+@end
+
 // Mirrors eka2l1::device_installation_error 1:1, plus an iOS-only `NeedRpkg`
 // case the bridge raises when a ROM dump requires an additional RPKG file but
 // none was supplied. Frontend maps these to the Android-sourced strings.
@@ -52,6 +57,11 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 @interface EKA2L1Emulator : NSObject
 
 + (instancetype)shared;
+
++ (BOOL)unzipArchiveAtPath:(NSString *)zipPath
+               toDirectory:(NSString *)destination
+                     error:(NSError * _Nullable * _Nullable)error
+    NS_SWIFT_NAME(unzipArchive(atPath:toDirectory:));
 
 // Lifecycle ----------------------------------------------------------------
 // Initialise the underlying eka2l1::system using the Documents directory at
@@ -105,6 +115,11 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // Install a SIS / SISX package onto the running device. Picks drive D for
 // S80 devices and drive E otherwise, mirroring the Android install path.
 - (BOOL)installSisAtPath:(NSString *)sisPath;
+
+// Install an N-Gage game-card folder. Returns the core
+// ngage_game_card_install_error code plus the detected game name when
+// available. Heavy; call from a background queue.
+- (EKA2L1NGageInstallReport *)installNGageGameAtFolderPath:(NSString *)folderPath;
 
 // Uninstall a user-installed package by its app UID. Deletes the package's
 // files and registration; ROM/system apps cannot be uninstalled. Returns NO if
