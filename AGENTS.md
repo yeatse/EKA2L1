@@ -83,7 +83,7 @@ xcrun devicectl device info files --device $UDID --domain-type appDataContainer 
   scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
   ```
 
-  It drives the booted simulator through Final Battle (must reach in-game with no `E32USER-CBase 46` stray-signal panic) and Calculator (default render, number input, left soft key opens the Options menu, right soft key closes it), asserts no guest crash, and saves per-state screenshots under `/tmp/eka2l1-regression`. A non-zero exit means a regression — investigate before landing. Requires a booted simulator with a device (e.g. N95/rm-320) mounted and both apps installed, plus `xcodebuildmcp`, `jq`, ImageMagick (`magick`).
+  It drives the booted simulator through Final Battle (must reach in-game with no `E32USER-CBase 46` stray-signal panic) and Calculator (default render, number input, left soft key opens the Options menu, right soft key closes it), asserts no guest crash, and saves per-state screenshots under `/tmp/eka2l1-regression`. A non-zero exit means a regression — investigate before landing. Requires a booted simulator with a device (e.g. 5320/rm-409) mounted and both apps installed, plus `xcodebuildmcp`, `jq`, ImageMagick (`magick`).
 - Inspect emulator logs for crashes, panics, access violations, graphics halts, and leftover temporary diagnostics.
 - Visual success should be verified from screenshots or simulator state, not only from a successful process launch.
 - If a previously passing app or flow stops working after a code change, treat it as a regression caused by that change first. Do not keep debugging the broken flow in isolation — revert or narrow the diff instead.

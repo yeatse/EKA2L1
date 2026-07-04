@@ -15,7 +15,7 @@
 #                               key closes it.
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
-# (e.g. N95/rm-320) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
+# (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
 # ImageMagick (`magick`) on PATH. It does NOT build — install the app first
 # (e.g. `EKA2L1_IOS_CONFIGURATION=Release scripts/build_ios.sh simulator` then
 # `xcrun simctl install booted <app>`), or pass --install <app.app>.
@@ -126,7 +126,7 @@ launch_uid() {
     # persisted preference, so the soft-key assertions below stay stable no
     # matter which layout the developer last selected (lands in NSArgumentDomain,
     # so it never overwrites the saved value).
-    xcrun simctl launch "$SIM" "$BUNDLE_ID" -EKA2L1RegressionMode 1 -LaunchROMCode rm-320 -LaunchAppUID "$1" >/dev/null 2>&1
+    xcrun simctl launch "$SIM" "$BUNDLE_ID" -EKA2L1RegressionMode 1 -LaunchROMCode rm-409 -LaunchAppUID "$1" >/dev/null 2>&1
 }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
