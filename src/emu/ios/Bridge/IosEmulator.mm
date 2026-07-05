@@ -841,7 +841,7 @@ namespace eka2l1::ios {
     chdir(dataRoot.UTF8String);
 
     eka2l1::log::setup_log(nullptr);
-    LOG_INFO(eka2l1::FRONTEND_CMDLINE, "EKA2L1 iOS v0.0.1 ({}-{})", GIT_BRANCH, GIT_COMMIT_HASH);
+    LOG_INFO(eka2l1::FRONTEND_CMDLINE, "EKA2L1 iOS v26.7.0 ({}-{})", GIT_BRANCH, GIT_COMMIT_HASH);
 
 
     _state->conf.deserialize();

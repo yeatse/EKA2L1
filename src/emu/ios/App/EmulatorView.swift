@@ -11,7 +11,9 @@ struct EmulatorView: View {
     @AppStorage("ios.fpsOverlayY") private var fpsOverlayY = -1.0
     @Environment(\.dismiss) private var dismiss
     @State private var guestFatalDetails: String?
+    @State private var sessionMessage: String?
     @State private var fpsDragStart: CGPoint?
+    @State private var wasIdleTimerDisabled = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,6 +70,10 @@ struct EmulatorView: View {
             }
         }
         .background(Color.black)
+        .onAppear {
+            wasIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
         .onDisappear {
             // The emulator screen was popped/dismissed (back button or a
             // programmatic dismiss after the app exited). Kill the guest app in
@@ -78,6 +84,7 @@ struct EmulatorView: View {
             // means "screen closed". No-op if the app already exited.
             EKA2L1Bridge.shared.setAppExitHandler(nil)
             EKA2L1Bridge.shared.closeRunningApp()
+            UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled
         }
         .alert("Guest fatal", isPresented: Binding(
             get: { guestFatalDetails != nil },
@@ -93,6 +100,18 @@ struct EmulatorView: View {
             }
         } message: {
             Text(guestFatalDetails ?? "")
+        }
+        .alert("emulator.notice", isPresented: Binding(
+            get: { sessionMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    sessionMessage = nil
+                }
+            }
+        )) {
+            Button("common.ok") { sessionMessage = nil }
+        } message: {
+            Text(sessionMessage ?? "")
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
@@ -112,8 +131,56 @@ struct EmulatorView: View {
                     Image(systemName: showVirtualKeypad ? "keyboard.chevron.compact.down" : "keyboard")
                 }
                 .accessibilityLabel(showVirtualKeypad ? "Hide virtual keypad" : "Show virtual keypad")
+
+                Menu {
+                    Button {
+                        saveScreenshot()
+                    } label: {
+                        Label("emulator.saveScreenshot", systemImage: "camera")
+                    }
+                    Button {
+                        restartGuestApp()
+                    } label: {
+                        Label("emulator.restart", systemImage: "arrow.clockwise")
+                    }
+                    Button(role: .destructive) {
+                        EKA2L1Bridge.shared.closeRunningApp()
+                        dismiss()
+                    } label: {
+                        Label("emulator.exit", systemImage: "xmark.circle")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("emulator.menu")
             }
         }
+    }
+
+    private func restartGuestApp() {
+        EKA2L1Bridge.shared.closeRunningApp()
+        Task { @MainActor in
+            try? await Task.sleep(until: .now + .milliseconds(350))
+            if EKA2L1Bridge.shared.launchApp(uid: uid) {
+                sessionMessage = String(localized: "emulator.restart.done")
+            } else {
+                sessionMessage = String(localized: "emulator.restart.failed")
+            }
+        }
+    }
+
+    private func saveScreenshot() {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.windows.first(where: { $0.isKeyWindow }) else {
+            sessionMessage = String(localized: "emulator.screenshot.failed")
+            return
+        }
+        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
+        let image = renderer.image { context in
+            window.layer.render(in: context.cgContext)
+        }
+        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
+        sessionMessage = String(localized: "emulator.screenshot.saved")
     }
 
     private func overlayPosition(in size: CGSize) -> CGPoint {

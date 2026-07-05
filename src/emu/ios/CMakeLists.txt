@@ -36,8 +36,8 @@ set(EKA2L1_IOS_BRIDGE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Bridge")
 set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/EKA2L1App.swift"
     "${EKA2L1_IOS_APP_DIR}/ContentView.swift"
+    "${EKA2L1_IOS_APP_DIR}/OnboardingView.swift"
     "${EKA2L1_IOS_APP_DIR}/EKA2L1Bridge.swift"
-    "${EKA2L1_IOS_APP_DIR}/ImportStrings.swift"
     "${EKA2L1_IOS_APP_DIR}/EmulatorView.swift"
     "${EKA2L1_IOS_APP_DIR}/VirtualKeypad.swift"
     "${EKA2L1_IOS_APP_DIR}/EmulatorViewController.swift"
@@ -51,9 +51,27 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
     "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
+    "${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings"
+    "${EKA2L1_IOS_RESOURCES_DIR}/PrivacyInfo.xcprivacy"
+    "${EKA2L1_IOS_RESOURCES_DIR}/Assets.xcassets"
 )
 
 add_executable(${EKA2L1_IOS_APP} MACOSX_BUNDLE ${EKA2L1_IOS_SOURCES})
+
+set(EKA2L1_IOS_BUNDLE_RESOURCES
+    "${EKA2L1_IOS_RESOURCES_DIR}/Assets.xcassets"
+    "${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings"
+    "${EKA2L1_IOS_RESOURCES_DIR}/PrivacyInfo.xcprivacy")
+target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_BUNDLE_RESOURCES})
+# "Resources" maps to Xcode's Copy Bundle Resources phase, which is what
+# compiles the string catalog into <lang>.lproj/Localizable.strings and the
+# asset catalog into Assets.car (a plain copy-files phase like "." ships the
+# raw .xcstrings and runtime lookups fall back to the bare string keys).
+# Xcode flattens the phase output to the bundle root on iOS.
+set_source_files_properties(${EKA2L1_IOS_BUNDLE_RESOURCES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources")
+set_source_files_properties("${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings" PROPERTIES
+    XCODE_LAST_KNOWN_FILE_TYPE "text.json.xcstrings")
 
 # Bundle the GLES shader sources into the .app under "shaders/". The ogl
 # driver loads these at runtime (see ogl_graphics_driver::do_init), and
@@ -138,6 +156,19 @@ if (EKA2L1_IOS_USE_ANGLE)
         XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "$(inherited) @executable_path/Frameworks")
 endif()
 
+# ---------------------------------------------------------------------------
+# App icon (Apple Icon Composer "Liquid Glass" .icon, Xcode 26).
+#
+# This is a Ninja build, so Xcode's automatic asset-catalog compilation does not
+# run. Invoke actool directly to compile app/AppIcon.icon into an Assets.car (the
+# Liquid Glass asset used on iOS 26) plus flat PNG fallbacks, written into the
+# bundle root. The matching CFBundleIcons keys live in Info.plist.
+set(EKA2L1_APPICON "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.icon")
+add_custom_command(TARGET ${EKA2L1_IOS_APP} POST_BUILD
+    COMMAND /bin/sh -c
+        "xcrun actool --compile \"$TARGET_BUILD_DIR/$WRAPPER_NAME\" --app-icon AppIcon --output-partial-info-plist \"${CMAKE_CURRENT_BINARY_DIR}/appicon_partial.plist\" --platform \"$PLATFORM_NAME\" --minimum-deployment-target \"${EKA2L1_IOS_DEPLOYMENT_TARGET}\" --target-device iphone --target-device ipad \"${EKA2L1_APPICON}\""
+    VERBATIM)
+
 set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     BUNDLE TRUE
     MACOSX_BUNDLE_INFO_PLIST "${EKA2L1_IOS_RESOURCES_DIR}/Info.plist"
@@ -145,6 +176,9 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"
     XCODE_ATTRIBUTE_SWIFT_VERSION "6.0"
+    XCODE_ATTRIBUTE_LOCALIZATION_PREFERS_STRING_CATALOGS "YES"
+    XCODE_ATTRIBUTE_SWIFT_EMIT_LOC_STRINGS "YES"
+    XCODE_ATTRIBUTE_STRING_CATALOG_GENERATE_SYMBOLS "YES"
     XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"
     # Xcode 26's swift driver rejects the bare -stdlib=libc++ that CMake's
     # Xcode generator otherwise pushes into OTHER_SWIFT_FLAGS for mixed

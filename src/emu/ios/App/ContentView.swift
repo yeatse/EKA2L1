@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import UniformTypeIdentifiers
 
 // Home surface:
@@ -65,6 +66,8 @@ struct ContentView: View {
     @State private var showingNGageImporter = false
     @State private var showingSettings = false
     @State private var showingDiagnostics = false
+    @State private var showingOnboarding = false
+    @AppStorage("ios.onboarding.completed") private var onboardingCompleted = false
 
     // App list presentation: adaptive icon grid (default) or compact rows.
     // Persisted so the choice sticks across launches.
@@ -107,9 +110,9 @@ struct ContentView: View {
     // some exist, point the user at the toggle instead of the install prompt.
     private var emptyAppsHint: String {
         if !showSystemApps && !apps.isEmpty {
-            return "No installed apps. Tap + to install a SIS / SISX package, or enable “Show System Apps”."
+            return String(localized: "home.empty.hiddenSystemApps")
         }
-        return "No apps yet. Tap + to install a SIS / SISX package."
+        return String(localized: "home.empty.noApps")
     }
 
     var body: some View {
@@ -144,6 +147,11 @@ struct ContentView: View {
                     if installed { bootNewestDevice() }
                 }
             }
+            .sheet(isPresented: $showingOnboarding) {
+                OnboardingView {
+                    onboardingCompleted = true
+                }
+            }
             .fileImporter(isPresented: $showingSisImporter,
                           allowedContentTypes: sisTypes,
                           allowsMultipleSelection: true) { handleSisImport($0) }
@@ -161,7 +169,30 @@ struct ContentView: View {
                 Text("This removes the package and its files from the device.")
             }
         }
-        .onAppear(perform: bootIfNeeded)
+        .onAppear {
+            bootIfNeeded()
+            if !onboardingCompleted && !Self.isAutomationLaunch {
+                showingOnboarding = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
+            guard let rawType = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
+                return
+            }
+            switch type {
+            case .began:
+                EKA2L1Bridge.shared.pause()
+            case .ended:
+                let rawOptions = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
+                if options.contains(.shouldResume) {
+                    EKA2L1Bridge.shared.resume()
+                }
+            @unknown default:
+                break
+            }
+        }
     }
 
     // Context-menu content for an app. Only user-installed apps can be removed;
@@ -183,16 +214,16 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label("No device installed", systemImage: "iphone.slash")
             } description: {
-                Text(ImportStrings.noDeviceInstalled)
+                Text("import.noDeviceInstalled")
             } actions: {
-                Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
+                Button("import.title") { showingImportDevice = true }
                     .buttonStyle(.borderedProminent)
             }
         } else {
             FallbackUnavailableView(title: "No device installed",
                                     systemImage: "iphone.slash",
-                                    message: ImportStrings.noDeviceInstalled) {
-                Button(ImportStrings.importDeviceTitle) { showingImportDevice = true }
+                                    message: String(localized: "import.noDeviceInstalled")) {
+                Button("import.title") { showingImportDevice = true }
                     .buttonStyle(.borderedProminent)
             }
         }
@@ -272,16 +303,16 @@ struct ContentView: View {
                     Button {
                         showingSettings = true
                     } label: {
-                        Label("Settings", systemImage: "gearshape")
+                        Label("settings.title", systemImage: "gearshape")
                     }
 
                     Button {
                         usesGridLayout.toggle()
                     } label: {
                         if usesGridLayout {
-                            Label("Show as List", systemImage: "list.bullet")
+                            Label("home.layout.list", systemImage: "list.bullet")
                         } else {
-                            Label("Show as Grid", systemImage: "square.grid.2x2")
+                            Label("home.layout.grid", systemImage: "square.grid.2x2")
                         }
                     }
 
@@ -312,9 +343,15 @@ struct ContentView: View {
                     }
 
                     Button {
+                        showingOnboarding = true
+                    } label: {
+                        Label("onboarding.title", systemImage: "questionmark.circle")
+                    }
+
+                    Button {
                         showingImportDevice = true
                     } label: {
-                        Label(ImportStrings.importDeviceTitle, systemImage: "square.and.arrow.down")
+                        Label("import.title", systemImage: "square.and.arrow.down")
                     }
 
                     Button {
@@ -404,6 +441,10 @@ struct ContentView: View {
         return UInt32(raw)
     }
 
+    private static var isAutomationLaunch: Bool {
+        launchAppUIDArgument() != nil || UserDefaults.standard.bool(forKey: "EKA2L1RegressionMode")
+    }
+
     private static func launchRomCodeArgument() -> String? {
         for key in ["LaunchROMCode", "LaunchROM", "LaunchDeviceCode", "LaunchDevice"] {
             if let raw = UserDefaults.standard.string(forKey: key)?
@@ -448,7 +489,7 @@ struct ContentView: View {
                 if ok {
                     currentIndex = newest.index
                     apps = EKA2L1Bridge.shared.rescanApps()
-                    banner = ImportStrings.completed
+                    banner = String(localized: "common.completed")
                 }
                 switching = false
             }
@@ -553,15 +594,15 @@ struct ImportDeviceView: View {
             Form {
                 Section {
                     Button { pickTarget = .rom; showingImporter = true } label: {
-                        fileRow(title: ImportStrings.romFilePrompt, value: rom?.name)
+                        fileRow(title: String(localized: "import.romFile"), value: rom?.name)
                     }
                     Button { pickTarget = .rpkg; showingImporter = true } label: {
-                        fileRow(title: ImportStrings.rpkgFilePrompt, value: rpkg?.name)
+                        fileRow(title: String(localized: "import.rpkgFile"), value: rpkg?.name)
                     }
                 } footer: {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(ImportStrings.installDeviceNoteMayNeedRpkg)
-                        Text(ImportStrings.recommendedDevicesToInstall)
+                        Text("import.note.rpkg")
+                        Text("import.recommendedDevices")
                     }
                 }
 
@@ -573,13 +614,13 @@ struct ImportDeviceView: View {
                     Button(action: install) {
                         HStack(spacing: 8) {
                             if installing { ProgressView() }
-                            Text(installing ? ImportStrings.processing : ImportStrings.installCTA)
+                            Text(installing ? String(localized: "common.processing") : String(localized: "common.install"))
                         }
                     }
                     .disabled(rom == nil || installing)
                 }
             }
-            .navigationTitle(ImportStrings.importDeviceTitle)
+            .navigationTitle("import.title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -602,7 +643,7 @@ struct ImportDeviceView: View {
         HStack {
             Text(title).foregroundColor(.primary)
             Spacer()
-            Text(value ?? ImportStrings.noFileSelected)
+            Text(value ?? String(localized: "import.noFileSelected"))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -643,9 +684,42 @@ struct ImportDeviceView: View {
                     onFinish(true)
                     dismiss()
                 } else {
-                    errorMessage = ImportStrings.message(for: result)
+                    errorMessage = installMessage(for: result)
                 }
             }
+        }
+    }
+
+    private func installMessage(for result: EKA2L1InstallResult) -> String {
+        switch result {
+        case .success:
+            return String(localized: "common.completed")
+        case .alreadyExist:
+            return String(localized: "import.error.alreadyExists")
+        case .determineProductFailure:
+            return String(localized: "import.error.determineProduct")
+        case .insufficient:
+            return String(localized: "import.error.insufficient")
+        case .notExist:
+            return String(localized: "import.error.notExist")
+        case .rpkgCorrupt:
+            return String(localized: "import.error.rpkgCorrupt")
+        case .vplInvalid:
+            return String(localized: "import.error.vplInvalid")
+        case .romCorrupt:
+            return String(localized: "import.error.romCorrupt")
+        case .rofsCorrupt:
+            return String(localized: "import.error.rofsCorrupt")
+        case .fpsxCorrupt:
+            return String(localized: "import.error.fpsxCorrupt")
+        case .romFailToCopy:
+            return String(localized: "import.error.romCopy")
+        case .needRpkg:
+            return String(localized: "import.error.needRpkg")
+        case .generalFailure:
+            return String(localized: "common.error")
+        @unknown default:
+            return String(localized: "common.error")
         }
     }
 
@@ -746,8 +820,6 @@ struct AppRow: View {
             .frame(width: 40, height: 40)
             VStack(alignment: .leading) {
                 Text(name)
-                Text(String(format: "uid=0x%08X", uid))
-                    .font(.caption2.monospaced()).foregroundColor(.secondary)
             }
         }
         .onAppear(perform: loadIcon)

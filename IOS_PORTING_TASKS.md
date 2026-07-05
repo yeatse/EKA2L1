@@ -78,6 +78,10 @@
 | 3 | 解锁 mount 链路 + 完成阶段 2 验收 + 音频 / 振动 / 文件导入 / 设置 / 图标完整体验 | 🟡 |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
 
+> 产品化（App Store 上架 + 面向大众）的差距清单单独维护在
+> [`docs/ios-productization-checklist.md`](./docs/ios-productization-checklist.md)（按 P0–P3 优先级；
+> 核心结论：模拟链路已打通，差距集中在上架合规材料、新手引导、本地化与设置产品化）。
+
 ---
 
 ## 阶段 0：可构建骨架
@@ -526,6 +530,8 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-07-05 | **补齐首批 iOS 产品化 P0/P1**：参考 `muhannad-ios` 的 Icon Composer 风格素材生成 iOS App 图标和启动屏；版本号改为年月制 `26.7.0` / `260700`；新增 `PrivacyInfo.xcprivacy`（不跟踪、不采集数据，并声明 UserDefaults、文件时间戳、磁盘空间、系统启动时间 required-reason API）；顶层 iOS deployment target 固定 16.0。SwiftUI 侧新增首次使用引导，接入英文 String Catalog（CMake 标记 `text.json.xcstrings` 并开启 Xcode String Catalog/Swift 字符串提取设置），设置页改即时保存并隐藏 CPU backend/JIT/log filter 等开发项，补日志导出、清除数据、存储占用；游戏会话补 idle timer、音频中断恢复、退出/重启菜单、截图保存到相册，并从 app row 去掉 `uid=0x...` 调试文案。`docs/ios-productization-checklist.md` 已按完成/延期状态更新；合规红线与 App Store 页面素材按发布前复核延期。 |
+| 2026-07-05 | **新增产品化 checklist**：`docs/ios-productization-checklist.md`，按 P0（上架硬门槛：App 图标/启动屏/隐私清单缺失、无 JIT 合规、部署目标 18.0 需下调、dynarmic 选项埋雷）→ P1（onboarding + ZIP 固件导入、本地化、设置即时生效、idle timer/文本输入）→ P2（音频收尾、字体引导、iPad、Metal/ANGLE）→ P3（CI/TestFlight）列出离 App Store 上架的全部差距；阶段总览下加引用。基于 iPhone 16 Pro 模拟器实测（首页/游戏内/设置三处截图）+ 代码审视得出。 |
 | 2026-07-04 | **修复 iOS Brother in Arms 3D (`0x20004380`) 标题/欢迎页整体发蓝**。根因：iOS GLES 路径此前为规避 simulator 对部分低位深纹理的问题，把 32bpp bitmap texture 也创建为 RGBA8，但 `update_bitmap()` 只对 8/16/24bpp 做 CPU 展开；Symbian 32bpp framebuffer/bitmap 内存实际是 B,G,R,A，iOS 直接按 RGBA 上传后红蓝通道互换。桌面/Android 仍可用 `GL_BGRA`，所以只在 iOS bitmap 上传分支把 32bpp 纳入现有 BGRA→RGBA 展开逻辑，保持其它平台不变；同时对展开前的尺寸乘法和源数据长度做校验，避免异常 update 命令在 CPU 侧分配超大临时 buffer。验证：安装 Debug simulator app 后启动 `-LaunchROMCode rm-320 -LaunchAppUID 0x20004380`，在 `Do you WANT SOUND?` 点 LSK/YES，标题页恢复暖色/军绿色，不再蓝青；`./scripts/build_ios.sh simulator` 通过；`scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Debug-iphonesimulator/EKA2L1.app` **8/8**（Final Battle + Calculator），且本轮未新增 `EKA2L1` crash report。 |
 | 2026-07-04 | **修复 iOS Brother in Arms 3D (`0x20004380`) 在 `Do you want sound?` 选择 YES 后宿主 native crash**。根因：YES 后游戏走 MIDI 播放路径，`eaudio_player_supply_url()` 创建 `player_tsf`，但 iOS bundle/sandbox 没有 `resources/defaultbank.sf2`；`player_tsf` 的 `load_bank_from_file()` 返回 null 后仍无条件调用 `tsf_channel_set_bank_preset(synth_, ...)`，TinySoundFont 在空 `tsf*` 上读 `0x18` → `EXC_BAD_ACCESS / SIGSEGV`。修法：iOS CMake 将 `src/emu/drivers/resources/defaultbank.sf2` 打进 `.app/soundfonts/`，`IosEmulator` 启动时随 shaders 一起 stage 到 `Documents/data/resources/defaultbank.sf2`；共享 TSF player 对 SF2 加载失败做防御，`open_url/open_custom/play/data_callback` 不再对空 synth 调 TSF；`eaudio_player_supply_url/supply_buffer` 只在本次打开成功时替换/使用 player，否则返回 `error_not_supported`，避免失败 player 被塞进 `impl_` 后继续解引用。顺带修正 TSF `set_repeat()` 的 `silence_intervals_us_` 自赋值。验证：修前 crash report 栈为 `tsf_channel_init` ← `tsf_channel_set_bank_preset` ← `player_tsf` ← `new_audio_player` ← `eaudio_player_supply_url(audio.cpp:187)`；修后安装 Debug simulator app，先删除 sandbox 旧 SF2，启动 BIA 自动 stage 回 `defaultbank.sf2`，点 LSK/YES 进入 title screen，无新 `EKA2L1` crash report；`./scripts/build_ios.sh simulator` 通过；`scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Debug-iphonesimulator/EKA2L1.app` **8/8**（Final Battle + Calculator）。 |
 | 2026-07-04 | **修复 iOS 主页切换设备后 app 图标错乱**。根因是 SwiftUI app grid/list 的 `ForEach` 用列表 offset 当 identity，5320→N95 这类设备切换后相同位置的 cell 会保留旧 `@State icon`；同时后台 icon 解码回调没有校验当前 UID，可能把旧 UID 的图片写回已复用的新 cell，表现为 Zip manager 显示 Snakes 图标、重启后恢复正常。修法：grid/list 改用 app UID 作为 item identity，并在 `currentIndex` 变化时重建列表 subtree；`AppGridCell`/`AppRow` 改用 `loadedUID` 跟踪当前图标，UID 变化时清空并重载，异步回调返回时校验 UID 后再写入。验证：`./scripts/build_ios.sh simulator` 通过；`scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Debug-iphonesimulator/EKA2L1.app` **8/8**（Final Battle + Calculator）。 |

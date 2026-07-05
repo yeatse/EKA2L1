@@ -13,7 +13,7 @@ else()
     set(EKA2L1_IOS OFF)
 endif()
 
-set(EKA2L1_IOS_DEPLOYMENT_TARGET "18.0" CACHE STRING "Minimum iOS version to target")
+set(EKA2L1_IOS_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version to target")
 
 option(EKA2L1_BUILD_TOOLS "Build EKA2L1's tool" ON)
 option(EKA2L1_BUILD_TESTS "Build EKA2L1's tests" ON)

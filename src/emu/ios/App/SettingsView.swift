@@ -11,63 +11,97 @@ struct SettingsView: View {
     @State private var integerScaling = true
     @State private var nearestNeighborFiltering = true
     @State private var hideSystemApps = true
-    @State private var extensiveLogging = false
-    @State private var cpuBackend = "dynarmic"
     @State private var deviceDisplayName = "EKA2L1"
-    @State private var logFilter = ""
+    @State private var storageBytes: UInt64 = 0
+    @State private var clearDataMessage: String?
+    @State private var showingClearDataConfirmation = false
+
+    private var logURL: URL {
+        URL(fileURLWithPath: settingsDocumentsRoot()).appendingPathComponent("data/EKA2L1.log")
+    }
+
+    private var storageText: String {
+        ByteCountFormatter.string(fromByteCount: Int64(storageBytes), countStyle: .file)
+    }
 
     var body: some View {
         Form {
-            Section("Device") {
-                TextField("Display name", text: $deviceDisplayName)
-                Picker("Orientation", selection: $orientation) {
-                    Text("Auto").tag("auto")
-                    Text("Portrait").tag("portrait")
-                    Text("Landscape").tag("landscape")
+            Section("settings.device") {
+                TextField("settings.displayName", text: $deviceDisplayName)
+                Picker("settings.orientation", selection: $orientation) {
+                    Text("settings.orientation.auto").tag("auto")
+                    Text("settings.orientation.portrait").tag("portrait")
+                    Text("settings.orientation.landscape").tag("landscape")
                 }
             }
-            Section("Graphics") {
-                Toggle("Integer scaling", isOn: $integerScaling)
-                Toggle("Nearest filtering", isOn: $nearestNeighborFiltering)
+            Section("settings.graphics") {
+                Toggle("settings.integerScaling", isOn: $integerScaling)
+                Toggle("settings.nearestFiltering", isOn: $nearestNeighborFiltering)
             }
-            Section("Audio") {
+            Section("settings.audio") {
                 Slider(value: $audioMasterVolume, in: 0...100, step: 1)
                 Text("\(Int(audioMasterVolume))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            Section("Input") {
-                Toggle("Virtual keypad", isOn: $showVirtualKeypad)
+            Section("settings.input") {
+                Toggle("settings.virtualKeypad", isOn: $showVirtualKeypad)
                 if showVirtualKeypad {
-                    Picker("Keypad layout", selection: $keypadLayoutRaw) {
+                    Picker("settings.keypadLayout", selection: $keypadLayoutRaw) {
                         ForEach(KeypadLayout.allCases) { layout in
                             Text(layout.displayName).tag(layout.rawValue)
                         }
                     }
                 }
-                Toggle("Game controller", isOn: $enableControllerInput)
-                Toggle("FPS overlay", isOn: $showFPSOverlay)
-                Button("Test vibration") {
+                Toggle("settings.gameController", isOn: $enableControllerInput)
+                Toggle("settings.fpsOverlay", isOn: $showFPSOverlay)
+                Button("settings.testVibration") {
                     EKA2L1Bridge.shared.testVibration()
                 }
             }
-            Section("Runtime") {
-                Picker("CPU", selection: $cpuBackend) {
-                    Text("Dynarmic").tag("dynarmic")
-                    Text("Dyncom").tag("dyncom")
+            Section("settings.library") {
+                Toggle("settings.hideSystemApps", isOn: $hideSystemApps)
+            }
+            Section("settings.support") {
+                LabeledContent("settings.storageUsed", value: storageText)
+                if FileManager.default.fileExists(atPath: logURL.path) {
+                    ShareLink(item: logURL) {
+                        Label("settings.exportLog", systemImage: "square.and.arrow.up")
+                    }
+                } else {
+                    Label("settings.noLog", systemImage: "doc")
+                        .foregroundStyle(.secondary)
                 }
-                Toggle("Hide system apps", isOn: $hideSystemApps)
-                Toggle("Extensive logging", isOn: $extensiveLogging)
-                TextField("Log filter", text: $logFilter, axis: .vertical)
-                    .lineLimit(2...4)
-                LabeledContent("JIT", value: "Stage 4")
+                Button(role: .destructive) {
+                    showingClearDataConfirmation = true
+                } label: {
+                    Label("settings.clearData", systemImage: "trash")
+                }
+                if let clearDataMessage {
+                    Text(clearDataMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
-        .navigationTitle("Settings")
-        .toolbar {
-            Button("Save", action: save)
+        .navigationTitle("settings.title")
+        .onAppear {
+            load()
+            refreshStorageUsage()
         }
-        .onAppear(perform: load)
+        .onChange(of: audioMasterVolume) { _ in save() }
+        .onChange(of: integerScaling) { _ in save() }
+        .onChange(of: nearestNeighborFiltering) { _ in save() }
+        .onChange(of: hideSystemApps) { _ in save() }
+        .onChange(of: deviceDisplayName) { _ in save() }
+        .confirmationDialog("settings.clearData.title",
+                            isPresented: $showingClearDataConfirmation,
+                            titleVisibility: .visible) {
+            Button("settings.clearData.confirm", role: .destructive, action: clearData)
+            Button("common.cancel", role: .cancel) {}
+        } message: {
+            Text("settings.clearData.message")
+        }
     }
 
     private func load() {
@@ -84,17 +118,8 @@ struct SettingsView: View {
         if let value = snapshot["hideSystemApps"] as? NSNumber {
             hideSystemApps = value.boolValue
         }
-        if let value = snapshot["extensiveLogging"] as? NSNumber {
-            extensiveLogging = value.boolValue
-        }
-        if let value = snapshot["cpuBackend"] as? String {
-            cpuBackend = value
-        }
         if let value = snapshot["deviceDisplayName"] as? String {
             deviceDisplayName = value
-        }
-        if let value = snapshot["logFilter"] as? String {
-            logFilter = value
         }
     }
 
@@ -104,11 +129,55 @@ struct SettingsView: View {
             "integerScaling": integerScaling,
             "nearestNeighborFiltering": nearestNeighborFiltering,
             "hideSystemApps": hideSystemApps,
-            "extensiveLogging": extensiveLogging,
-            "cpuBackend": cpuBackend,
-            "deviceDisplayName": deviceDisplayName,
-            "logFilter": logFilter
+            "cpuBackend": "dyncom",
+            "deviceDisplayName": deviceDisplayName
         ]
         _ = EKA2L1Bridge.shared.applyConfigSnapshot(snapshot)
     }
+
+    private func refreshStorageUsage() {
+        DispatchQueue.global(qos: .utility).async {
+            let bytes = directorySize(at: URL(fileURLWithPath: settingsDocumentsRoot()))
+            DispatchQueue.main.async {
+                storageBytes = bytes
+            }
+        }
+    }
+
+    private func clearData() {
+        EKA2L1Bridge.shared.pause()
+        EKA2L1Bridge.shared.closeRunningApp()
+        let root = URL(fileURLWithPath: settingsDocumentsRoot())
+        let fm = FileManager.default
+        for name in ["data", "sis", "roms", "import_tmp"] {
+            try? fm.removeItem(at: root.appendingPathComponent(name))
+        }
+        clearDataMessage = String(localized: "settings.clearData.done")
+        refreshStorageUsage()
+    }
+}
+
+private func settingsDocumentsRoot() -> String {
+    NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
+}
+
+private func directorySize(at url: URL) -> UInt64 {
+    let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .totalFileAllocatedSizeKey]
+    guard let enumerator = FileManager.default.enumerator(
+        at: url,
+        includingPropertiesForKeys: Array(keys),
+        options: [.skipsHiddenFiles]
+    ) else {
+        return 0
+    }
+
+    var total: UInt64 = 0
+    for case let fileURL as URL in enumerator {
+        guard let values = try? fileURL.resourceValues(forKeys: keys),
+              values.isRegularFile == true else {
+            continue
+        }
+        total += UInt64(values.totalFileAllocatedSize ?? values.fileSize ?? 0)
+    }
+    return total
 }
