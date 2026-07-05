@@ -17,6 +17,7 @@
 #include <cpu/dyncom/armsupp.h>
 #include <cpu/dyncom/vfp/vfp.h>
 #include <cstdio>
+#include <cstdlib>
 
 #include <cpu/arm_interface.h>
 
@@ -215,6 +216,8 @@ namespace {
     do {                                                                                     \
         dyncom_profiler &pp_ = g_dyncom_profiler;                                            \
         const int idx_ = (the_idx);                                                          \
+        if (idx_ >= PROF_NUM_OPS)                                                             \
+            break; /* synthetic ops (loop accel) have no table slot */                        \
         pp_.op_count[idx_]++;                                                                 \
         pp_.total_insts++;                                                                    \
         if ((pp_.total_insts & 63) == 0) {                                                    \
@@ -247,6 +250,748 @@ namespace {
 #define PROF_STEP(cpu, the_idx) ((void)0)
 #define PROF_BLOCK_ENTER(cpu) ((void)0)
 #endif
+
+// ---------------------------------------------------------------------------
+// Translation-time bulk-loop acceleration.
+//
+// Guest-side pixel-conversion / copy / fill loops (e.g. an RGB565->32bpp
+// convert measured at 14% of Brothers in Arms gameplay) interpret a handful
+// of instructions per element. When a translated Thumb block is a
+// single-block do-while loop of the canonical shape
+//
+//     do { v = load(src); store(dst, f(v)); src += s; dst += d; }
+//     while (--counter != 0);
+//
+// a symbolic one-iteration simulation proves the shape and a synthetic
+// instruction prepended to the block then executes up to counter-1
+// iterations natively through the dyncom TLB. The LAST iteration is always
+// left to the interpreter, so flags, scratch registers and the loop exit
+// come out of real interpretation; the bulk step only advances the
+// induction registers (base pointers + counter), whose per-iteration deltas
+// the matcher proved constant. Any TLB miss simply stops the bulk step and
+// hands the remainder back to the interpreter, so faults and IPC unmapping
+// keep their interpreted behaviour. Disable with EKA2L1_NO_LOOP_ACCEL=1.
+// ---------------------------------------------------------------------------
+
+// Dispatch index of the synthetic bulk-loop instruction. The label table ends
+// with DISPATCH/INIT_INST_LENGTH/END at 202..204 (kept for the switch
+// fallback); 205 is the first free slot and is only ever produced by the
+// emitter below, never by the decoder.
+static constexpr unsigned int LOOP_ACCEL_IDX = 205;
+
+enum accel_chain_op : std::uint8_t {
+    ACC_SHL,
+    ACC_SHR,
+    ACC_SAR,
+    ACC_AND,
+    ACC_ORR,
+    ACC_EOR,
+    ACC_ADD,
+    ACC_SUB,
+    ACC_SXTB,
+    ACC_SXTH,
+};
+
+enum accel_val_kind : std::uint8_t {
+    ACC_VAL_CONST, // constant
+    ACC_VAL_CHAIN, // ops applied to the iteration's loaded value
+    ACC_VAL_REG, // invariant register + offset
+};
+
+struct accel_store {
+    std::int32_t off; // relative to the dst base register's iteration value
+    std::uint8_t width; // 1/2/4 bytes
+    std::uint8_t kind; // accel_val_kind
+    std::uint8_t reg; // ACC_VAL_REG: the invariant register
+    std::uint8_t nops; // ACC_VAL_CHAIN: number of chain ops
+    std::uint32_t cval; // ACC_VAL_CONST value / ACC_VAL_REG offset
+    struct {
+        std::uint8_t op;
+        std::uint32_t imm;
+    } ops[8];
+};
+
+struct loop_accel_inst {
+    std::uint8_t has_load;
+    std::uint8_t load_width; // 1/2/4
+    std::uint8_t load_signed;
+    std::uint8_t src_reg;
+    std::int32_t src_off;
+    std::int32_t src_step; // > 0
+
+    std::uint8_t dst_reg;
+    std::int32_t dst_min_off;
+    std::int32_t dst_step; // >= span, > 0
+    std::uint8_t span; // dense bytes written per iteration
+    std::uint8_t store_count;
+    accel_store stores[4];
+
+    std::uint8_t ind_count;
+    struct {
+        std::uint8_t reg;
+        std::int32_t delta;
+    } ind[8];
+
+    std::uint8_t counter_reg;
+    std::uint16_t body_len; // guest instructions per iteration (incl. branch)
+};
+
+namespace {
+    // Symbolic value for the one-iteration abstract interpretation.
+    struct accel_sym {
+        enum kind_t : std::uint8_t { S_CONST,
+            S_AFFINE, // INIT(reg) + c
+            S_CHAIN, // chain ops over the loaded value
+            S_TOP } kind;
+        std::uint8_t reg; // S_AFFINE base
+        std::uint8_t nops;
+        std::uint32_t c; // S_CONST value / S_AFFINE offset
+        struct {
+            std::uint8_t op;
+            std::uint32_t imm;
+        } ops[8];
+
+        static accel_sym make_const(std::uint32_t v) {
+            accel_sym s{};
+            s.kind = S_CONST;
+            s.c = v;
+            return s;
+        }
+        static accel_sym make_affine(std::uint8_t r, std::uint32_t off) {
+            accel_sym s{};
+            s.kind = S_AFFINE;
+            s.reg = r;
+            s.c = off;
+            return s;
+        }
+        static accel_sym make_top() {
+            accel_sym s{};
+            s.kind = S_TOP;
+            return s;
+        }
+        bool push_op(std::uint8_t op, std::uint32_t imm) {
+            if (nops >= 8)
+                return false;
+            ops[nops].op = op;
+            ops[nops].imm = imm;
+            nops++;
+            return true;
+        }
+    };
+
+    inline std::uint32_t accel_apply_op(std::uint32_t v, std::uint8_t op, std::uint32_t imm) {
+        switch (op) {
+        case ACC_SHL:
+            return (imm >= 32) ? 0 : (v << imm);
+        case ACC_SHR:
+            return (imm >= 32) ? 0 : (v >> imm);
+        case ACC_SAR:
+            return static_cast<std::uint32_t>(static_cast<std::int32_t>(v) >> ((imm >= 32) ? 31 : imm));
+        case ACC_AND:
+            return v & imm;
+        case ACC_ORR:
+            return v | imm;
+        case ACC_EOR:
+            return v ^ imm;
+        case ACC_ADD:
+            return v + imm;
+        case ACC_SUB:
+            return v - imm;
+        case ACC_SXTB:
+            return static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int8_t>(v)));
+        case ACC_SXTH:
+            return static_cast<std::uint32_t>(static_cast<std::int32_t>(static_cast<std::int16_t>(v)));
+        }
+        return v;
+    }
+}
+
+static bool loop_accel_disabled() {
+    static const bool disabled = (std::getenv("EKA2L1_NO_LOOP_ACCEL") != nullptr);
+    return disabled;
+}
+
+// Symbolically simulate one iteration of the candidate Thumb loop at
+// [pc_start .. terminal Bcc]. Returns true and fills `out` when the body is a
+// provably uniform single-load copy/convert/fill loop.
+static bool analyze_thumb_bulk_loop(ARMul_State *cpu, std::uint32_t pc_start, loop_accel_inst &out) {
+    if (loop_accel_disabled())
+        return false;
+
+    constexpr int MAX_BODY = 24;
+
+    accel_sym sym[8];
+    for (int i = 0; i < 8; i++)
+        sym[i] = accel_sym::make_affine(static_cast<std::uint8_t>(i), 0);
+
+    enum { ACC_NONE,
+        ACC_READ,
+        ACC_WRITE };
+    std::uint8_t first_access[8] = {};
+
+    enum { FLAG_OTHER,
+        FLAG_CMP0,
+        FLAG_SUB1 };
+    int last_flag = FLAG_OTHER;
+    int flag_reg = -1;
+
+    bool have_load = false;
+    bool store_seen = false; // bulk exec is load-then-stores: reject other orders
+    std::uint8_t load_width = 0, load_signed = 0, src_reg = 0;
+    std::int32_t src_off = 0;
+
+    int store_count = 0;
+    struct {
+        std::uint8_t base;
+        std::int32_t off;
+        std::uint8_t width;
+        accel_sym val;
+    } raw_stores[4];
+
+    // Reading a register: record read-before-write and return its symbol.
+    auto rd_sym = [&](int r) -> accel_sym & {
+        if (first_access[r] == ACC_NONE)
+            first_access[r] = ACC_READ;
+        return sym[r];
+    };
+    auto wr_sym = [&](int r, const accel_sym &v) {
+        if (first_access[r] == ACC_NONE)
+            first_access[r] = ACC_WRITE;
+        sym[r] = v;
+    };
+
+    // rd = rn OP imm-const.
+    auto apply_const = [&](const accel_sym &a, std::uint8_t op, std::uint32_t imm) -> accel_sym {
+        accel_sym r = a;
+        switch (a.kind) {
+        case accel_sym::S_CONST:
+            r.c = accel_apply_op(a.c, op, imm);
+            return r;
+        case accel_sym::S_AFFINE:
+            if (op == ACC_ADD) {
+                r.c = a.c + imm;
+                return r;
+            }
+            if (op == ACC_SUB) {
+                r.c = a.c - imm;
+                return r;
+            }
+            return accel_sym::make_top();
+        case accel_sym::S_CHAIN:
+            if (!r.push_op(op, imm))
+                return accel_sym::make_top();
+            return r;
+        default:
+            return accel_sym::make_top();
+        }
+    };
+
+    std::uint32_t pc = pc_start;
+    int count = 0;
+    bool matched_branch = false;
+
+    while (count < MAX_BODY) {
+        const std::uint32_t word = cpu->ReadCode(pc & 0xFFFFFFFC);
+        const std::uint16_t hw = (pc & 2) ? static_cast<std::uint16_t>(word >> 16)
+                                          : static_cast<std::uint16_t>(word & 0xFFFF);
+        count++;
+
+        if ((hw & 0xF000) == 0xD000) {
+            // Bcc / SWI. Terminal only, must be BNE back to pc_start.
+            const std::uint32_t cond = (hw >> 8) & 0xF;
+            if (cond >= 0xE)
+                return false; // undefined / SWI
+            const std::int32_t soff = static_cast<std::int32_t>(static_cast<std::int8_t>(hw & 0xFF)) * 2;
+            const std::uint32_t target = pc + 4 + soff;
+            if (cond != 0x1 /*NE*/ || target != pc_start)
+                return false;
+            matched_branch = true;
+            break;
+        }
+
+        switch (hw >> 13) {
+        case 0: { // 000: shift imm / add-sub reg-imm3
+            if (((hw >> 11) & 3) != 3) {
+                const int opk = (hw >> 11) & 3; // LSL/LSR/ASR
+                const int rm = (hw >> 3) & 7, rd = hw & 7;
+                std::uint32_t imm = (hw >> 6) & 31;
+                std::uint8_t op = (opk == 0) ? ACC_SHL : (opk == 1) ? ACC_SHR
+                                                                    : ACC_SAR;
+                if (opk != 0 && imm == 0)
+                    imm = 32; // LSR/ASR #32 encodings
+                wr_sym(rd, apply_const(rd_sym(rm), op, imm));
+                last_flag = FLAG_OTHER;
+            } else {
+                const int rd = hw & 7, rn = (hw >> 3) & 7;
+                const bool sub = (hw >> 9) & 1;
+                const bool immf = (hw >> 10) & 1;
+                const int rm_or_imm = (hw >> 6) & 7;
+                accel_sym res;
+                const accel_sym a = rd_sym(rn);
+                if (immf) {
+                    res = apply_const(a, sub ? ACC_SUB : ACC_ADD, static_cast<std::uint32_t>(rm_or_imm));
+                    if (sub && rm_or_imm == 1 && rd == rn) {
+                        last_flag = FLAG_SUB1;
+                        flag_reg = rd;
+                    } else {
+                        last_flag = FLAG_OTHER;
+                    }
+                } else {
+                    const accel_sym b = rd_sym(rm_or_imm);
+                    if (b.kind == accel_sym::S_CONST)
+                        res = apply_const(a, sub ? ACC_SUB : ACC_ADD, b.c);
+                    else if (!sub && a.kind == accel_sym::S_CONST)
+                        res = apply_const(b, ACC_ADD, a.c);
+                    else
+                        res = accel_sym::make_top();
+                    last_flag = FLAG_OTHER;
+                }
+                wr_sym(rd, res);
+            }
+            break;
+        }
+        case 1: { // 001: MOV/CMP/ADD/SUB imm8
+            const int opk = (hw >> 11) & 3;
+            const int rd = (hw >> 8) & 7;
+            const std::uint32_t imm = hw & 0xFF;
+            switch (opk) {
+            case 0: // MOV
+                wr_sym(rd, accel_sym::make_const(imm));
+                last_flag = FLAG_OTHER;
+                break;
+            case 1: { // CMP
+                const accel_sym &a = rd_sym(rd);
+                if (imm == 0 && a.kind == accel_sym::S_AFFINE && a.reg == rd) {
+                    last_flag = FLAG_CMP0;
+                    flag_reg = rd;
+                } else {
+                    last_flag = FLAG_OTHER;
+                }
+                break;
+            }
+            case 2: // ADD
+                wr_sym(rd, apply_const(rd_sym(rd), ACC_ADD, imm));
+                last_flag = FLAG_OTHER;
+                break;
+            case 3: // SUB
+                wr_sym(rd, apply_const(rd_sym(rd), ACC_SUB, imm));
+                if (imm == 1) {
+                    last_flag = FLAG_SUB1;
+                    flag_reg = rd;
+                } else {
+                    last_flag = FLAG_OTHER;
+                }
+                break;
+            }
+            break;
+        }
+        case 2: { // 010: ALU reg / hi-reg / PC-literal / reg-offset mem
+            if ((hw & 0xFC00) == 0x4000) { // format 4 ALU
+                const int aop = (hw >> 6) & 0xF;
+                const int rm = (hw >> 3) & 7, rd = hw & 7;
+                switch (aop) {
+                case 0x0: // AND
+                case 0x1: // EOR
+                case 0xC: { // ORR
+                    const accel_sym b = rd_sym(rm);
+                    const accel_sym a = rd_sym(rd);
+                    const std::uint8_t op = (aop == 0x0) ? ACC_AND : (aop == 0x1) ? ACC_EOR
+                                                                                  : ACC_ORR;
+                    if (b.kind == accel_sym::S_CONST)
+                        wr_sym(rd, apply_const(a, op, b.c));
+                    else if (a.kind == accel_sym::S_CONST)
+                        wr_sym(rd, apply_const(b, op, a.c));
+                    else
+                        wr_sym(rd, accel_sym::make_top());
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                case 0x2: // LSL reg
+                case 0x3: // LSR reg
+                case 0x4: { // ASR reg
+                    const accel_sym b = rd_sym(rm);
+                    const accel_sym a = rd_sym(rd);
+                    const std::uint8_t op = (aop == 0x2) ? ACC_SHL : (aop == 0x3) ? ACC_SHR
+                                                                                  : ACC_SAR;
+                    if (b.kind == accel_sym::S_CONST && (b.c & 0xFF) < 32)
+                        wr_sym(rd, apply_const(a, op, b.c & 0xFF));
+                    else
+                        wr_sym(rd, accel_sym::make_top());
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                case 0x8: // TST
+                case 0xA: // CMP reg
+                case 0xB: // CMN
+                    rd_sym(rm);
+                    rd_sym(rd);
+                    last_flag = FLAG_OTHER;
+                    break;
+                case 0x9: { // NEG (RSB #0)
+                    const accel_sym b = rd_sym(rm);
+                    if (b.kind == accel_sym::S_CONST)
+                        wr_sym(rd, accel_sym::make_const(0u - b.c));
+                    else
+                        wr_sym(rd, accel_sym::make_top());
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                case 0xD: { // MUL
+                    const accel_sym b = rd_sym(rm);
+                    const accel_sym a = rd_sym(rd);
+                    if (a.kind == accel_sym::S_CONST && b.kind == accel_sym::S_CONST)
+                        wr_sym(rd, accel_sym::make_const(a.c * b.c));
+                    else
+                        wr_sym(rd, accel_sym::make_top());
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                case 0xE: { // BIC
+                    const accel_sym b = rd_sym(rm);
+                    const accel_sym a = rd_sym(rd);
+                    if (b.kind == accel_sym::S_CONST)
+                        wr_sym(rd, apply_const(a, ACC_AND, ~b.c));
+                    else
+                        wr_sym(rd, accel_sym::make_top());
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                case 0xF: { // MVN
+                    const accel_sym b = rd_sym(rm);
+                    if (b.kind == accel_sym::S_CONST)
+                        wr_sym(rd, accel_sym::make_const(~b.c));
+                    else
+                        wr_sym(rd, apply_const(b, ACC_EOR, 0xFFFFFFFFu));
+                    last_flag = FLAG_OTHER;
+                    break;
+                }
+                default:
+                    return false; // ADC/SBC/ROR read or thread flags
+                }
+            } else if ((hw & 0xF800) == 0x4800) {
+                return false; // LDR literal: loop-invariant unknown, v1 rejects
+            } else if ((hw & 0xFC00) == 0x4400) {
+                return false; // hi-reg ops / BX
+            } else { // 0101: reg-offset load/store
+                const int opk = (hw >> 9) & 7;
+                const int rm = (hw >> 6) & 7, rn = (hw >> 3) & 7, rd = hw & 7;
+                const accel_sym bsym = rd_sym(rn);
+                const accel_sym osym = rd_sym(rm);
+                accel_sym addr;
+                if (bsym.kind == accel_sym::S_AFFINE && osym.kind == accel_sym::S_CONST)
+                    addr = apply_const(bsym, ACC_ADD, osym.c);
+                else if (osym.kind == accel_sym::S_AFFINE && bsym.kind == accel_sym::S_CONST)
+                    addr = apply_const(osym, ACC_ADD, bsym.c);
+                else
+                    return false;
+                // opk: 0 STR,1 STRH,2 STRB,3 LDRSB,4 LDR,5 LDRH,6 LDRB,7 LDRSH
+                static const std::uint8_t widths[8] = { 4, 2, 1, 1, 4, 2, 1, 2 };
+                const bool is_load = opk >= 3;
+                const std::uint8_t w = widths[opk];
+                if (is_load) {
+                    if (have_load || store_seen)
+                        return false;
+                    have_load = true;
+                    load_width = w;
+                    load_signed = (opk == 3 || opk == 7);
+                    src_reg = addr.reg;
+                    src_off = static_cast<std::int32_t>(addr.c);
+                    accel_sym lv{};
+                    lv.kind = accel_sym::S_CHAIN;
+                    if (load_signed && !lv.push_op(w == 1 ? ACC_SXTB : ACC_SXTH, 0))
+                        return false;
+                    wr_sym(rd, lv);
+                } else {
+                    if (store_count >= 4)
+                        return false;
+                    const accel_sym v = rd_sym(rd);
+                    if (v.kind == accel_sym::S_TOP)
+                        return false;
+                    raw_stores[store_count].base = addr.reg;
+                    raw_stores[store_count].off = static_cast<std::int32_t>(addr.c);
+                    raw_stores[store_count].width = w;
+                    raw_stores[store_count].val = v;
+                    store_count++;
+                    store_seen = true;
+                }
+                // Memory ops leave the flags untouched: keep last_flag as-is.
+            }
+            break;
+        }
+        case 3: // 011: LDR/STR/LDRB/STRB imm5
+        case 4: { // 100: LDRH/STRH imm5 / SP-relative
+            std::uint8_t w;
+            bool is_load;
+            std::uint32_t imm_off;
+            const int rn = (hw >> 3) & 7, rd = hw & 7;
+            if ((hw >> 13) == 3) {
+                const bool byte = (hw >> 12) & 1;
+                is_load = (hw >> 11) & 1;
+                w = byte ? 1 : 4;
+                imm_off = ((hw >> 6) & 31) * (byte ? 1u : 4u);
+            } else {
+                if ((hw >> 12) & 1)
+                    return false; // 1001x: SP-relative
+                is_load = (hw >> 11) & 1;
+                w = 2;
+                imm_off = ((hw >> 6) & 31) * 2u;
+            }
+            const accel_sym bsym = rd_sym(rn);
+            if (bsym.kind != accel_sym::S_AFFINE)
+                return false;
+            const std::int32_t off = static_cast<std::int32_t>(bsym.c + imm_off);
+            if (is_load) {
+                if (have_load || store_seen)
+                    return false;
+                have_load = true;
+                load_width = w;
+                load_signed = 0;
+                src_reg = bsym.reg;
+                src_off = off;
+                accel_sym lv{};
+                lv.kind = accel_sym::S_CHAIN;
+                wr_sym(rd, lv);
+            } else {
+                if (store_count >= 4)
+                    return false;
+                const accel_sym v = rd_sym(rd);
+                if (v.kind == accel_sym::S_TOP)
+                    return false;
+                raw_stores[store_count].base = bsym.reg;
+                raw_stores[store_count].off = off;
+                raw_stores[store_count].width = w;
+                raw_stores[store_count].val = v;
+                store_count++;
+                store_seen = true;
+            }
+            break;
+        }
+        default:
+            return false; // SP-ops, misc, LDM/STM, unconditional B, BL, ...
+        }
+
+        pc += 2;
+    }
+
+    if (!matched_branch || store_count == 0)
+        return false;
+
+    // Loop condition: flags at the branch must come from CMP rc,#0 or
+    // SUBS rc,#1 with rc ending the body at INIT(rc)-1.
+    if ((last_flag != FLAG_CMP0 && last_flag != FLAG_SUB1) || flag_reg < 0)
+        return false;
+    const int rc = flag_reg;
+    if (sym[rc].kind != accel_sym::S_AFFINE || sym[rc].reg != rc || sym[rc].c != 0xFFFFFFFFu)
+        return false;
+
+    // Uniformity: every register read before written must end the body as
+    // INIT(self) + constant delta.
+    std::int32_t deltas[8];
+    for (int r = 0; r < 8; r++) {
+        deltas[r] = 0;
+        if (first_access[r] == ACC_READ) {
+            if (sym[r].kind != accel_sym::S_AFFINE || sym[r].reg != r)
+                return false;
+            deltas[r] = static_cast<std::int32_t>(sym[r].c);
+        }
+    }
+
+    // Stores: single dst base with positive step, dense byte tiling.
+    const std::uint8_t q = raw_stores[0].base;
+    std::int32_t min_off = raw_stores[0].off;
+    for (int i = 0; i < store_count; i++) {
+        if (raw_stores[i].base != q)
+            return false;
+        min_off = std::min(min_off, raw_stores[i].off);
+    }
+    if (first_access[q] != ACC_READ)
+        return false;
+    const std::int32_t dst_step = deltas[q];
+    std::uint32_t covered = 0;
+    std::uint32_t span_bytes = 0;
+    for (int i = 0; i < store_count; i++) {
+        const std::uint32_t rel = static_cast<std::uint32_t>(raw_stores[i].off - min_off);
+        if (rel + raw_stores[i].width > 32)
+            return false;
+        const std::uint32_t mask = ((raw_stores[i].width == 4) ? 0xFu : (raw_stores[i].width == 2) ? 0x3u
+                                                                                                   : 0x1u)
+            << rel;
+        if (covered & mask)
+            return false; // overlapping bytes: order-dependent, reject
+        covered |= mask;
+        span_bytes = std::max(span_bytes, rel + raw_stores[i].width);
+    }
+    if (covered != ((span_bytes >= 32) ? 0xFFFFFFFFu : ((1u << span_bytes) - 1)))
+        return false; // gaps in the written span
+    if (span_bytes > 8)
+        return false;
+    if (dst_step < static_cast<std::int32_t>(span_bytes))
+        return false; // must advance past what it wrote (also rejects step<=0)
+
+    // Load: positive stride.
+    if (have_load) {
+        if (first_access[src_reg] != ACC_READ)
+            return false;
+        if (deltas[src_reg] <= 0)
+            return false;
+    }
+
+    // Store values: only const / chain-of-load / invariant-register.
+    for (int i = 0; i < store_count; i++) {
+        const accel_sym &v = raw_stores[i].val;
+        if (v.kind == accel_sym::S_CHAIN && !have_load)
+            return false;
+        if (v.kind == accel_sym::S_AFFINE && deltas[v.reg] != 0)
+            return false;
+    }
+
+    // Build the descriptor.
+    out = loop_accel_inst{};
+    out.has_load = have_load ? 1 : 0;
+    out.load_width = load_width;
+    out.load_signed = load_signed;
+    out.src_reg = src_reg;
+    out.src_off = src_off;
+    out.src_step = have_load ? deltas[src_reg] : 0;
+    out.dst_reg = q;
+    out.dst_min_off = min_off;
+    out.dst_step = dst_step;
+    out.span = static_cast<std::uint8_t>(span_bytes);
+    out.store_count = static_cast<std::uint8_t>(store_count);
+    for (int i = 0; i < store_count; i++) {
+        accel_store &s = out.stores[i];
+        s.off = raw_stores[i].off;
+        s.width = raw_stores[i].width;
+        const accel_sym &v = raw_stores[i].val;
+        if (v.kind == accel_sym::S_CONST) {
+            s.kind = ACC_VAL_CONST;
+            s.cval = v.c;
+        } else if (v.kind == accel_sym::S_AFFINE) {
+            s.kind = ACC_VAL_REG;
+            s.reg = v.reg;
+            s.cval = v.c;
+        } else {
+            s.kind = ACC_VAL_CHAIN;
+            s.nops = v.nops;
+            for (int k = 0; k < v.nops; k++) {
+                s.ops[k].op = v.ops[k].op;
+                s.ops[k].imm = v.ops[k].imm;
+            }
+        }
+    }
+    out.ind_count = 0;
+    for (int r = 0; r < 8; r++) {
+        if (first_access[r] == ACC_READ && deltas[r] != 0) {
+            if (out.ind_count >= 8)
+                return false;
+            out.ind[out.ind_count].reg = static_cast<std::uint8_t>(r);
+            out.ind[out.ind_count].delta = deltas[r];
+            out.ind_count++;
+        }
+    }
+    out.counter_reg = static_cast<std::uint8_t>(rc);
+    out.body_len = static_cast<std::uint16_t>(count);
+    return true;
+}
+
+// Execute up to `want` full iterations natively through the dyncom TLB.
+// Returns the number of iterations actually performed; the caller advances
+// the induction registers by that count. Stops early at any TLB miss so the
+// interpreter (and its slow path / fault behaviour) takes over exactly where
+// the bulk run left off.
+static std::uint32_t run_accel_bulk(ARMul_State *cpu, const loop_accel_inst *d, std::uint32_t want) {
+    eka2l1::arm::r12l1::tlb *tlb = cpu->mem_cache_;
+    const std::uint32_t page_size = static_cast<std::uint32_t>(tlb->page_mask) + 1;
+
+    std::uint32_t src = d->has_load ? (cpu->Reg[d->src_reg] + d->src_off) : 0;
+    std::uint32_t dst = cpu->Reg[d->dst_reg] + d->dst_min_off;
+
+    // Pre-resolve invariant register store values.
+    std::uint32_t reg_vals[4];
+    for (int i = 0; i < d->store_count; i++)
+        reg_vals[i] = (d->stores[i].kind == ACC_VAL_REG)
+            ? (cpu->Reg[d->stores[i].reg] + d->stores[i].cval)
+            : d->stores[i].cval;
+
+    std::uint32_t done = 0;
+    while (done < want) {
+        std::uint8_t *hs = nullptr;
+        std::uint32_t it = want - done;
+
+        if (d->has_load) {
+            hs = tlb->lookup(src);
+            if (!hs)
+                break;
+            const std::uint32_t room = page_size - (src & static_cast<std::uint32_t>(tlb->page_mask));
+            if (room < d->load_width)
+                break;
+            it = std::min<std::uint32_t>(it, (room - d->load_width) / static_cast<std::uint32_t>(d->src_step) + 1);
+        }
+
+        std::uint8_t *hd = tlb->lookup(dst);
+        if (!hd)
+            break;
+        const std::uint32_t room_d = page_size - (dst & static_cast<std::uint32_t>(tlb->page_mask));
+        if (room_d < d->span)
+            break;
+        it = std::min<std::uint32_t>(it, (room_d - d->span) / static_cast<std::uint32_t>(d->dst_step) + 1);
+        if (!it)
+            break;
+
+        for (std::uint32_t i = 0; i < it; i++) {
+            std::uint32_t lv = 0;
+            if (d->has_load) {
+                switch (d->load_width) {
+                case 1:
+                    lv = *hs;
+                    break;
+                case 2: {
+                    std::uint16_t t;
+                    __builtin_memcpy(&t, hs, 2);
+                    lv = t;
+                    break;
+                }
+                default: {
+                    __builtin_memcpy(&lv, hs, 4);
+                    break;
+                }
+                }
+                hs += d->src_step;
+            }
+            for (int s = 0; s < d->store_count; s++) {
+                const accel_store &st = d->stores[s];
+                std::uint32_t v;
+                if (st.kind == ACC_VAL_CHAIN) {
+                    v = lv;
+                    for (int k = 0; k < st.nops; k++)
+                        v = accel_apply_op(v, st.ops[k].op, st.ops[k].imm);
+                } else {
+                    v = reg_vals[s];
+                }
+                std::uint8_t *p = hd + (st.off - d->dst_min_off);
+                switch (st.width) {
+                case 1:
+                    *p = static_cast<std::uint8_t>(v);
+                    break;
+                case 2: {
+                    const std::uint16_t t = static_cast<std::uint16_t>(v);
+                    __builtin_memcpy(p, &t, 2);
+                    break;
+                }
+                default:
+                    __builtin_memcpy(p, &v, 4);
+                    break;
+                }
+            }
+            hd += d->dst_step;
+        }
+
+        src += it * static_cast<std::uint32_t>(d->src_step);
+        dst += it * static_cast<std::uint32_t>(d->dst_step);
+        done += it;
+    }
+    return done;
+}
 
 static unsigned int DPO(Immediate)(ARMul_State *cpu, unsigned int sht_oper) {
     unsigned int immed_8 = BITS(sht_oper, 0, 7);
@@ -1056,6 +1801,23 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
     std::uint32_t phys_addr = addr;
     std::uint32_t pc_start = cpu->Reg[15];
 
+    // Bulk-loop acceleration pre-pass: if this Thumb block is a canonical
+    // copy/convert/fill do-while loop, prepend a synthetic instruction that
+    // batches iterations natively (see loop_accel_inst above). The block body
+    // itself is still translated normally right after it.
+    if (cpu->TFlag) {
+        loop_accel_inst accel_desc;
+        if (analyze_thumb_bulk_loop(cpu, pc_start, accel_desc)) {
+            const std::size_t alloc_size = sizeof(arm_inst) + sizeof(loop_accel_inst);
+            arm_inst *accel_base = reinterpret_cast<arm_inst *>(&cpu->trans_cache_buf[cpu->trans_cache_buf_top]);
+            cpu->trans_cache_buf_top += ((alloc_size + 7) >> 3) << 3;
+            accel_base->idx = LOOP_ACCEL_IDX;
+            accel_base->cond = ConditionCode::AL;
+            accel_base->br = TransExtData::NON_BRANCH;
+            *reinterpret_cast<loop_accel_inst *>(accel_base->component) = accel_desc;
+        }
+    }
+
     while (ret == TransExtData::NON_BRANCH) {
         unsigned int inst_size = InterpreterTranslateInstruction(cpu, phys_addr, inst_base);
 
@@ -1622,6 +2384,8 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
         goto INIT_INST_LENGTH;                 \
     case 204:                                  \
         goto END;                              \
+    case 205:                                  \
+        goto LOOP_ACCEL_INST;                  \
     }
 #endif
 
@@ -1848,7 +2612,8 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
         &&BLX_1_THUMB,
         &&DISPATCH,
         &&INIT_INST_LENGTH,
-        &&END };
+        &&END,
+        &&LOOP_ACCEL_INST };
 #endif
     arm_inst *inst_base;
     unsigned int addr;
@@ -1910,6 +2675,33 @@ DISPATCH : {
     }
 
     inst_base = (arm_inst *)&cpu->trans_cache_buf[ptr];
+    GOTO_NEXT_INST;
+}
+LOOP_ACCEL_INST : {
+    loop_accel_inst *const inst_cream = (loop_accel_inst *)inst_base->component;
+    const std::uint32_t iter_left = cpu->Reg[inst_cream->counter_reg];
+    if (iter_left > 1) {
+        // Bulk at most iter_left-1 iterations: the last one always runs
+        // interpreted so flags, scratch registers and the loop exit come from
+        // real interpretation. Cap by the remaining quantum so blocking /
+        // reschedule behaviour keeps its granularity.
+        const std::uint64_t quantum_rem = (cpu->NumInstrsToExecute > num_instrs)
+            ? (cpu->NumInstrsToExecute - num_instrs)
+            : 0;
+        const std::uint64_t cap = quantum_rem / inst_cream->body_len + 1;
+        const std::uint32_t want = static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(cap, iter_left - 1));
+        if (want) {
+            const std::uint32_t done = run_accel_bulk(cpu, inst_cream, want);
+            if (done) {
+                for (int i = 0; i < inst_cream->ind_count; i++)
+                    cpu->Reg[inst_cream->ind[i].reg] += static_cast<std::uint32_t>(inst_cream->ind[i].delta) * done;
+                num_instrs += static_cast<std::uint64_t>(done) * inst_cream->body_len;
+            }
+        }
+    }
+    INC_PC(sizeof(loop_accel_inst));
+    FETCH_INST;
     GOTO_NEXT_INST;
 }
 ADC_INST : {
