@@ -47,6 +47,10 @@
     </dict>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <!-- No proprietary encryption (only exempt HTTPS/system TLS), so every
+         TestFlight build skips the manual export-compliance questionnaire. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>UILaunchScreen</key>
     <dict/>
     <key>NSPhotoLibraryAddUsageDescription</key>
