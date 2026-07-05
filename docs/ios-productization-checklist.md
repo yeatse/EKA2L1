@@ -12,9 +12,10 @@
 ## P0 — 上架硬门槛（缺一项就无法提交 / 无法过审）
 
 ### 提交材料
-- [x] App 图标：参考 `muhannad-ios/master` 的 Icon Composer 素材风格，用 duck + shadow
-      生成静态 iOS 图标；接入 `Assets.xcassets`，并为当前 CMake 打包路径保留 PNG fallback。
-- [x] 启动屏：`UILaunchScreen` 使用同风格 `LaunchLogo` + `LaunchBackground`，不再是空字典。
+- [x] App 图标：参考 `muhannad-ios/master` 的 Icon Composer 素材风格，保留
+      `Resources/AppIcon.icon` 为 source of truth；CI 使用 macOS 26 / Xcode 26，构建时直接交给
+      `actool` 编译出 Assets.car / PNG fallback。
+- [x] 启动屏：`UILaunchScreen` 使用系统推荐的空字典配置，避免维护额外启动屏图片资源。
 - [x] 版本号与 bundle 元数据：`CFBundleShortVersionString=26.7.0`，`CFBundleVersion=260700`。
       规则：`YY.M.patch`，例如 2026 年 7 月第 1 个版本为 `26.7.0`。
 - [x] PrivacyInfo.xcprivacy 隐私清单：声明不跟踪、不采集数据；盘点并声明 required-reason API：

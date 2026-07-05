@@ -53,21 +53,19 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
     "${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings"
     "${EKA2L1_IOS_RESOURCES_DIR}/PrivacyInfo.xcprivacy"
-    "${EKA2L1_IOS_RESOURCES_DIR}/Assets.xcassets"
 )
 
 add_executable(${EKA2L1_IOS_APP} MACOSX_BUNDLE ${EKA2L1_IOS_SOURCES})
 
 set(EKA2L1_IOS_BUNDLE_RESOURCES
-    "${EKA2L1_IOS_RESOURCES_DIR}/Assets.xcassets"
     "${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings"
     "${EKA2L1_IOS_RESOURCES_DIR}/PrivacyInfo.xcprivacy")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_BUNDLE_RESOURCES})
 # "Resources" maps to Xcode's Copy Bundle Resources phase, which is what
-# compiles the string catalog into <lang>.lproj/Localizable.strings and the
-# asset catalog into Assets.car (a plain copy-files phase like "." ships the
-# raw .xcstrings and runtime lookups fall back to the bare string keys).
-# Xcode flattens the phase output to the bundle root on iOS.
+# compiles the string catalog into <lang>.lproj/Localizable.strings (a plain
+# copy-files phase like "." ships the raw .xcstrings and runtime lookups fall
+# back to the bare string keys). Xcode flattens the phase output to the bundle
+# root on iOS.
 set_source_files_properties(${EKA2L1_IOS_BUNDLE_RESOURCES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "Resources")
 set_source_files_properties("${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings" PROPERTIES
@@ -159,10 +157,10 @@ endif()
 # ---------------------------------------------------------------------------
 # App icon (Apple Icon Composer "Liquid Glass" .icon, Xcode 26).
 #
-# This is a Ninja build, so Xcode's automatic asset-catalog compilation does not
-# run. Invoke actool directly to compile app/AppIcon.icon into an Assets.car (the
-# Liquid Glass asset used on iOS 26) plus flat PNG fallbacks, written into the
-# bundle root. The matching CFBundleIcons keys live in Info.plist.
+# Keep Resources/AppIcon.icon as the only checked-in source of truth. The iOS CI
+# workflow runs on macOS 26 / Xcode 26, so actool can compile the Icon Composer
+# bundle directly into Assets.car plus flat PNG fallbacks. The matching
+# CFBundleIcons keys live in Info.plist.
 set(EKA2L1_APPICON "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.icon")
 add_custom_command(TARGET ${EKA2L1_IOS_APP} POST_BUILD
     COMMAND /bin/sh -c

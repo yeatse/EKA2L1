@@ -17,7 +17,8 @@
 
 name: C/C++ CI
 
-on: [push, pull_request]
+on:
+  workflow_dispatch:
 
 jobs:
   build-android:
@@ -273,4 +274,3 @@ jobs:
           EKA2L1-MacOS-x86_64.zip
           EKA2L1-Linux-x86_64.AppImage
           EKA2L1-Android.apk
-
