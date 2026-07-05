@@ -16,6 +16,8 @@
 #   scripts/build_ios.sh smoke           # build sim, install + launch on
 #                                        # the booted iPhone simulator, grep
 #                                        # log for EKA2L1_SMOKE: PASS / FAIL
+#   scripts/build_ios.sh archive         # device .xcarchive signed for App
+#                                        # Store / TestFlight distribution
 #   scripts/build_ios.sh clean           # remove build/ios-* directories
 #
 # Environment variables:
@@ -24,6 +26,11 @@
 #   EKA2L1_IOS_SCHEME              default EKA2L1
 #   EKA2L1_IOS_DEVELOPMENT_TEAM    Apple Development team id (device signing)
 #   EKA2L1_IOS_DEVICE              target device name/udid for `install`
+#   EKA2L1_IOS_ARCHIVE_PATH        .xcarchive output for `archive`
+#                                  (default build/ios-device/EKA2L1.xcarchive)
+#   EKA2L1_ASC_KEY_PATH            App Store Connect API key (.p8) for
+#   EKA2L1_ASC_KEY_ID              -allowProvisioningUpdates on CI hosts;
+#   EKA2L1_ASC_KEY_ISSUER_ID       all three must be set together
 #
 # This script intentionally does not require Qt or any signing identity.
 
@@ -43,17 +50,12 @@ SCHEME="${EKA2L1_IOS_SCHEME:-EKA2L1}"
 # `install` commands below). Empty => unsigned stage-0 build.
 DEVELOPMENT_TEAM="${EKA2L1_IOS_DEVELOPMENT_TEAM:-}"
 
-build_one() {
+configure_one() {
     local label="$1"
     local platform="$2"
     local sdk="$3"
+    local team="$4"
     local build_dir="build/ios-${label}"
-
-    # Only the device bundle signs, and only when a team is provided.
-    local team=""
-    if [ "${label}" = "device" ]; then
-        team="${DEVELOPMENT_TEAM}"
-    fi
 
     scripts/build_ios_ffmpeg.sh "${label}"
 
@@ -80,7 +82,27 @@ build_one() {
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
         -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
-        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_XCODE_ATTRIBUTE_SKIP_INSTALL=YES
+    # SKIP_INSTALL=YES above keeps the dozens of static-lib targets out of the
+    # archive's install phase; without it `xcodebuild archive` produces a
+    # "Generic Xcode Archive" that -exportArchive refuses to distribute (the
+    # app target overrides it back to NO in src/emu/ios/CMakeLists.txt).
+}
+
+build_one() {
+    local label="$1"
+    local platform="$2"
+    local sdk="$3"
+    local build_dir="build/ios-${label}"
+
+    # Only the device bundle signs, and only when a team is provided.
+    local team=""
+    if [ "${label}" = "device" ]; then
+        team="${DEVELOPMENT_TEAM}"
+    fi
+
+    configure_one "${label}" "${platform}" "${sdk}" "${team}"
 
     echo "==> Building ${label}"
     if [ -n "${team}" ]; then
@@ -103,6 +125,62 @@ build_one() {
             -sdk "${sdk}" \
             CODE_SIGNING_ALLOWED=NO \
             build
+    fi
+}
+
+# Produce a device .xcarchive for TestFlight / App Store distribution.
+# The archive itself signs automatically for development (overriding the
+# identity to "Apple Distribution" here conflicts with the target's automatic
+# signing style and fails the archive); the distribution re-sign happens at
+# xcodebuild -exportArchive time. On a CI host, pass an App Store Connect API
+# key via EKA2L1_ASC_KEY_* so -allowProvisioningUpdates can create the
+# development cert + profile on the fly.
+archive_device() {
+    if [ -z "${DEVELOPMENT_TEAM}" ]; then
+        echo "archive: set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> first." >&2
+        exit 6
+    fi
+
+    configure_one device OS64 iphoneos "${DEVELOPMENT_TEAM}"
+
+    local archive_path="${EKA2L1_IOS_ARCHIVE_PATH:-build/ios-device/EKA2L1.xcarchive}"
+
+    local auth_args=()
+    if [ -n "${EKA2L1_ASC_KEY_PATH:-}" ]; then
+        auth_args+=(
+            -authenticationKeyPath "${EKA2L1_ASC_KEY_PATH}"
+            -authenticationKeyID "${EKA2L1_ASC_KEY_ID:?EKA2L1_ASC_KEY_ID required with EKA2L1_ASC_KEY_PATH}"
+            -authenticationKeyIssuerID "${EKA2L1_ASC_KEY_ISSUER_ID:?EKA2L1_ASC_KEY_ISSUER_ID required with EKA2L1_ASC_KEY_PATH}"
+        )
+    fi
+
+    echo "==> Archiving device (${CONFIGURATION}) -> ${archive_path}"
+    xcodebuild \
+        -project build/ios-device/EKA2L1.xcodeproj \
+        -scheme "${SCHEME}" \
+        -configuration "${CONFIGURATION}" \
+        -destination 'generic/platform=iOS' \
+        -archivePath "${archive_path}" \
+        -allowProvisioningUpdates \
+        ${auth_args[@]+"${auth_args[@]}"} \
+        DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
+        CODE_SIGN_STYLE=Automatic \
+        GCC_GENERATE_DEBUGGING_SYMBOLS=YES \
+        DEBUG_INFORMATION_FORMAT=dwarf-with-dsym \
+        archive
+
+    # CMake redirects CONFIGURATION_BUILD_DIR into the source build tree, so
+    # dsymutil writes the dSYM next to the .app instead of the archive's
+    # products dir and Xcode's archive collector misses it. Stage it into the
+    # .xcarchive manually so -exportArchive uploads symbols to App Store
+    # Connect and CI can attach it as an artifact.
+    local dsym="build/ios-device/src/emu/ios/${CONFIGURATION}-iphoneos/EKA2L1.app.dSYM"
+    if [ -d "${dsym}" ]; then
+        mkdir -p "${archive_path}/dSYMs"
+        rm -rf "${archive_path}/dSYMs/EKA2L1.app.dSYM"
+        cp -R "${dsym}" "${archive_path}/dSYMs/"
+    else
+        echo "archive: warning: no dSYM found at ${dsym}" >&2
     fi
 }
 
@@ -222,6 +300,9 @@ case "${1:-all}" in
     install)
         install_device
         ;;
+    archive)
+        archive_device
+        ;;
     simulator)
         build_one simulator SIMULATORARM64 iphonesimulator
         ;;
@@ -235,7 +316,7 @@ case "${1:-all}" in
         ;;
     *)
         echo "Unknown command: ${1}" >&2
-        echo "Usage: $0 [device|device-signed|install|simulator|smoke|all|clean]" >&2
+        echo "Usage: $0 [device|device-signed|install|archive|simulator|smoke|all|clean]" >&2
         exit 2
         ;;
 esac

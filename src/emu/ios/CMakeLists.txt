@@ -188,7 +188,14 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_OTHER_SWIFT_FLAGS "$(inherited) -Xcc -DGLES_SILENCE_DEPRECATION"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "${EKA2L1_IOS_DEPLOYMENT_TARGET}"
     XCODE_ATTRIBUTE_CODE_SIGN_ENTITLEMENTS "${EKA2L1_IOS_RESOURCES_DIR}/EKA2L1.entitlements"
-    XCODE_ATTRIBUTE_ENABLE_BITCODE "NO")
+    XCODE_ATTRIBUTE_ENABLE_BITCODE "NO"
+    # Archive/TestFlight: the app is the only product that installs into the
+    # archive (build_ios.sh defaults SKIP_INSTALL=YES for every other target,
+    # otherwise the .xcarchive degrades to a non-distributable "Generic Xcode
+    # Archive"). INSTALL_PATH matches Xcode's iOS app template so the archive
+    # places the bundle under Products/Applications.
+    XCODE_ATTRIBUTE_SKIP_INSTALL "NO"
+    XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)")
 
 if (EKA2L1_IOS_DEVELOPMENT_TEAM STREQUAL "")
     # Stage-0 builds are unsigned. Developers can flip these by passing
