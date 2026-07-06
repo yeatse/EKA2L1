@@ -23,6 +23,11 @@ private func documentsRoot() -> String {
     NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
 }
 
+private enum HomeImportTarget {
+    case sis
+    case ngage
+}
+
 // iOS 16 fallback for ContentUnavailableView (which is iOS 17+). Mimics its
 // centered icon + title + description + optional action layout so the home
 // surface looks consistent across deployment targets.
@@ -62,8 +67,8 @@ struct ContentView: View {
     @State private var switching = false
 
     @State private var showingImportDevice = false
-    @State private var showingSisImporter = false
-    @State private var showingNGageImporter = false
+    @State private var homeImportTarget: HomeImportTarget = .sis
+    @State private var showingHomeImporter = false
     @State private var showingSettings = false
     @State private var showingDiagnostics = false
     @State private var showingOnboarding = false
@@ -115,6 +120,19 @@ struct ContentView: View {
         return String(localized: "home.empty.noApps")
     }
 
+    private var homeImporterTypes: [UTType] {
+        switch homeImportTarget {
+        case .sis:
+            return sisTypes
+        case .ngage:
+            return [.folder]
+        }
+    }
+
+    private var homeImporterAllowsMultipleSelection: Bool {
+        homeImportTarget == .sis
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -152,12 +170,11 @@ struct ContentView: View {
                     onboardingCompleted = true
                 }
             }
-            .fileImporter(isPresented: $showingSisImporter,
-                          allowedContentTypes: sisTypes,
-                          allowsMultipleSelection: true) { handleSisImport($0) }
-            .fileImporter(isPresented: $showingNGageImporter,
-                          allowedContentTypes: [.folder],
-                          allowsMultipleSelection: false) { handleNGageImport($0) }
+            .fileImporter(isPresented: $showingHomeImporter,
+                          allowedContentTypes: homeImporterTypes,
+                          allowsMultipleSelection: homeImporterAllowsMultipleSelection) {
+                handleHomeImport($0)
+            }
             .confirmationDialog("Uninstall \(pendingUninstall?.name ?? "")?",
                                 isPresented: uninstallDialogShown,
                                 titleVisibility: .visible) {
@@ -294,7 +311,10 @@ struct ContentView: View {
     private var toolbarContent: some ToolbarContent {
         if !devices.isEmpty {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { showingSisImporter = true } label: {
+                Button {
+                    homeImportTarget = .sis
+                    showingHomeImporter = true
+                } label: {
                     Image(systemName: "plus")
                 }
                 .disabled(switching)
@@ -355,7 +375,8 @@ struct ContentView: View {
                     }
 
                     Button {
-                        showingNGageImporter = true
+                        homeImportTarget = .ngage
+                        showingHomeImporter = true
                     } label: {
                         Label("Install N-Gage Game", systemImage: "folder.badge.plus")
                     }
@@ -501,6 +522,15 @@ struct ContentView: View {
         let ok = EKA2L1Bridge.shared.uninstallApp(uid: app.uid)
         apps = EKA2L1Bridge.shared.rescanApps()
         banner = ok ? "Uninstalled \(app.name)." : "Failed to uninstall \(app.name)."
+    }
+
+    private func handleHomeImport(_ result: Result<[URL], Error>) {
+        switch homeImportTarget {
+        case .sis:
+            handleSisImport(result)
+        case .ngage:
+            handleNGageImport(result)
+        }
     }
 
     private func handleSisImport(_ result: Result<[URL], Error>) {

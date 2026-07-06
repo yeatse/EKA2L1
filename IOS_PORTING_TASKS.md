@@ -434,6 +434,7 @@
 
 #### 3.5 UIDocumentPicker 文件导入 🟡
 - **核心结论**：首页重设计为以设备为中心，`ImportDeviceView` 走真实 ROM/RPKG 安装、`+` 走单一 `.fileImporter` 装 SIS（双 importer 会被 SwiftUI 丢弃，改 `pickTarget` 多路复用）；安全作用域 URL 必须先拷暂存。剩余 ZIP 解包 / Share extension 待办。
+- 2026-07-06 回归修复：主界面后续叠回了 SIS 与 N-Gage 两个 `.fileImporter`，导致右上角 `+` 设置状态但系统 picker 不出现；已改回 `HomeImportTarget` + 单一 home importer 多路复用。
 - 详见 [`docs/ios-document-picker-import.md`](./docs/ios-document-picker-import.md)（含 Info.plist UTI、导入页与 follow-up）。
 
 #### 3.6 AppList 图标（SVG / MIF 解码）✅
@@ -494,6 +495,7 @@
 5. **iOS 前端从不应用日志过滤器 + 非 `BUILD_FOR_USER` 默认 `*:trace` → 同步刷盘洪水把 CPU 打满**（N97/S60v5 点 Calculator 整屏黑 + CPU 100% 的**主因**）：从不调 `parse_filter_string` 叠加 `flush_on(debug)`，每次上下文切换/每条 VFP 子操作都同步刷盘（N97 启动 6s ~43 万行）；修法在 `IosEmulator` 镜像 `BUILD_FOR_USER` 降级应用 normal-use preset + 追加 `CPU*:warn`。**此修复只消除日志洪水导致的 100% CPU，N97 Calculator 仍黑屏**（剩余阻塞见下方已知风险 S60v5 FEP/Pti 项）。详见 [`docs/ios-log-flood-cpu.md`](./docs/ios-log-flood-cpu.md)。
 6. **N95 Snakes 卡在启动画面 / `E32USER-CBase 46` 误信号**：**核心结论**——卡住是请求信号被误消耗和补发导致的调度失衡，修正请求等待与通知完成语义后，Snakes 可进入主菜单并实际游玩，Calculator 回归正常；详见 [`docs/ios-snakes-stray-signal.md`](./docs/ios-snakes-stray-signal.md)。
 7. **N95 Snakes 真机黑屏无声（2026-06-03 已修）**：**核心结论**——iOS 真机构建从不把 HLE patch DLL 拷进 `data/patch`（旧 staging 只认 `__FILE__` 相对的开发机源码树、无 bundle 回退，仅模拟器侥幸成立）→ 零 patch → 无声 + Snakes 退回 `d_display.ldd` 触发活动调度器 panic → 黑屏。修法：把 `src/patch/*/group/*` 打进 .app `patch/`，staging 优先 bundle。真机验证声音+画面正常。详见 [`docs/ios-device-missing-patch-dlls.md`](./docs/ios-device-missing-patch-dlls.md)。
+8. **主界面右上角 `+` 点击无反应**：主界面同时挂了 SIS 与 N-Gage 两个 `.fileImporter`，SwiftUI 在同一 view 上会丢掉其中一个 presentation，导致 `showingSisImporter = true` 后没有系统文件选择器。修法：引入 `HomeImportTarget`，SIS 与 N-Gage 共用一个 `.fileImporter`，按目标动态切换 `allowedContentTypes` / `allowsMultipleSelection` 并分发到原处理函数。验证：`./scripts/build_ios.sh simulator` 通过；booted iPhone 16 Pro / iOS 26.5 安装 Debug build，完成 onboarding 后通过 XcodeBuildMCP 点击 `Add`，截图确认 UIDocumentPicker 弹出到 `5320 (S60v3)` 文件夹。
 
 ### 阶段 3 已知风险
 - ✅ **mmap / mprotect 行为差异（3.1）已解决**：根因是 Apple Silicon 16 KB host page 与 4 KB `mprotect` 粒度不匹配（确定性、真机同样适用），按 host page size 对齐后消除。
@@ -530,6 +532,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-07-06 | 修复 iOS 主界面右上角 `+` 点击后不弹文件选择器：主界面同时挂 SIS 与 N-Gage 两个 `.fileImporter`，触发 SwiftUI presentation 冲突；改为 `HomeImportTarget` + 单一 home importer 多路复用。验证：`./scripts/build_ios.sh simulator` 通过；booted iPhone 16 Pro / iOS 26.5 安装 Debug build，XcodeBuildMCP 点击 `Add` 后截图确认 UIDocumentPicker 弹出。 |
 | 2026-07-05 | **补齐首批 iOS 产品化 P0/P1**：参考 `muhannad-ios` 的 Icon Composer 风格素材生成 iOS App 图标和启动屏；版本号改为年月制 `26.7.0` / `260700`；新增 `PrivacyInfo.xcprivacy`（不跟踪、不采集数据，并声明 UserDefaults、文件时间戳、磁盘空间、系统启动时间 required-reason API）；顶层 iOS deployment target 固定 16.0。SwiftUI 侧新增首次使用引导，接入英文 String Catalog（CMake 标记 `text.json.xcstrings` 并开启 Xcode String Catalog/Swift 字符串提取设置），设置页改即时保存并隐藏 CPU backend/JIT/log filter 等开发项，补日志导出、清除数据、存储占用；游戏会话补 idle timer、音频中断恢复、退出/重启菜单、截图保存到相册，并从 app row 去掉 `uid=0x...` 调试文案。`docs/ios-productization-checklist.md` 已按完成/延期状态更新；合规红线与 App Store 页面素材按发布前复核延期。 |
 | 2026-07-05 | **新增产品化 checklist**：`docs/ios-productization-checklist.md`，按 P0（上架硬门槛：App 图标/启动屏/隐私清单缺失、无 JIT 合规、部署目标 18.0 需下调、dynarmic 选项埋雷）→ P1（onboarding + ZIP 固件导入、本地化、设置即时生效、idle timer/文本输入）→ P2（音频收尾、字体引导、iPad、Metal/ANGLE）→ P3（CI/TestFlight）列出离 App Store 上架的全部差距；阶段总览下加引用。基于 iPhone 16 Pro 模拟器实测（首页/游戏内/设置三处截图）+ 代码审视得出。 |
 | 2026-07-04 | **修复 iOS Brother in Arms 3D (`0x20004380`) 标题/欢迎页整体发蓝**。根因：iOS GLES 路径此前为规避 simulator 对部分低位深纹理的问题，把 32bpp bitmap texture 也创建为 RGBA8，但 `update_bitmap()` 只对 8/16/24bpp 做 CPU 展开；Symbian 32bpp framebuffer/bitmap 内存实际是 B,G,R,A，iOS 直接按 RGBA 上传后红蓝通道互换。桌面/Android 仍可用 `GL_BGRA`，所以只在 iOS bitmap 上传分支把 32bpp 纳入现有 BGRA→RGBA 展开逻辑，保持其它平台不变；同时对展开前的尺寸乘法和源数据长度做校验，避免异常 update 命令在 CPU 侧分配超大临时 buffer。验证：安装 Debug simulator app 后启动 `-LaunchROMCode rm-320 -LaunchAppUID 0x20004380`，在 `Do you WANT SOUND?` 点 LSK/YES，标题页恢复暖色/军绿色，不再蓝青；`./scripts/build_ios.sh simulator` 通过；`scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Debug-iphonesimulator/EKA2L1.app` **8/8**（Final Battle + Calculator），且本轮未新增 `EKA2L1` crash report。 |
