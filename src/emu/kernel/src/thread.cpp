@@ -298,6 +298,7 @@ namespace eka2l1 {
             , trap_stack(0)
             , cached_detach(false)
             , sleep_level(0)
+            , stray_absorbed_count(0)
             , metadata(nullptr)
             , backup_state(thread_state::stop)
             , flags(0)
@@ -707,6 +708,17 @@ namespace eka2l1 {
 
                 if (!stub.direct_wait_for_any_request) {
                     break;
+                }
+
+                // A signal was consumed at a direct WaitForAnyRequest with no
+                // ready active object: that is a stray some HLE path over-
+                // signalled (see docs/stray-signal-accounting-followup.md).
+                // Count every absorption but only log periodically — a single
+                // animated splash can produce hundreds.
+                stray_absorbed_count++;
+                if ((stray_absorbed_count == 1) || (stray_absorbed_count % 100 == 0)) {
+                    LOG_INFO(KERNEL, "Absorbed stray request signal #{} on thread {} (pc=0x{:X})",
+                        stray_absorbed_count, name(), ctx.get_pc());
                 }
             } while (true);
         }

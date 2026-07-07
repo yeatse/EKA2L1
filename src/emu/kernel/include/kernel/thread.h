@@ -221,6 +221,11 @@ namespace eka2l1 {
 
             int sleep_level;
 
+            // Stray request-semaphore signals absorbed in wait_for_any_request.
+            // A non-zero count means some HLE path over-signalled this thread —
+            // see docs/stray-signal-accounting-followup.md.
+            std::uint32_t stray_absorbed_count;
+
             entity_exit_type exit_type;
             std::u16string exit_category;
 

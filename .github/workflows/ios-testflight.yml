@@ -7,6 +7,21 @@
 #   APPSTORE_KEY_ID         App Store Connect API key id
 #   APPSTORE_PRIVATE_KEY    Full contents of the AuthKey_<KEY_ID>.p8 file
 #
+# Strongly recommended secrets:
+#   IOS_DEV_SIGNING_KEY             base64-encoded .p12 (Apple Development
+#                                   certificate + private key)
+#   IOS_DEV_SIGNING_KEY_PASSWORD    password of that .p12
+#   Without a persisted Development certificate, every run mints a brand-new
+#   one via -allowProvisioningUpdates (the previous ephemeral runner's private
+#   key is gone), piling up "Created via API" certificates until the account
+#   hits Apple's cap and archives fail with "Your account has reached the
+#   maximum number of certificates". Export the .p12 from Keychain Access on a
+#   Mac that has the certificate, then:
+#     base64 -i dev.p12 | gh secret set IOS_DEV_SIGNING_KEY
+#     gh secret set IOS_DEV_SIGNING_KEY_PASSWORD
+#   Stale API-created certificates can be listed/revoked with the manual
+#   "iOS Signing Maintenance" workflow.
+#
 # Optional secrets (only needed if the team does not use Xcode cloud-managed
 # distribution certificates; when set, the certificate is imported into a
 # throwaway keychain and used for signing instead):
@@ -82,10 +97,13 @@ jobs:
           printf '%s\n' "${APPSTORE_PRIVATE_KEY}" > "${RUNNER_TEMP}/asc_key.p8"
           chmod 600 "${RUNNER_TEMP}/asc_key.p8"
 
-      - name: Import distribution certificate
-        if: steps.guard.outputs.configured == 'true' && env.HAS_CERT == 'true'
+      - name: Import signing certificates
+        if: steps.guard.outputs.configured == 'true' && (env.HAS_DEV_CERT == 'true' || env.HAS_DIST_CERT == 'true')
         env:
-          HAS_CERT: ${{ secrets.IOS_DIST_SIGNING_KEY != '' }}
+          HAS_DEV_CERT: ${{ secrets.IOS_DEV_SIGNING_KEY != '' }}
+          HAS_DIST_CERT: ${{ secrets.IOS_DIST_SIGNING_KEY != '' }}
+          IOS_DEV_SIGNING_KEY: ${{ secrets.IOS_DEV_SIGNING_KEY }}
+          IOS_DEV_SIGNING_KEY_PASSWORD: ${{ secrets.IOS_DEV_SIGNING_KEY_PASSWORD }}
           IOS_DIST_SIGNING_KEY: ${{ secrets.IOS_DIST_SIGNING_KEY }}
           IOS_DIST_SIGNING_KEY_PASSWORD: ${{ secrets.IOS_DIST_SIGNING_KEY_PASSWORD }}
         run: |
@@ -95,10 +113,18 @@ jobs:
           security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
           security set-keychain-settings -lut 21600 "${KEYCHAIN}"
           security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-          printf '%s' "${IOS_DIST_SIGNING_KEY}" | base64 --decode > "${RUNNER_TEMP}/dist_cert.p12"
-          security import "${RUNNER_TEMP}/dist_cert.p12" \
-            -P "${IOS_DIST_SIGNING_KEY_PASSWORD}" \
-            -A -t cert -f pkcs12 -k "${KEYCHAIN}"
+          if [ "${HAS_DEV_CERT}" = "true" ]; then
+            printf '%s' "${IOS_DEV_SIGNING_KEY}" | base64 --decode > "${RUNNER_TEMP}/dev_cert.p12"
+            security import "${RUNNER_TEMP}/dev_cert.p12" \
+              -P "${IOS_DEV_SIGNING_KEY_PASSWORD}" \
+              -A -t cert -f pkcs12 -k "${KEYCHAIN}"
+          fi
+          if [ "${HAS_DIST_CERT}" = "true" ]; then
+            printf '%s' "${IOS_DIST_SIGNING_KEY}" | base64 --decode > "${RUNNER_TEMP}/dist_cert.p12"
+            security import "${RUNNER_TEMP}/dist_cert.p12" \
+              -P "${IOS_DIST_SIGNING_KEY_PASSWORD}" \
+              -A -t cert -f pkcs12 -k "${KEYCHAIN}"
+          fi
           security set-key-partition-list -S apple-tool:,apple: \
             -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" > /dev/null
           security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
@@ -165,7 +191,7 @@ jobs:
       - name: Clean up signing material
         if: always()
         run: |
-          rm -f "${RUNNER_TEMP}/asc_key.p8" "${RUNNER_TEMP}/dist_cert.p12"
+          rm -f "${RUNNER_TEMP}/asc_key.p8" "${RUNNER_TEMP}/dev_cert.p12" "${RUNNER_TEMP}/dist_cert.p12"
           if [ -f "${RUNNER_TEMP}/eka2l1-signing.keychain-db" ]; then
             security delete-keychain "${RUNNER_TEMP}/eka2l1-signing.keychain-db" || true
             security list-keychains -d user -s login.keychain-db
