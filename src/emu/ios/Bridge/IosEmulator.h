@@ -154,6 +154,27 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 - (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed;
 - (void)tapRawKey:(uint32_t)scanCode;
 
+// YES when the booted device's Symbian version drives its UI by touch
+// (S60v5 / Symbian^3 and later). The frontend uses it to pick the fullscreen
+// keypad layout by default for those ROMs.
+- (BOOL)currentDeviceIsTouchScreen;
+
+// Vertical anchor for the presented guest picture, in surface pixels.
+// Pass a negative value to centre it (default). >= 0 pins the picture's top
+// edge at that offset (clamped) — used to top-align the picture when a keypad
+// overlays the bottom of the screen.
+- (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop;
+
+// Rotate just the presented guest picture 90° clockwise (wrapping at 360),
+// on top of the guest's own orientation. The interface orientation itself is
+// fixed by the keypad layout; this only spins the picture. Touch input is
+// mapped back through this rotation so taps stay aligned.
+- (void)rotateGuestDisplayClockwise;
+
+// Clear any user picture rotation (back to the guest's own orientation). The
+// frontend calls this when the keypad layout changes.
+- (void)resetGuestDisplayRotation;
+
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
 - (void)testVibration;

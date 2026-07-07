@@ -5,7 +5,6 @@ struct SettingsView: View {
     @AppStorage("ios.enableControllerInput") private var enableControllerInput = true
     @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
-    @AppStorage("ios.orientation") private var orientation = "auto"
 
     @State private var audioMasterVolume = 100.0
     @State private var integerScaling = true
@@ -28,11 +27,6 @@ struct SettingsView: View {
         Form {
             Section("settings.device") {
                 TextField("settings.displayName", text: $deviceDisplayName)
-                Picker("settings.orientation", selection: $orientation) {
-                    Text("settings.orientation.auto").tag("auto")
-                    Text("settings.orientation.portrait").tag("portrait")
-                    Text("settings.orientation.landscape").tag("landscape")
-                }
             }
             Section("settings.graphics") {
                 Toggle("settings.integerScaling", isOn: $integerScaling)

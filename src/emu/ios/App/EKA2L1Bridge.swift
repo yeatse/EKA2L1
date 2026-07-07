@@ -145,6 +145,30 @@ final class EKA2L1Bridge {
         emulator.submitPointer(x: x, y: y, phase: phase, pointerId: pointerId)
     }
 
+    // True when the booted ROM drives its UI by touch (S60v5 / Symbian^3+);
+    // those default to the fullscreen keypad layout.
+    func currentDeviceIsTouchScreen() -> Bool {
+        emulator.currentDeviceIsTouchScreen()
+    }
+
+    // Anchor the presented guest picture's top edge at `pixels` from the top of
+    // the render surface (negative = centred). Used to keep the picture clear
+    // of a bottom keypad overlay.
+    func setDisplayAnchorTop(pixels: Int) {
+        emulator.setDisplayAnchorTopPixels(pixels)
+    }
+
+    // Rotate just the presented guest picture 90° clockwise; the interface
+    // orientation stays fixed by the keypad layout.
+    func rotateGuestDisplay() {
+        emulator.rotateGuestDisplayClockwise()
+    }
+
+    // Clear any user picture rotation; called when the keypad layout changes.
+    func resetGuestDisplayRotation() {
+        emulator.resetGuestDisplayRotation()
+    }
+
     func submitRawKey(_ scanCode: UInt32, pressed: Bool) {
         emulator.submitRawKey(scanCode, pressed: pressed)
     }

@@ -1,11 +1,17 @@
 import SwiftUI
 import UIKit
 
+// Fullscreen emulator screen: the render view fills the whole display (no
+// navigation bar / status bar) and the virtual keypad floats above it — the
+// keypad never resizes the game picture. Frontend actions that used to live in
+// the navigation bar are reachable through the keypad's system menu key.
 struct EmulatorView: View {
     let uid: UInt32
 
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
     @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
+    @AppStorage(KeypadLayout.touchStorageKey) private var touchKeypadLayoutRaw = KeypadLayout.touchDefault.rawValue
+    @AppStorage(KeypadDefaults.opacityKey) private var keypadOpacity = KeypadDefaults.opacity
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
     @AppStorage("ios.fpsOverlayX") private var fpsOverlayX = -1.0
     @AppStorage("ios.fpsOverlayY") private var fpsOverlayY = -1.0
@@ -14,68 +20,135 @@ struct EmulatorView: View {
     @State private var sessionMessage: String?
     @State private var fpsDragStart: CGPoint?
     @State private var wasIdleTimerDisabled = false
+    @State private var hostProxy = EmulatorHostProxy()
+    // Whether the booted ROM is touch-driven (S60v5 / Symbian^3+); those use a
+    // separate layout preference that defaults to the fullscreen layout.
+    @State private var isTouchDevice = false
+    // Screen-space frame of the keypad overlay, handed to the render view so it
+    // yields touches there to the keys drawn above it.
+    @State private var keypadFrame: CGRect = .null
+
+    // The -LaunchKeypadLayout testing argument seeds the layout only for the
+    // first emulator screen of the process; later screens use the stored pick.
+    @MainActor private static var launchLayoutApplied = false
+
+    private var keypadLayout: KeypadLayout {
+        KeypadLayout.resolve(isTouchDevice ? touchKeypadLayoutRaw : keypadLayoutRaw)
+    }
+
+    // Menu layout picks go to whichever preference backs the current ROM class,
+    // and re-show a hidden keypad — the pick expresses "I want this keypad now".
+    private var layoutSelection: Binding<String> {
+        Binding(
+            get: { keypadLayout.rawValue },
+            set: { raw in
+                if isTouchDevice {
+                    touchKeypadLayoutRaw = raw
+                } else {
+                    keypadLayoutRaw = raw
+                }
+                showVirtualKeypad = true
+            }
+        )
+    }
+
+    private var menuActions: KeypadMenuActions {
+        KeypadMenuActions(
+            layoutSelection: layoutSelection,
+            rotateDisplay: { EKA2L1Bridge.shared.rotateGuestDisplay() },
+            saveScreenshot: { saveScreenshot() },
+            restartGame: { restartGuestApp() },
+            exitGame: {
+                EKA2L1Bridge.shared.closeRunningApp()
+                dismiss()
+            }
+        )
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            GeometryReader { proxy in
-                ZStack(alignment: .topLeading) {
-                    EmulatorControllerView(uid: uid, onAppExit: { fatalDetails in
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                EmulatorControllerView(
+                    uid: uid,
+                    host: hostProxy,
+                    anchorsDisplayTop: keypadLayout.prefersTopAnchoredDisplay && showVirtualKeypad,
+                    keypadHitRegion: keypadFrame,
+                    onAppExit: { fatalDetails in
                         if let fatalDetails {
                             guestFatalDetails = fatalDetails
                         } else {
                             dismiss()
                         }
-                    })
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if showFPSOverlay {
-                        FPSOverlay()
-                            .position(
-                                x: overlayPosition(in: proxy.size).x,
-                                y: overlayPosition(in: proxy.size).y
-                            )
-                            .gesture(
-                                DragGesture()
-                                    .onChanged { value in
-                                        let start = fpsDragStart ?? overlayPosition(in: proxy.size)
-                                        fpsDragStart = start
-                                        let point = clampedOverlayPosition(
-                                            CGPoint(
-                                                x: start.x + value.translation.width,
-                                                y: start.y + value.translation.height
-                                            ),
-                                            in: proxy.size
-                                        )
-                                        fpsOverlayX = point.x
-                                        fpsOverlayY = point.y
-                                    }
-                                    .onEnded { _ in
-                                        fpsDragStart = nil
-                                    }
-                            )
-                            .onAppear {
-                                ensureOverlayPosition(in: proxy.size)
-                            }
-                            .onChange(of: proxy.size) { newSize in
-                                ensureOverlayPosition(in: newSize)
-                            }
-                            .accessibilityLabel("Game FPS")
                     }
+                )
+                .ignoresSafeArea()
+
+                if showFPSOverlay {
+                    FPSOverlay()
+                        .position(
+                            x: overlayPosition(in: proxy.size).x,
+                            y: overlayPosition(in: proxy.size).y
+                        )
+                        .gesture(
+                            DragGesture()
+                                .onChanged { value in
+                                    let start = fpsDragStart ?? overlayPosition(in: proxy.size)
+                                    fpsDragStart = start
+                                    let point = clampedOverlayPosition(
+                                        CGPoint(
+                                            x: start.x + value.translation.width,
+                                            y: start.y + value.translation.height
+                                        ),
+                                        in: proxy.size
+                                    )
+                                    fpsOverlayX = point.x
+                                    fpsOverlayY = point.y
+                                }
+                                .onEnded { _ in
+                                    fpsDragStart = nil
+                                }
+                        )
+                        .onAppear {
+                            ensureOverlayPosition(in: proxy.size)
+                        }
+                        .onChange(of: proxy.size) { newSize in
+                            ensureOverlayPosition(in: newSize)
+                        }
+                        .accessibilityLabel("Game FPS")
                 }
             }
-            if showVirtualKeypad {
-                VirtualKeypad(layout: KeypadLayout.resolve(keypadLayoutRaw))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
+            .overlay(alignment: keypadOverlayAlignment) {
+                keypadOverlay
+                    .background(
+                        GeometryReader { keypadProxy in
+                            Color.clear
+                                .onAppear { updateKeypadFrame(keypadProxy.frame(in: .global)) }
+                                .onChange(of: keypadProxy.frame(in: .global)) { updateKeypadFrame($0) }
+                        }
+                    )
             }
         }
-        .background(Color.black)
+        .background(Color.black.ignoresSafeArea())
+        .statusBarHidden(true)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
+        .persistentSystemOverlays(.hidden)
         .onAppear {
             wasIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
+            isTouchDevice = EKA2L1Bridge.shared.currentDeviceIsTouchScreen()
+            if !Self.launchLayoutApplied, let forced = KeypadLayout.launchArgumentLayout() {
+                Self.launchLayoutApplied = true
+                layoutSelection.wrappedValue = forced.rawValue
+            }
+            DisplayOrientation.lock(landscape: keypadLayout.prefersLandscape)
+        }
+        .onChange(of: keypadLayout) { newLayout in
+            DisplayOrientation.lock(landscape: newLayout.prefersLandscape)
+            EKA2L1Bridge.shared.resetGuestDisplayRotation()
         }
         .onDisappear {
-            // The emulator screen was popped/dismissed (back button or a
+            // The emulator screen was popped/dismissed (exit menu item or a
             // programmatic dismiss after the app exited). Kill the guest app in
             // lockstep with closing the screen. Drop the exit handler first so
             // the kill's logon doesn't bounce back into a dismiss. SwiftUI's
@@ -85,6 +158,7 @@ struct EmulatorView: View {
             EKA2L1Bridge.shared.setAppExitHandler(nil)
             EKA2L1Bridge.shared.closeRunningApp()
             UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled
+            DisplayOrientation.unlock()
         }
         .alert("Guest fatal", isPresented: Binding(
             get: { guestFatalDetails != nil },
@@ -113,49 +187,40 @@ struct EmulatorView: View {
         } message: {
             Text(sessionMessage ?? "")
         }
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button("L") {
-                    EKA2L1Bridge.shared.tapRawKey(0xA4)
-                }
-                .accessibilityLabel("Left soft key")
+    }
 
-                Button("R") {
-                    EKA2L1Bridge.shared.tapRawKey(0xA5)
-                }
-                .accessibilityLabel("Right soft key")
+    // MARK: Keypad overlay
 
-                Button {
-                    showVirtualKeypad.toggle()
-                } label: {
-                    Image(systemName: showVirtualKeypad ? "keyboard.chevron.compact.down" : "keyboard")
-                }
-                .accessibilityLabel(showVirtualKeypad ? "Hide virtual keypad" : "Show virtual keypad")
+    private var keypadOverlayAlignment: Alignment {
+        showVirtualKeypad ? keypadLayout.overlayAlignment : .bottomTrailing
+    }
 
-                Menu {
-                    Button {
-                        saveScreenshot()
-                    } label: {
-                        Label("emulator.saveScreenshot", systemImage: "camera")
-                    }
-                    Button {
-                        restartGuestApp()
-                    } label: {
-                        Label("emulator.restart", systemImage: "arrow.clockwise")
-                    }
-                    Button(role: .destructive) {
-                        EKA2L1Bridge.shared.closeRunningApp()
-                        dismiss()
-                    } label: {
-                        Label("emulator.exit", systemImage: "xmark.circle")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityLabel("emulator.menu")
-            }
+    // The overlay (full keypad, or just the floating system-menu key when the
+    // keypad is hidden) always intercepts touches within its own frame; the
+    // exposed game area stays available for guest touch. .global matches the
+    // render view's coordinate space (it fills the window).
+    private func updateKeypadFrame(_ frame: CGRect) {
+        if frame != keypadFrame {
+            keypadFrame = frame
         }
     }
+
+    @ViewBuilder private var keypadOverlay: some View {
+        Group {
+            if showVirtualKeypad {
+                VirtualKeypad(layout: keypadLayout, actions: menuActions)
+                    .padding(keypadLayout == .ngage ? 0 : 10)
+            } else {
+                // Keypad hidden: keep the system menu key so the screen stays
+                // operable without the navigation bar.
+                SystemMenuKey(actions: menuActions, size: CGSize(width: 46, height: 40))
+                    .padding(10)
+            }
+        }
+        .opacity(keypadOpacity)
+    }
+
+    // MARK: Actions
 
     private func restartGuestApp() {
         EKA2L1Bridge.shared.closeRunningApp()
@@ -169,19 +234,23 @@ struct EmulatorView: View {
         }
     }
 
+    // Snapshot only the render view (no keypad overlay). drawHierarchy uses
+    // the window-server snapshot path, which is what captures GL/Metal layer
+    // content — CALayer.render(in:) would leave the game picture black.
     private func saveScreenshot() {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first(where: { $0.isKeyWindow }) else {
+        guard let view = hostProxy.viewController?.view else {
             sessionMessage = String(localized: "emulator.screenshot.failed")
             return
         }
-        let renderer = UIGraphicsImageRenderer(bounds: window.bounds)
-        let image = renderer.image { context in
-            window.layer.render(in: context.cgContext)
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        let image = renderer.image { _ in
+            view.drawHierarchy(in: view.bounds, afterScreenUpdates: false)
         }
         UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
         sessionMessage = String(localized: "emulator.screenshot.saved")
     }
+
+    // MARK: FPS overlay positioning
 
     private func overlayPosition(in size: CGSize) -> CGPoint {
         if fpsOverlayX >= 0, fpsOverlayY >= 0 {
@@ -209,6 +278,58 @@ struct EmulatorView: View {
         )
     }
 }
+
+// MARK: - Orientation
+
+// The interface orientation is pinned to whatever the active keypad layout
+// wants (N-Gage → landscape, everything else → portrait) and locked there, so
+// a physical device rotation can't change it. `AppOrientationDelegate` reads
+// this mask from the (nonisolated) UIKit callback, hence the plain global.
+nonisolated(unsafe) var lockedInterfaceOrientationMask: UIInterfaceOrientationMask = .portrait
+
+// Pins/releases the interface orientation for the emulator screen. This is the
+// whole-screen orientation (frame + keypad); the guest picture is rotated
+// separately via EKA2L1Bridge.rotateGuestDisplay().
+@MainActor
+enum DisplayOrientation {
+    // Lock the interface to the layout's orientation and rotate to it now.
+    static func lock(landscape: Bool) {
+        lockedInterfaceOrientationMask = landscape ? .landscape : .portrait
+        request(landscape: landscape)
+    }
+
+    // Release back to portrait when leaving the emulator (home screen is
+    // portrait-only).
+    static func unlock() {
+        lockedInterfaceOrientationMask = .portrait
+        request(landscape: false)
+    }
+
+    private static func request(landscape: Bool) {
+        guard let scene = activeScene else { return }
+        rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait))
+        // The request is rejected while a navigation transition is running
+        // (typical when the emulator screen is being pushed), so confirm after
+        // the transition settles and re-request once if it didn't stick.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            guard let scene = activeScene,
+                  scene.interfaceOrientation.isLandscape != landscape else { return }
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait))
+        }
+    }
+
+    private static var activeScene: UIWindowScene? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+    }
+
+    private static var rootViewController: UIViewController? {
+        activeScene?.keyWindow?.rootViewController
+    }
+}
+
+// MARK: - FPS overlay
 
 private struct FPSOverlay: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -247,17 +368,37 @@ private struct FPSOverlay: View {
     }
 }
 
+// MARK: - UIKit bridge
+
+// Lets the SwiftUI screen reach the hosted controller (for the render-view
+// screenshot) without retaining it.
+@MainActor
+final class EmulatorHostProxy {
+    weak var viewController: EmulatorViewController?
+}
+
 private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
+    let host: EmulatorHostProxy
+    let anchorsDisplayTop: Bool
+    // Screen-space region covered by the keypad overlay; the render view yields
+    // touches there so the keys (drawn above it) receive them.
+    let keypadHitRegion: CGRect
     let onAppExit: (String?) -> Void
 
     func makeUIViewController(context: Context) -> EmulatorViewController {
         let controller = EmulatorViewController(uid: uid)
         controller.onAppExit = onAppExit
+        controller.anchorsDisplayTop = anchorsDisplayTop
+        controller.keypadHitRegion = keypadHitRegion
+        host.viewController = controller
         return controller
     }
 
     func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {
         uiViewController.onAppExit = onAppExit
+        uiViewController.anchorsDisplayTop = anchorsDisplayTop
+        uiViewController.keypadHitRegion = keypadHitRegion
+        host.viewController = uiViewController
     }
 }

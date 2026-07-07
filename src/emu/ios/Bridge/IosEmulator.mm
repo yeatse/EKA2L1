@@ -370,9 +370,40 @@ namespace eka2l1::ios {
         // blocks on the slot it reused two frames ago, so the guest CPU can run
         // one frame ahead while the graphics thread is still doing the (vsync-
         // gated) swap of the previous frame instead of serialising against it.
+        // present_mutex serialises submit_screen_frame itself: besides the os
+        // thread's redraw callback, the launch/resize paths kick presents from
+        // dispatch queues, and two concurrent submits would race the slot
+        // fences (both waiting on the same in-flight slot — a deadlock).
+        std::mutex present_mutex;
         int present_status[2] = { 0, 0 };
         int present_slot = 0;
         std::atomic<std::uint64_t> rendered_frame_count{0};
+
+        // Vertical anchor for the presented guest picture, in surface pixels.
+        // -1 centres it (default). >= 0 pins the picture's top edge at that
+        // offset (clamped so it stays on screen) — the frontend uses this to
+        // top-align the picture when a keypad overlays the bottom of the view,
+        // so the keys cover letterbox instead of gameplay.
+        std::atomic<int> display_anchor_top_px{-1};
+
+        // Extra clockwise rotation (0/90/180/270) applied to the presented
+        // picture on top of the guest's own ui_rotation. The interface
+        // orientation is pinned by the keypad layout, so this is how the user
+        // rotates just the picture (e.g. to view a landscape game upright on a
+        // portrait device).
+        std::atomic<int> user_display_rotation{0};
+
+        // Geometry of the presented picture, published by submit_screen_frame
+        // so submitPointer can turn a tap on a user-rotated picture back into
+        // guest screen coordinates. present_rect_* is the on-screen rectangle
+        // the (already rotated) picture fills, in swapchain pixels;
+        // present_guest_* is the guest screen's unrotated pixel size.
+        std::atomic<int> present_rect_left{0};
+        std::atomic<int> present_rect_top{0};
+        std::atomic<int> present_rect_w{0};
+        std::atomic<int> present_rect_h{0};
+        std::atomic<int> present_guest_w{0};
+        std::atomic<int> present_guest_h{0};
 
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
@@ -505,6 +536,8 @@ namespace eka2l1::ios {
             return;
         }
 
+        std::lock_guard<std::mutex> present_lock(state->present_mutex);
+
         // wait_for blocks while the slot is -100 (in-flight) and returns
         // immediately once the driver thread has called finish() (or for the
         // initial 0). With two ping-ponging slots this blocks on the present
@@ -531,12 +564,16 @@ namespace eka2l1::ios {
         builder.clear({ 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
             eka2l1::drivers::draw_buffer_bit_color_buffer);
 
+        // The guest's own orientation plus the user's presentation rotation.
+        const int rotation = (scr->ui_rotation
+            + state->user_display_rotation.load(std::memory_order_relaxed)) % 360;
+
         auto &mode = scr->current_mode();
         eka2l1::rect src;
         src.size = mode.size;
 
         eka2l1::vec2 display_size = mode.size;
-        if (scr->ui_rotation % 180 != 0) {
+        if (rotation % 180 != 0) {
             std::swap(display_size.x, display_size.y);
         }
 
@@ -555,11 +592,27 @@ namespace eka2l1::ios {
         dest.size.x = static_cast<int>(width);
         dest.size.y = static_cast<int>(height);
 
+        const int anchor_top = state->display_anchor_top_px.load(std::memory_order_relaxed);
+        if (anchor_top >= 0) {
+            const int max_top = std::max(0, swapchain_size.y - static_cast<int>(height));
+            dest.top.y = std::min(anchor_top, max_top);
+        }
+
         scr->set_native_scale_factor(state->graphics_driver.get(), scale, scale);
         scr->absolute_pos = dest.top;
 
-        eka2l1::drivers::advance_draw_pos_around_origin(dest, scr->ui_rotation);
-        if (scr->ui_rotation % 180 != 0) {
+        // Publish the on-screen picture rectangle (already rotated) and the
+        // guest's unrotated pixel size so touch input can be mapped back
+        // through user_display_rotation.
+        state->present_rect_left.store(dest.top.x, std::memory_order_relaxed);
+        state->present_rect_top.store(dest.top.y, std::memory_order_relaxed);
+        state->present_rect_w.store(static_cast<int>(width), std::memory_order_relaxed);
+        state->present_rect_h.store(static_cast<int>(height), std::memory_order_relaxed);
+        state->present_guest_w.store(mode.size.x, std::memory_order_relaxed);
+        state->present_guest_h.store(mode.size.y, std::memory_order_relaxed);
+
+        eka2l1::drivers::advance_draw_pos_around_origin(dest, rotation);
+        if (rotation % 180 != 0) {
             std::swap(dest.size.x, dest.size.y);
         }
         src.size *= scr->display_scale_factor;
@@ -572,7 +625,7 @@ namespace eka2l1::ios {
         builder.set_texture_filter(scr->screen_texture, true, eka2l1::drivers::filter_option::linear);
         builder.set_texture_filter(scr->screen_texture, false, eka2l1::drivers::filter_option::linear);
         builder.draw_bitmap(scr->screen_texture, 0, dest, src, eka2l1::vec2(0, 0),
-            static_cast<float>(scr->ui_rotation), flags);
+            static_cast<float>(rotation), flags);
 
         builder.load_backup_state();
         state->present_status[slot] = -100;
@@ -581,6 +634,14 @@ namespace eka2l1::ios {
         state->graphics_driver->submit_command_list(commands);
         state->present_slot ^= 1;
         state->rendered_frame_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Re-present the primary screen's current texture without touching guest
+    // window-server state — safe to call while the guest loop is running. Used
+    // after a surface resize so a static screen re-composes at the new size.
+    static void re_present_screen(emulator *state) {
+        eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
+        submit_screen_frame(state, scr);
     }
 
     // Force the primary screen to (re)create its texture and present a frame.
@@ -1471,6 +1532,24 @@ namespace eka2l1::ios {
             static_cast<int>(pixelSize.width),
             static_cast<int>(pixelSize.height),
             static_cast<float>(scale));
+        // update_surface alone is not enough when the layer object stays the
+        // same but its bounds changed (keypad overlay toggles, rotation): the
+        // EAGL context early-returns on an identical layer and keeps the old
+        // renderbuffer storage, which CoreAnimation then stretches to the new
+        // layer bounds — the classic distorted-frame symptom. Pushing the new
+        // size makes the context re-create its renderbuffer storage on the
+        // next swapchain bind.
+        _state->graphics_driver->update_surface_size(eka2l1::vec2(
+            static_cast<int>(pixelSize.width),
+            static_cast<int>(pixelSize.height)));
+        // A static guest screen (menus, paused games) won't produce a frame on
+        // its own, so the stale stretched frame would linger until the next
+        // guest redraw. Re-present the current texture at the new size.
+        auto *state = _state.get();
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(0.1 * NSEC_PER_SEC)),
+            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                eka2l1::ios::re_present_screen(state);
+            });
     }
 }
 
@@ -1562,17 +1641,47 @@ namespace eka2l1::ios {
     eka2l1::drivers::input_event evt;
     evt.type_ = eka2l1::drivers::input_event_type::touch;
     evt.time_ = 0;
-    evt.mouse_.pos_x_ = static_cast<int>(x);
-    evt.mouse_.pos_y_ = static_cast<int>(y);
     evt.mouse_.pos_z_ = 0;
     evt.mouse_.button_ = eka2l1::drivers::mouse_button_left;
-    // The position is in swapchain/layer pixels (touch point * contentScale),
-    // not guest screen coordinates. raw_screen_pos_ must therefore be false so
-    // window_server maps it through the screen's absolute_pos + logic scale
-    // (matching the Qt/Android frontends). Setting it true fed raw device
-    // pixels straight in as guest coords, landing every tap far outside the
-    // 360x640 guest screen — touches did nothing.
-    evt.mouse_.raw_screen_pos_ = false;
+
+    const int user_rot = _state->user_display_rotation.load(std::memory_order_relaxed);
+    const int rect_w = _state->present_rect_w.load(std::memory_order_relaxed);
+    const int rect_h = _state->present_rect_h.load(std::memory_order_relaxed);
+    const int guest_w = _state->present_guest_w.load(std::memory_order_relaxed);
+    const int guest_h = _state->present_guest_h.load(std::memory_order_relaxed);
+
+    if (user_rot != 0 && rect_w > 0 && rect_h > 0 && guest_w > 0 && guest_h > 0) {
+        // The picture on screen is rotated by user_rot; undo it so the tap
+        // lands on the right guest pixel. Normalise the tap inside the on-screen
+        // picture rectangle, rotate the normalised coordinate back, then scale
+        // to the guest screen. raw_screen_pos_ is set so window_server takes
+        // these as final guest coordinates instead of re-mapping them.
+        const int rect_left = _state->present_rect_left.load(std::memory_order_relaxed);
+        const int rect_top = _state->present_rect_top.load(std::memory_order_relaxed);
+        double u = (static_cast<double>(x) - rect_left) / rect_w;
+        double v = (static_cast<double>(y) - rect_top) / rect_h;
+        u = std::min(std::max(u, 0.0), 1.0);
+        v = std::min(std::max(v, 0.0), 1.0);
+        double gu = u, gv = v;
+        switch (user_rot) {
+            case 90:  gu = v;         gv = 1.0 - u;  break;
+            case 180: gu = 1.0 - u;   gv = 1.0 - v;  break;
+            case 270: gu = 1.0 - v;   gv = u;        break;
+            default:  break;
+        }
+        evt.mouse_.pos_x_ = static_cast<int>(gu * guest_w);
+        evt.mouse_.pos_y_ = static_cast<int>(gv * guest_h);
+        evt.mouse_.raw_screen_pos_ = true;
+    } else {
+        // No user rotation: feed swapchain/layer pixels (touch point *
+        // contentScale) and let window_server map them through the screen's
+        // absolute_pos + logic scale, matching the Qt/Android frontends.
+        // raw_screen_pos_ must be false here; feeding raw device pixels as guest
+        // coords lands every tap far outside the guest screen.
+        evt.mouse_.pos_x_ = static_cast<int>(x);
+        evt.mouse_.pos_y_ = static_cast<int>(y);
+        evt.mouse_.raw_screen_pos_ = false;
+    }
     // Single-touch in stage 2; the UITouch pointer hash maps to a mouse_id
     // so window_server can still tell separate gestures apart later.
     evt.mouse_.mouse_id = static_cast<std::uint32_t>(pointerId & 0xFFFFFFFFu);
@@ -1583,6 +1692,47 @@ namespace eka2l1::ios {
         case EKA2L1PointerPhaseCancelled: evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
     }
     _state->winserv->queue_input_from_driver(evt);
+}
+
+- (BOOL)currentDeviceIsTouchScreen {
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    return _state->symsys->get_symbian_version_use() >= epocver::epoc94;
+}
+
+- (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop {
+    if (!_state) {
+        return;
+    }
+    _state->display_anchor_top_px.store(static_cast<int>(anchorTop), std::memory_order_relaxed);
+}
+
+- (void)rotateGuestDisplayClockwise {
+    if (!_state) {
+        return;
+    }
+    const int next = (_state->user_display_rotation.load(std::memory_order_relaxed) + 90) % 360;
+    [self setGuestDisplayRotation:next];
+}
+
+- (void)resetGuestDisplayRotation {
+    if (!_state) {
+        return;
+    }
+    [self setGuestDisplayRotation:0];
+}
+
+- (void)setGuestDisplayRotation:(int)rotation {
+    if (_state->user_display_rotation.exchange(rotation, std::memory_order_relaxed) == rotation) {
+        return;
+    }
+    // A static guest screen won't redraw on its own, so re-present at the new
+    // rotation right away instead of waiting for the next guest frame.
+    auto *state = _state.get();
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        eka2l1::ios::re_present_screen(state);
+    });
 }
 
 - (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed {

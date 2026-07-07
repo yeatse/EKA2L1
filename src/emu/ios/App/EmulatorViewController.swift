@@ -124,12 +124,39 @@ private final class ControllerInputBridge: @unchecked Sendable {
 private final class EKA2L1RenderView: UIView {
     var surfaceReady = false
 
+    // When true, the presented guest picture is pinned just below the top safe
+    // area instead of centred, so a bottom keypad overlay covers letterbox
+    // rather than gameplay. Pushed to the bridge on every layout pass (the
+    // anchor is in surface pixels, so it depends on renderScale and insets).
+    var anchorsDisplayTop = false {
+        didSet {
+            if anchorsDisplayTop != oldValue {
+                setNeedsLayout()
+            }
+        }
+    }
+
+    // Region (in this view's coordinates) covered by the virtual keypad
+    // overlay. The render view fills the whole screen and wins touch
+    // hit-testing over the keypad drawn above it — so unless it yields here,
+    // every keypad tap is swallowed as a guest pointer touch. Decline touches
+    // inside the keypad region so they reach the keys; keep claiming the
+    // exposed game area so guest touch input still works.
+    var keypadHitRegion: CGRect = .null
+
     override class var layerClass: AnyClass {
         CAEAGLLayer.self
     }
 
     private var eaglLayer: CAEAGLLayer {
         layer as! CAEAGLLayer
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if keypadHitRegion.contains(point) {
+            return nil
+        }
+        return super.hitTest(point, with: event)
     }
 
     override init(frame: CGRect) {
@@ -171,6 +198,8 @@ private final class EKA2L1RenderView: UIView {
         guard pixels.width > 0, pixels.height > 0 else { return }
 
         EKA2L1Bridge.shared.attach(layer: eaglLayer, pixelSize: pixels, scale: scale)
+        EKA2L1Bridge.shared.setDisplayAnchorTop(
+            pixels: anchorsDisplayTop ? Int(safeAreaInsets.top * scale) : -1)
         surfaceReady = true
     }
 
@@ -326,6 +355,22 @@ final class EmulatorViewController: UIViewController {
     // Invoked when the guest app exits on its own (Exit soft key / panic /
     // normal termination) so the SwiftUI host can pop this screen.
     var onAppExit: ((String?) -> Void)?
+    // Forwarded to the render view; see EKA2L1RenderView.anchorsDisplayTop.
+    var anchorsDisplayTop = false {
+        didSet {
+            if isViewLoaded {
+                gameView.anchorsDisplayTop = anchorsDisplayTop
+            }
+        }
+    }
+    // Forwarded to the render view; see EKA2L1RenderView.keypadHitRegion.
+    var keypadHitRegion: CGRect = .null {
+        didSet {
+            if isViewLoaded {
+                gameView.keypadHitRegion = keypadHitRegion
+            }
+        }
+    }
     private var launched = false
     private let controllerInput = ControllerInputBridge()
     private var gameView: EKA2L1RenderView {
@@ -345,6 +390,8 @@ final class EmulatorViewController: UIViewController {
     override func loadView() {
         let renderView = EKA2L1RenderView(frame: UIScreen.main.bounds)
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        renderView.anchorsDisplayTop = anchorsDisplayTop
+        renderView.keypadHitRegion = keypadHitRegion
         view = renderView
     }
 
