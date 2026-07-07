@@ -92,6 +92,11 @@ struct ContentView: View {
     // App pending uninstall confirmation (set from the long-press context menu).
     @State private var pendingUninstall: EKA2L1AppItem?
 
+    // Files handed over by the system ("Open in EKA2L1" from the Files app /
+    // share sheet). On a cold launch onOpenURL can fire before the emulator
+    // has booted, so URLs are queued here and drained once boot completes.
+    @State private var pendingOpenURLs: [URL] = []
+
     private var currentDevice: EKA2L1DeviceItem? {
         devices.first { $0.index == currentIndex } ?? devices.first
     }
@@ -188,6 +193,10 @@ struct ContentView: View {
                 showingOnboarding = true
             }
         }
+        .onOpenURL { url in
+            pendingOpenURLs.append(url)
+            processPendingOpenURLs()
+        }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
             guard let rawType = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: rawType) else {
@@ -223,6 +232,20 @@ struct ContentView: View {
 
     @ViewBuilder
     private var emptyState: some View {
+        VStack(spacing: 0) {
+            if let banner {
+                Text(banner)
+                    .font(.caption)
+                    .foregroundColor(.green)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            emptyStateBody
+        }
+    }
+
+    @ViewBuilder
+    private var emptyStateBody: some View {
         if #available(iOS 17, *) {
             ContentUnavailableView {
                 Label("No device installed", systemImage: "iphone.slash")
@@ -398,9 +421,33 @@ struct ContentView: View {
             booted = true
             refresh()
             selectLaunchRomThenAutoLaunch()
+            processPendingOpenURLs()
         } else {
             bootError = "Check Console for details."
         }
+    }
+
+    // Drains system-opened files once the emulator is up. SIS packages are
+    // auto-installed onto the current device (same path as the "+" importer);
+    // other registered types (fonts, ROM zips) are staged by ImportRouter.
+    private func processPendingOpenURLs() {
+        guard booted, !pendingOpenURLs.isEmpty else { return }
+        let urls = pendingOpenURLs
+        pendingOpenURLs = []
+
+        let sisURLs = urls.filter { ["sis", "sisx"].contains($0.pathExtension.lowercased()) }
+        let otherURLs = urls.filter { !sisURLs.contains($0) }
+
+        if !otherURLs.isEmpty {
+            banner = ImportRouter.shared.ingest(urls: otherURLs)
+            refresh()
+        }
+        guard !sisURLs.isEmpty else { return }
+        guard currentIndex >= 0 else {
+            banner = "Install a device (ROM) first, then re-open the SIS file."
+            return
+        }
+        handleSisImport(.success(sisURLs))
     }
 
     // If launched with -LaunchROMCode, boot that device before any auto app
@@ -534,16 +581,17 @@ struct ContentView: View {
         case .failure(let err):
             banner = "Import failed: \(err.localizedDescription)"
         case .success(let urls):
-            // Copy into Documents/sis via the shared router (handles the
-            // security-scoped URLs), then install each onto the live device.
-            _ = ImportRouter.shared.ingest(urls: urls)
-            let docs = documentsRoot()
+            // Install straight from the picked/opened location. The installer
+            // extracts everything onto the device drives, so the package file
+            // itself is not needed afterwards — no staging copy. The URLs are
+            // security-scoped, so hold the scope across the install call.
             var installed = 0
             for url in urls {
                 let ext = url.pathExtension.lowercased()
                 guard ext == "sis" || ext == "sisx" else { continue }
-                let full = (docs as NSString).appendingPathComponent("sis/\(url.lastPathComponent)")
-                if EKA2L1Bridge.shared.installSis(atPath: full) { installed += 1 }
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if EKA2L1Bridge.shared.installSis(atPath: url.path) { installed += 1 }
             }
             apps = EKA2L1Bridge.shared.rescanApps()
             banner = "Installed \(installed) package(s)."

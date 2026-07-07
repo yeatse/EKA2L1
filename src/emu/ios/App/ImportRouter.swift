@@ -6,7 +6,6 @@ import Foundation
 // Dispatching is by file extension (the picker filter already restricts the
 // set, but a fallback type means we might still see anything that looks like
 // public.data, so re-check before we touch the filesystem):
-//   .sis / .sisx   →  Documents/sis/<name>
 //   .ttf / .otf    →  Documents/data/fonts/<name>
 //   .zip           →  Documents/roms/<basename>/  (unzip)
 //   *.rom / *.ROM  →  Documents/roms/<basename>/data/roms/<lowercased>/SYM.ROM
@@ -52,9 +51,6 @@ final class ImportRouter {
         let ext = url.pathExtension.lowercased()
         let fm = FileManager.default
         switch ext {
-        case "sis", "sisx":
-            let dst = (documentsRoot() as NSString).appendingPathComponent("sis/\(name)")
-            try copyReplacing(url: url, to: dst, fm: fm)
         case "ttf", "otf":
             let fontsDir = (documentsRoot() as NSString).appendingPathComponent("data/fonts")
             try fm.createDirectory(atPath: fontsDir, withIntermediateDirectories: true)
