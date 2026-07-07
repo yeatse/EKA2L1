@@ -15,8 +15,12 @@
 #   one via -allowProvisioningUpdates (the previous ephemeral runner's private
 #   key is gone), piling up "Created via API" certificates until the account
 #   hits Apple's cap and archives fail with "Your account has reached the
-#   maximum number of certificates". Export the .p12 from Keychain Access on a
-#   Mac that has the certificate, then:
+#   maximum number of certificates". Easiest setup: run the manual
+#   "iOS Provision Dev Certificate" workflow, which creates the certificate
+#   via the App Store Connect API on the runner and writes both secrets
+#   (needs a GH_SECRETS_ADMIN_TOKEN PAT, see that workflow's header).
+#   Alternatively export the .p12 from Keychain Access on a Mac that has the
+#   certificate, then:
 #     base64 -i dev.p12 | gh secret set IOS_DEV_SIGNING_KEY
 #     gh secret set IOS_DEV_SIGNING_KEY_PASSWORD
 #   Stale API-created certificates can be listed/revoked with the manual
