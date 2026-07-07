@@ -2,8 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
-    @AppStorage("ios.enableControllerInput") private var enableControllerInput = true
     @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
+    @ObservedObject private var peripheralManager = PeripheralManager.shared
+    @State private var mappingTarget: PeripheralManager.Peripheral?
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
 
     @State private var audioMasterVolume = 100.0
@@ -63,15 +64,19 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Toggle("settings.gameController", isOn: $enableControllerInput)
-                if enableControllerInput {
-                    NavigationLink("settings.controllerMapping") {
-                        ControllerMappingView()
-                    }
-                }
                 Toggle("settings.fpsOverlay", isOn: $showFPSOverlay)
                 Button("settings.testVibration") {
                     EKA2L1Bridge.shared.testVibration()
+                }
+            }
+            Section("settings.peripherals") {
+                if peripheralManager.peripherals.isEmpty {
+                    Text("controllerMapping.noController")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(peripheralManager.peripherals) { peripheral in
+                        peripheralRow(peripheral)
+                    }
                 }
             }
             Section("settings.library") {
@@ -100,6 +105,14 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("settings.title")
+        .navigationDestination(isPresented: Binding(
+            get: { mappingTarget != nil },
+            set: { if !$0 { mappingTarget = nil } }
+        )) {
+            if let mappingTarget {
+                KeyMappingView(peripheral: mappingTarget)
+            }
+        }
         .onAppear {
             load()
             refreshStorageUsage()
@@ -117,6 +130,34 @@ struct SettingsView: View {
             Button("common.cancel", role: .cancel) {}
         } message: {
             Text("settings.clearData.message")
+        }
+    }
+
+    // Connected-peripheral row: tapping the name area makes the device the
+    // active input source, the info button opens its key mapping editor.
+    // Borderless styles keep the two buttons independently tappable in the
+    // same Form row.
+    private func peripheralRow(_ peripheral: PeripheralManager.Peripheral) -> some View {
+        let isActive = peripheral.id == peripheralManager.activeID
+        return HStack {
+            Button {
+                peripheralManager.setActive(peripheral.id)
+            } label: {
+                HStack {
+                    Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                    Text(peripheral.name)
+                        .foregroundStyle(Color.primary)
+                }
+            }
+            .buttonStyle(.borderless)
+            Spacer()
+            Button {
+                mappingTarget = peripheral
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .buttonStyle(.borderless)
         }
     }
 

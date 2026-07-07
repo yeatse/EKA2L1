@@ -2,18 +2,22 @@ import GameController
 import SwiftUI
 import UIKit
 
-// User-editable binding from host inputs (game-controller buttons and
-// hardware-keyboard keys) to guest (Symbian) keys, edited from the guest
-// side: the settings page lists every Nokia key and the user presses a
-// physical controller button or keyboard key to bind it.
+// Peripheral (game controller / hardware keyboard) management and per-device
+// key mapping.
 //
-// The canonical model is [host token: guest scan]. That direction makes the
-// conflict rule automatic — a host input can only drive one guest key, and
-// re-capturing it simply overwrites the old entry (last edit wins). Binding
-// also removes any other host input *of the same class* pointing at the same
-// guest key, so each guest key keeps at most one controller binding and one
-// keyboard binding. An absent host token means the input is unbound. Stored
-// in UserDefaults; the emulator screen reloads the mapping on every appear.
+// PeripheralManager tracks every connected extended gamepad plus the hardware
+// keyboard (a single entry — individual keyboards are not distinguished) and
+// which one is *active*. Only the active peripheral drives emulator input;
+// the most recently connected device becomes active automatically and the
+// user can switch in Settings. There is no wireless discovery scan: paired
+// controllers surface through the regular GameController notifications.
+//
+// Key mappings are per device. Storage is a nested UserDefaults dict
+// [device key: [host token: guest scan]] — keyboards share the "keyboard"
+// device key, controllers use their vendor name so the same model keeps its
+// mapping across reconnects. Within a device the relation is one-to-one:
+// a host input drives at most one guest key (re-capturing steals it, last
+// edit wins) and each guest key holds at most one binding.
 //
 // Host tokens: controller buttons use HostButton raw values; keyboard keys
 // use "kb.<HID usage>". HID usage is the shared currency between capture
@@ -54,7 +58,7 @@ enum HostButton: String, CaseIterable {
         }
     }
 
-    // Controller-specific name when a gamepad is connected (e.g. "Cross
+    // Controller-specific name when a gamepad is available (e.g. "Cross
     // Button" on DualSense, "A Button" on Xbox), generic name otherwise.
     func displayName(on gamepad: GCExtendedGamepad?) -> String {
         guard let gamepad, let name = buttonInput(on: gamepad)?.localizedName,
@@ -153,7 +157,7 @@ enum KeyboardKey {
     }
 }
 
-// One guest (Nokia) key that can receive bindings. Digit keys carry no
+// One guest (Nokia) key that can receive a binding. Digit keys carry no
 // symbol — their name is the glyph already.
 struct GuestKey: Identifiable {
     let scan: UInt32
@@ -200,11 +204,164 @@ enum GuestKeys {
     static let all: [GuestKey] = directions + actions + digits
 }
 
-enum ControllerMappingStore {
-    static let storageKey = "ios.controllerMapping"
+// MARK: - Connected peripherals
 
-    static let defaults: [String: UInt32] = [
-        // Controller
+// Tracks connected input peripherals and which one is active. Lives for the
+// whole app so runtime input (ControllerInputBridge, the render view's key
+// presses) and the Settings UI observe one source of truth. All state is
+// main-thread confined: notifications are observed on .main and SwiftUI
+// actions run on main.
+final class PeripheralManager: ObservableObject, @unchecked Sendable {
+    struct Peripheral: Identifiable, Equatable {
+        enum Kind {
+            case controller, keyboard
+        }
+
+        let id: String
+        let deviceKey: String
+        let name: String
+        let kind: Kind
+    }
+
+    static let shared = PeripheralManager()
+    static let keyboardID = "keyboard"
+
+    @Published private(set) var peripherals: [Peripheral] = []
+    @Published private(set) var activeID: String?
+
+    // Connect order; the keyboard entry is appended after the controllers.
+    private var controllers: [GCController] = []
+    private var keyboardPresent = false
+
+    private init() {
+        let center = NotificationCenter.default
+        center.addObserver(forName: .GCControllerDidConnect, object: nil,
+                           queue: .main) { [weak self] note in
+            guard let controller = note.object as? GCController else { return }
+            self?.controllerConnected(controller)
+        }
+        center.addObserver(forName: .GCControllerDidDisconnect, object: nil,
+                           queue: .main) { [weak self] note in
+            guard let controller = note.object as? GCController else { return }
+            self?.controllerDisconnected(controller)
+        }
+        center.addObserver(forName: .GCKeyboardDidConnect, object: nil,
+                           queue: .main) { [weak self] _ in
+            self?.keyboardChanged(present: true)
+        }
+        center.addObserver(forName: .GCKeyboardDidDisconnect, object: nil,
+                           queue: .main) { [weak self] _ in
+            self?.keyboardChanged(present: false)
+        }
+
+        controllers = GCController.controllers().filter { $0.extendedGamepad != nil }
+        keyboardPresent = GCKeyboard.coalesced != nil
+        rebuildPeripherals()
+        // Connect order of pre-attached devices is unknown; prefer a
+        // controller over the keyboard.
+        activeID = controllers.last.map(Self.id(for:))
+            ?? (keyboardPresent ? Self.keyboardID : nil)
+    }
+
+    static func id(for controller: GCController) -> String {
+        "gc-\(ObjectIdentifier(controller))"
+    }
+
+    // Mapping storage key: same-model controllers share one mapping, so it
+    // survives reconnects (GCController has no persistent identity).
+    static func deviceKey(for controller: GCController) -> String {
+        "gc:\(name(of: controller))"
+    }
+
+    static func name(of controller: GCController) -> String {
+        controller.vendorName ?? controller.productCategory
+    }
+
+    func setActive(_ id: String) {
+        if peripherals.contains(where: { $0.id == id }) {
+            activeID = id
+        }
+    }
+
+    func controller(peripheralID: String) -> GCController? {
+        controllers.first { Self.id(for: $0) == peripheralID }
+    }
+
+    var activeController: GCController? {
+        activeID.flatMap(controller(peripheralID:))
+    }
+
+    func isActive(_ controller: GCController) -> Bool {
+        activeID == Self.id(for: controller)
+    }
+
+    // Hardware-keyboard key presses drive the guest unless a controller is
+    // the active peripheral.
+    var keyboardCanDrive: Bool {
+        activeID == nil || activeID == Self.keyboardID
+    }
+
+    func activeControllerMapping() -> [String: UInt32] {
+        guard let controller = activeController else { return [:] }
+        return PeripheralMappingStore.mapping(forDeviceKey: Self.deviceKey(for: controller),
+                                              kind: .controller)
+    }
+
+    private func rebuildPeripherals() {
+        var list = controllers.map { controller in
+            Peripheral(id: Self.id(for: controller),
+                       deviceKey: Self.deviceKey(for: controller),
+                       name: Self.name(of: controller),
+                       kind: .controller)
+        }
+        if keyboardPresent {
+            list.append(Peripheral(id: Self.keyboardID,
+                                   deviceKey: Self.keyboardID,
+                                   name: String(localized: "peripheral.keyboard"),
+                                   kind: .keyboard))
+        }
+        peripherals = list
+    }
+
+    private func controllerConnected(_ controller: GCController) {
+        guard controller.extendedGamepad != nil else { return }
+        if !controllers.contains(where: { $0 === controller }) {
+            controllers.append(controller)
+        }
+        rebuildPeripherals()
+        activeID = Self.id(for: controller)
+    }
+
+    private func controllerDisconnected(_ controller: GCController) {
+        controllers.removeAll { $0 === controller }
+        rebuildPeripherals()
+        if activeID == Self.id(for: controller) {
+            fallbackActive()
+        }
+    }
+
+    private func keyboardChanged(present: Bool) {
+        keyboardPresent = present
+        rebuildPeripherals()
+        if present {
+            activeID = Self.keyboardID
+        } else if activeID == Self.keyboardID {
+            fallbackActive()
+        }
+    }
+
+    private func fallbackActive() {
+        activeID = controllers.last.map(Self.id(for:))
+            ?? (keyboardPresent ? Self.keyboardID : nil)
+    }
+}
+
+// MARK: - Per-device mapping storage
+
+enum PeripheralMappingStore {
+    static let storageKey = "ios.peripheralKeyMappings"
+
+    static let controllerDefaults: [String: UInt32] = [
         HostButton.dpadUp.rawValue: Scan.up,
         HostButton.dpadDown.rawValue: Scan.down,
         HostButton.dpadLeft.rawValue: Scan.left,
@@ -219,7 +376,10 @@ enum ControllerMappingStore {
         HostButton.rightTrigger.rawValue: Scan.hash,
         HostButton.buttonOptions.rawValue: Scan.call,
         HostButton.buttonMenu.rawValue: Scan.end,
-        // Keyboard (HID usages), mirroring the historical hardcoded layout.
+    ]
+
+    // Mirrors the historical hardcoded hardware-keyboard layout.
+    static let keyboardDefaults: [String: UInt32] = [
         KeyboardKey.token(forUsage: 0x52): Scan.up,
         KeyboardKey.token(forUsage: 0x51): Scan.down,
         KeyboardKey.token(forUsage: 0x50): Scan.left,
@@ -237,15 +397,21 @@ enum ControllerMappingStore {
         KeyboardKey.token(forUsage: 0x26): 0x39, KeyboardKey.token(forUsage: 0x27): 0x30,
     ]
 
-    static func load() -> [String: UInt32] {
-        guard let stored = UserDefaults.standard.dictionary(forKey: storageKey) else {
-            return defaults
+    static func defaults(for kind: PeripheralManager.Peripheral.Kind) -> [String: UInt32] {
+        kind == .controller ? controllerDefaults : keyboardDefaults
+    }
+
+    static func mapping(forDeviceKey deviceKey: String,
+                        kind: PeripheralManager.Peripheral.Kind) -> [String: UInt32] {
+        guard let all = UserDefaults.standard.dictionary(forKey: storageKey),
+              let stored = all[deviceKey] as? [String: Any] else {
+            return defaults(for: kind)
         }
         var mapping: [String: UInt32] = [:]
         for (token, value) in stored {
             guard let number = value as? NSNumber else { continue }
             let scan = UInt32(truncating: number)
-            guard HostButton(rawValue: token) != nil || KeyboardKey.isKeyboardToken(token),
+            guard isValid(token: token, kind: kind),
                   GuestKeys.all.contains(where: { $0.scan == scan }) else {
                 continue
             }
@@ -254,18 +420,22 @@ enum ControllerMappingStore {
         return mapping
     }
 
-    static func save(_ mapping: [String: UInt32]) {
-        UserDefaults.standard.set(mapping.mapValues { Int($0) }, forKey: storageKey)
+    static func save(_ mapping: [String: UInt32], forDeviceKey deviceKey: String) {
+        var all = UserDefaults.standard.dictionary(forKey: storageKey) ?? [:]
+        all[deviceKey] = mapping.mapValues { Int($0) }
+        UserDefaults.standard.set(all, forKey: storageKey)
     }
 
-    static func reset() {
-        UserDefaults.standard.removeObject(forKey: storageKey)
+    static func reset(deviceKey: String) {
+        var all = UserDefaults.standard.dictionary(forKey: storageKey) ?? [:]
+        all.removeValue(forKey: deviceKey)
+        UserDefaults.standard.set(all, forKey: storageKey)
     }
 
     // Host→scan for hardware-keyboard runtime lookups, keyed by HID usage.
     static func keyboardScanMapping() -> [Int: UInt32] {
         var result: [Int: UInt32] = [:]
-        for (token, scan) in load() {
+        for (token, scan) in mapping(forDeviceKey: PeripheralManager.keyboardID, kind: .keyboard) {
             if let usage = KeyboardKey.usage(fromToken: token) {
                 result[usage] = scan
             }
@@ -273,15 +443,11 @@ enum ControllerMappingStore {
         return result
     }
 
-    // Keeps the relation one-to-one per input class: the captured host input
-    // is stolen from whatever guest key held it (last edit wins), and any
-    // other host input of the same class bound to this guest key is dropped.
+    // Keeps the relation one-to-one: the captured host input is stolen from
+    // whatever guest key held it (last edit wins), and this guest key's old
+    // binding is dropped.
     static func bind(hostToken: String, toScan scan: UInt32, in mapping: inout [String: UInt32]) {
-        let bindingKeyboard = KeyboardKey.isKeyboardToken(hostToken)
-        for (token, value) in mapping
-        where value == scan && KeyboardKey.isKeyboardToken(token) == bindingKeyboard {
-            mapping.removeValue(forKey: token)
-        }
+        unbind(scan: scan, in: &mapping)
         mapping[hostToken] = scan
     }
 
@@ -291,7 +457,6 @@ enum ControllerMappingStore {
         }
     }
 
-    // Host tokens bound to this guest key, controller first, then keyboard.
     static func hostTokens(boundToScan scan: UInt32, in mapping: [String: UInt32]) -> [String] {
         let controller = HostButton.allCases
             .filter { mapping[$0.rawValue] == scan }
@@ -301,24 +466,36 @@ enum ControllerMappingStore {
             .keys.sorted()
         return controller + keyboard
     }
+
+    private static func isValid(token: String, kind: PeripheralManager.Peripheral.Kind) -> Bool {
+        switch kind {
+        case .controller: return HostButton(rawValue: token) != nil
+        case .keyboard: return KeyboardKey.isKeyboardToken(token)
+        }
+    }
 }
 
-// Watches the connected controller and hardware keyboard while the mapping
-// editor is open. During a capture it reports the first host input that
-// transitions to pressed after the capture started (controller buttons
-// already held when it starts are ignored). The emulator screen is never
-// visible at the same time as Settings, so this never races the emulator's
-// input paths.
+// MARK: - Capture
+
+// Watches one peripheral while its mapping editor is open. During a capture
+// it reports the first host input that transitions to pressed after the
+// capture started (controller buttons already held when it starts are
+// ignored). The emulator screen is never visible at the same time as
+// Settings, so this never races the emulator's input paths.
 @MainActor
-final class ControllerCaptureMonitor: ObservableObject {
-    @Published private(set) var controllerName: String?
-    @Published private(set) var keyboardName: String?
+private final class CaptureMonitor: ObservableObject {
+    @Published private(set) var deviceConnected = true
     @Published private(set) var capturedToken: String?
 
+    private let peripheral: PeripheralManager.Peripheral
     private var observers: [NSObjectProtocol] = []
     private var capturing = false
     private var pressedTokens: Set<String> = []
     private let threshold: Float = 0.45
+
+    init(peripheral: PeripheralManager.Peripheral) {
+        self.peripheral = peripheral
+    }
 
     func start() {
         let center = NotificationCenter.default
@@ -329,16 +506,13 @@ final class ControllerCaptureMonitor: ObservableObject {
                 Task { @MainActor in self?.refresh() }
             })
         }
-        GCController.startWirelessControllerDiscovery()
         refresh()
     }
 
     func stop() {
-        GCController.stopWirelessControllerDiscovery()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
-        GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
-        GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = nil
+        detach()
         capturing = false
         capturedToken = nil
     }
@@ -353,25 +527,34 @@ final class ControllerCaptureMonitor: ObservableObject {
         capturedToken = nil
     }
 
+    private func detach() {
+        switch peripheral.kind {
+        case .controller:
+            PeripheralManager.shared.controller(peripheralID: peripheral.id)?
+                .extendedGamepad?.valueChangedHandler = nil
+        case .keyboard:
+            GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = nil
+        }
+    }
+
     private func refresh() {
-        // Only the first extended gamepad feeds capture; mixing pressed-state
-        // sets from several controllers would corrupt the transition baseline.
-        let controller = GCController.controllers().first { $0.extendedGamepad != nil }
-        controllerName = controller?.vendorName
-        let threshold = self.threshold
-        if let gamepad = controller?.extendedGamepad {
-            gamepad.valueChangedHandler = { [weak self] pad, _ in
+        switch peripheral.kind {
+        case .controller:
+            let gamepad = PeripheralManager.shared
+                .controller(peripheralID: peripheral.id)?.extendedGamepad
+            deviceConnected = gamepad != nil
+            let threshold = self.threshold
+            gamepad?.valueChangedHandler = { [weak self] pad, _ in
                 let pressed = Self.pressedTokens(on: pad, threshold: threshold)
                 Task { @MainActor in self?.update(pressed: pressed) }
             }
-        }
-
-        keyboardName = GCKeyboard.coalesced == nil
-            ? nil : (GCKeyboard.coalesced?.vendorName ?? "Keyboard")
-        GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = { [weak self] _, _, keyCode, pressed in
-            guard pressed else { return }
-            let token = KeyboardKey.token(forUsage: Int(keyCode.rawValue))
-            Task { @MainActor in self?.capture(token: token) }
+        case .keyboard:
+            deviceConnected = GCKeyboard.coalesced != nil
+            GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = { [weak self] _, _, keyCode, pressed in
+                guard pressed else { return }
+                let token = KeyboardKey.token(forUsage: Int(keyCode.rawValue))
+                Task { @MainActor in self?.capture(token: token) }
+            }
         }
     }
 
@@ -406,10 +589,21 @@ final class ControllerCaptureMonitor: ObservableObject {
     }
 }
 
-struct ControllerMappingView: View {
-    @State private var mapping = ControllerMappingStore.load()
-    @StateObject private var monitor = ControllerCaptureMonitor()
+// MARK: - Key mapping editor
+
+struct KeyMappingView: View {
+    let peripheral: PeripheralManager.Peripheral
+
+    @State private var mapping: [String: UInt32]
+    @StateObject private var monitor: CaptureMonitor
     @State private var captureTarget: GuestKey?
+
+    init(peripheral: PeripheralManager.Peripheral) {
+        self.peripheral = peripheral
+        _mapping = State(initialValue: PeripheralMappingStore.mapping(
+            forDeviceKey: peripheral.deviceKey, kind: peripheral.kind))
+        _monitor = StateObject(wrappedValue: CaptureMonitor(peripheral: peripheral))
+    }
 
     var body: some View {
         Form {
@@ -418,7 +612,9 @@ struct ControllerMappingView: View {
             } header: {
                 Text("controllerMapping.directions")
             } footer: {
-                Text("controllerMapping.directions.hint")
+                if peripheral.kind == .controller {
+                    Text("controllerMapping.directions.hint")
+                }
             }
             Section("controllerMapping.actions") {
                 ForEach(GuestKeys.actions, content: row)
@@ -428,24 +624,27 @@ struct ControllerMappingView: View {
             }
             Section {
                 Button("controllerMapping.reset", role: .destructive) {
-                    ControllerMappingStore.reset()
-                    mapping = ControllerMappingStore.defaults
+                    PeripheralMappingStore.reset(deviceKey: peripheral.deviceKey)
+                    mapping = PeripheralMappingStore.defaults(for: peripheral.kind)
                 }
             } footer: {
-                Text(connectionSummary)
+                if !monitor.deviceConnected {
+                    Text("controllerMapping.deviceDisconnected")
+                }
             }
         }
-        .navigationTitle("settings.controllerMapping")
+        .navigationTitle(peripheral.name)
         .onAppear(perform: monitor.start)
         .onDisappear(perform: monitor.stop)
         .sheet(item: $captureTarget, onDismiss: monitor.cancelCapture) { key in
             CaptureSheet(
                 key: key,
+                kind: peripheral.kind,
                 currentBinding: bindingText(for: key),
                 monitor: monitor,
                 onClear: {
-                    ControllerMappingStore.unbind(scan: key.scan, in: &mapping)
-                    ControllerMappingStore.save(mapping)
+                    PeripheralMappingStore.unbind(scan: key.scan, in: &mapping)
+                    PeripheralMappingStore.save(mapping, forDeviceKey: peripheral.deviceKey)
                     captureTarget = nil
                 },
                 onCancel: { captureTarget = nil }
@@ -453,28 +652,10 @@ struct ControllerMappingView: View {
         }
         .onChange(of: monitor.capturedToken) { token in
             guard let token, let target = captureTarget else { return }
-            ControllerMappingStore.bind(hostToken: token, toScan: target.scan, in: &mapping)
-            ControllerMappingStore.save(mapping)
+            PeripheralMappingStore.bind(hostToken: token, toScan: target.scan, in: &mapping)
+            PeripheralMappingStore.save(mapping, forDeviceKey: peripheral.deviceKey)
             captureTarget = nil
         }
-    }
-
-    private var connectedGamepad: GCExtendedGamepad? {
-        GCController.controllers().first { $0.extendedGamepad != nil }?.extendedGamepad
-    }
-
-    private var connectionSummary: String {
-        var lines: [String] = []
-        if let name = monitor.controllerName {
-            lines.append(String(format: String(localized: "controllerMapping.connected %@"), name))
-        }
-        if let name = monitor.keyboardName {
-            lines.append(String(format: String(localized: "controllerMapping.keyboardConnected %@"), name))
-        }
-        if lines.isEmpty {
-            lines.append(String(localized: "controllerMapping.noController"))
-        }
-        return lines.joined(separator: "\n")
     }
 
     private func row(_ key: GuestKey) -> some View {
@@ -503,11 +684,11 @@ struct ControllerMappingView: View {
         }
     }
 
-    // Controller and keyboard bindings for this guest key, joined for display.
     private func bindingText(for key: GuestKey) -> String? {
-        let tokens = ControllerMappingStore.hostTokens(boundToScan: key.scan, in: mapping)
+        let tokens = PeripheralMappingStore.hostTokens(boundToScan: key.scan, in: mapping)
         guard !tokens.isEmpty else { return nil }
-        let gamepad = connectedGamepad
+        let gamepad = PeripheralManager.shared
+            .controller(peripheralID: peripheral.id)?.extendedGamepad
         return tokens.map { hostDisplayName(token: $0, gamepad: gamepad) }
             .joined(separator: " \u{00B7} ")
     }
@@ -525,8 +706,9 @@ struct ControllerMappingView: View {
 
 private struct CaptureSheet: View {
     let key: GuestKey
+    let kind: PeripheralManager.Peripheral.Kind
     let currentBinding: String?
-    @ObservedObject var monitor: ControllerCaptureMonitor
+    @ObservedObject var monitor: CaptureMonitor
     let onClear: () -> Void
     let onCancel: () -> Void
 
@@ -541,15 +723,16 @@ private struct CaptureSheet: View {
                 }
             }
             .font(.title3.weight(.semibold))
-            Image(systemName: "gamecontroller")
+            Image(systemName: kind == .controller ? "gamecontroller" : "keyboard")
                 .font(.system(size: 52))
                 .foregroundStyle(.secondary)
                 .symbolEffectIfAvailable()
-            Text("controllerMapping.pressButton")
+            Text(kind == .controller
+                 ? "controllerMapping.pressButton" : "controllerMapping.pressKey")
                 .font(.body)
                 .multilineTextAlignment(.center)
-            if monitor.controllerName == nil && monitor.keyboardName == nil {
-                Text("controllerMapping.noController")
+            if !monitor.deviceConnected {
+                Text("controllerMapping.deviceDisconnected")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
@@ -571,8 +754,8 @@ private struct CaptureSheet: View {
 }
 
 private extension View {
-    // Pulse the controller glyph while waiting for a press on OSes that have
-    // the effect; a static glyph is fine below iOS 17.
+    // Pulse the glyph while waiting for a press on OSes that have the
+    // effect; a static glyph is fine below iOS 17.
     @ViewBuilder
     func symbolEffectIfAvailable() -> some View {
         if #available(iOS 17, *) {

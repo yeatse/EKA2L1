@@ -7,49 +7,62 @@ private final class ControllerInputBridge: @unchecked Sendable {
     private let lock = NSLock()
     private var activeScansByToken: [String: UInt32] = [:]
     private var observers: [NSObjectProtocol] = []
-    // User-edited element-to-scan mapping (Settings > Button mapping).
-    // Reloaded on every start(), i.e. each time the emulator screen appears,
-    // so it stays constant while input is live.
-    private var mapping = ControllerMappingStore.defaults
-    private var enabled: Bool {
-        UserDefaults.standard.object(forKey: "ios.enableControllerInput") as? Bool ?? true
-    }
+    // Mapping of the active controller peripheral; empty when the keyboard
+    // (or nothing) is active. Refreshed whenever the peripheral set changes —
+    // that is the only time the active selection can move while the emulator
+    // screen is up, since Settings is not reachable then.
+    private var mapping: [String: UInt32] = [:]
 
     func start() {
-        guard enabled else { return }
-        mapping = ControllerMappingStore.load()
+        // Touch the manager first so its connect/disconnect observers are
+        // registered ahead of ours and refresh() reads updated state.
+        refresh()
         let center = NotificationCenter.default
-        observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] note in
-            guard let controller = note.object as? GCController else { return }
-            self?.attach(controller)
-        })
-        observers.append(center.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { [weak self] _ in
-            self?.releaseAll()
-        })
-        GCController.startWirelessControllerDiscovery()
-        GCController.controllers().forEach(attach)
+        for name: Notification.Name in [.GCControllerDidConnect, .GCControllerDidDisconnect,
+                                        .GCKeyboardDidConnect, .GCKeyboardDidDisconnect] {
+            observers.append(center.addObserver(forName: name, object: nil,
+                                                queue: .main) { [weak self] _ in
+                self?.refresh()
+            })
+        }
     }
 
     func stop() {
-        GCController.stopWirelessControllerDiscovery()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
         releaseAll()
     }
 
+    private func refresh() {
+        // The active peripheral may have changed; drop held keys so a key
+        // pressed on the previous device can't stay stuck down.
+        releaseAll()
+        mapping = PeripheralManager.shared.activeControllerMapping()
+        for controller in GCController.controllers() {
+            attach(controller)
+        }
+        if let controller = PeripheralManager.shared.activeController,
+           let gamepad = controller.extendedGamepad {
+            handleAll(gamepad, from: controller)
+        }
+    }
+
     private func attach(_ controller: GCController) {
         guard let gamepad = controller.extendedGamepad else { return }
-        gamepad.valueChangedHandler = { [weak self] pad, _ in
-            self?.handleAll(pad)
+        gamepad.valueChangedHandler = { [weak self, weak controller] pad, _ in
+            guard let controller else { return }
+            self?.handleAll(pad, from: controller)
         }
-        handleAll(gamepad)
     }
 
     // Re-sync every mapped control on each value change. updateButton only
     // emits on state transitions, so this is cheap and keeps the pad-to-scan
-    // mapping in one place instead of duplicating it per element.
-    private func handleAll(_ gamepad: GCExtendedGamepad) {
+    // mapping in one place instead of duplicating it per element. Only the
+    // active peripheral drives the guest; refresh() releases anything a
+    // previously active pad still held.
+    private func handleAll(_ gamepad: GCExtendedGamepad, from controller: GCController) {
+        guard PeripheralManager.shared.isActive(controller) else { return }
         for button in HostButton.allCases {
             updateButton(token: button.rawValue,
                          pressed: button.isPressed(on: gamepad, threshold: threshold))
@@ -289,6 +302,10 @@ private final class EKA2L1RenderView: UIView {
     }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // The keyboard only drives the guest while it is the active
+        // peripheral (or nothing is). Releases below stay ungated so a key
+        // held across an active-peripheral switch cannot stick down.
+        guard PeripheralManager.shared.keyboardCanDrive else { return }
         for press in presses {
             let scan = scanCode(for: press)
             if scan != 0 {
@@ -377,7 +394,7 @@ final class EmulatorViewController: UIViewController {
         super.viewDidAppear(animated)
         gameView.setNeedsLayout()
         gameView.layoutIfNeeded()
-        gameView.keyboardScanMapping = ControllerMappingStore.keyboardScanMapping()
+        gameView.keyboardScanMapping = PeripheralMappingStore.keyboardScanMapping()
         controllerInput.start()
         EKA2L1Bridge.shared.resume()
         // Launch once: viewDidAppear can re-fire (e.g. returning frontmost),
