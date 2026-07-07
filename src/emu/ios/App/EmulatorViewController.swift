@@ -7,12 +7,17 @@ private final class ControllerInputBridge: @unchecked Sendable {
     private let lock = NSLock()
     private var activeScansByToken: [String: UInt32] = [:]
     private var observers: [NSObjectProtocol] = []
+    // User-edited element-to-scan mapping (Settings > Button mapping).
+    // Reloaded on every start(), i.e. each time the emulator screen appears,
+    // so it stays constant while input is live.
+    private var mapping = ControllerMappingStore.defaults
     private var enabled: Bool {
         UserDefaults.standard.object(forKey: "ios.enableControllerInput") as? Bool ?? true
     }
 
     func start() {
         guard enabled else { return }
+        mapping = ControllerMappingStore.load()
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { [weak self] note in
             guard let controller = note.object as? GCController else { return }
@@ -45,31 +50,30 @@ private final class ControllerInputBridge: @unchecked Sendable {
     // emits on state transitions, so this is cheap and keeps the pad-to-scan
     // mapping in one place instead of duplicating it per element.
     private func handleAll(_ gamepad: GCExtendedGamepad) {
-        updateDirections(prefix: "dpad", x: gamepad.dpad.xAxis.value, y: gamepad.dpad.yAxis.value)
-        updateDirections(prefix: "leftStick", x: gamepad.leftThumbstick.xAxis.value, y: gamepad.leftThumbstick.yAxis.value)
-        updateButton(token: "buttonA", scan: Scan.select, pressed: gamepad.buttonA.isPressed)
-        updateButton(token: "buttonB", scan: Scan.rightSoft, pressed: gamepad.buttonB.isPressed)
-        updateButton(token: "buttonX", scan: Scan.leftSoft, pressed: gamepad.buttonX.isPressed)
-        updateButton(token: "buttonY", scan: Scan.hash, pressed: gamepad.buttonY.isPressed)
-        updateButton(token: "leftShoulder", scan: Scan.leftSoft, pressed: gamepad.leftShoulder.isPressed)
-        updateButton(token: "rightShoulder", scan: Scan.rightSoft, pressed: gamepad.rightShoulder.isPressed)
-        updateButton(token: "leftTrigger", scan: Scan.star, pressed: gamepad.leftTrigger.value > threshold)
-        updateButton(token: "rightTrigger", scan: Scan.hash, pressed: gamepad.rightTrigger.value > threshold)
-        updateButton(token: "buttonMenu", scan: Scan.rightSoft, pressed: gamepad.buttonMenu.isPressed)
+        for button in HostButton.allCases {
+            updateButton(token: button.rawValue,
+                         pressed: button.isPressed(on: gamepad, threshold: threshold))
+        }
+        // The left thumbstick drives the d-pad bindings; separate state
+        // tokens so releasing the stick doesn't drop a still-held d-pad key.
+        updateButton(token: "leftStick.up", mappingToken: HostButton.dpadUp.rawValue,
+                     pressed: gamepad.leftThumbstick.yAxis.value > threshold)
+        updateButton(token: "leftStick.down", mappingToken: HostButton.dpadDown.rawValue,
+                     pressed: gamepad.leftThumbstick.yAxis.value < -threshold)
+        updateButton(token: "leftStick.left", mappingToken: HostButton.dpadLeft.rawValue,
+                     pressed: gamepad.leftThumbstick.xAxis.value < -threshold)
+        updateButton(token: "leftStick.right", mappingToken: HostButton.dpadRight.rawValue,
+                     pressed: gamepad.leftThumbstick.xAxis.value > threshold)
     }
 
-    private func updateDirections(prefix: String, x: Float, y: Float) {
-        updateButton(token: "\(prefix).up", scan: Scan.up, pressed: y > threshold)
-        updateButton(token: "\(prefix).down", scan: Scan.down, pressed: y < -threshold)
-        updateButton(token: "\(prefix).left", scan: Scan.left, pressed: x < -threshold)
-        updateButton(token: "\(prefix).right", scan: Scan.right, pressed: x > threshold)
-    }
-
-    private func updateButton(token: String, scan: UInt32, pressed: Bool) {
+    // `token` keys the press state (d-pad and left stick track separately),
+    // `mappingToken` keys the user mapping (both share one direction entry).
+    private func updateButton(token: String, mappingToken: String? = nil, pressed: Bool) {
+        let scan = mapping[mappingToken ?? token] ?? 0
         let event: (UInt32, Bool)?
         lock.lock()
         let wasPressed = activeScansByToken[token] != nil
-        if pressed == wasPressed {
+        if pressed == wasPressed || (pressed && scan == 0) {
             event = nil
         } else if pressed {
             activeScansByToken[token] = scan
@@ -240,17 +244,25 @@ private final class EKA2L1RenderView: UIView {
         EKA2L1Bridge.shared.tapRawKey(gesture.scale >= 1.0 ? Scan.up : Scan.down)
     }
 
+    // User-edited keyboard binding (Settings > Button mapping), keyed by HID
+    // usage. Set by the hosting controller on every appear.
+    var keyboardScanMapping: [Int: UInt32] = [:]
+
     // Map a hardware-keyboard press to an EPOC standard scan code (see
-    // services/window/keys.h `std_scan_code`). Alphanumerics use their uppercase
-    // ASCII value as the scan code — that's the EPOC convention, which is why the
-    // digits/letters can be forwarded straight through; space/backspace/tab and
-    // the soft keys do not follow ASCII and are mapped by keyCode instead.
+    // services/window/keys.h `std_scan_code`). The user mapping wins; keys it
+    // doesn't cover fall back to text-style input that is not part of the
+    // bindable guest key list: letters use their uppercase ASCII value as the
+    // scan code (the EPOC convention, needed for multitap text entry), plus
+    // space/tab, the keypad * and # glyphs, and the Esc/Enter conveniences.
     private func scanCode(for press: UIPress) -> UInt32 {
-        let chars = press.key?.charactersIgnoringModifiers.lowercased() ?? ""
+        guard let key = press.key else { return 0 }
+        if let mapped = keyboardScanMapping[key.keyCode.rawValue] {
+            return mapped
+        }
+
+        let chars = key.charactersIgnoringModifiers.lowercased()
         if chars.count == 1, let scalar = chars.unicodeScalars.first {
             switch scalar.value {
-            case 48...57:           // 0-9
-                return UInt32(scalar.value)
             case 97...122:          // a-z -> uppercase ASCII == std scan code
                 return UInt32(scalar.value) - 0x20
             case 42:                // *
@@ -262,31 +274,15 @@ private final class EKA2L1RenderView: UIView {
             }
         }
 
-        switch press.key?.keyCode {
-        case .keyboardUpArrow:
-            return 0x10             // std_key_up_arrow
-        case .keyboardDownArrow:
-            return 0x11             // std_key_down_arrow
-        case .keyboardLeftArrow:
-            return 0x0e             // std_key_left_arrow
-        case .keyboardRightArrow:
-            return 0x0f             // std_key_right_arrow
-        case .keyboardReturnOrEnter, .keypadEnter:
+        switch key.keyCode {
+        case .keypadEnter:
             return 0xA7             // std_key_device_3 (select / OK)
         case .keyboardSpacebar:
             return 0x05             // std_key_space
-        case .keyboardDeleteOrBackspace:
-            return 0x01             // std_key_backspace
         case .keyboardTab:
             return 0x02             // std_key_tab
-        case .keyboardF1:
-            return 0xA4             // std_key_device_0 (left soft key)
-        case .keyboardF2, .keyboardEscape:
+        case .keyboardEscape:
             return 0xA5             // std_key_device_1 (right soft key / back)
-        case .keyboardF3:
-            return 0xB4             // std_key_application_0 (green call)
-        case .keyboardF4:
-            return 0xB5             // std_key_application_1 (red end)
         default:
             return 0
         }
@@ -381,6 +377,7 @@ final class EmulatorViewController: UIViewController {
         super.viewDidAppear(animated)
         gameView.setNeedsLayout()
         gameView.layoutIfNeeded()
+        gameView.keyboardScanMapping = ControllerMappingStore.keyboardScanMapping()
         controllerInput.start()
         EKA2L1Bridge.shared.resume()
         // Launch once: viewDidAppear can re-fire (e.g. returning frontmost),

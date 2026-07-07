@@ -64,6 +64,11 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("settings.gameController", isOn: $enableControllerInput)
+                if enableControllerInput {
+                    NavigationLink("settings.controllerMapping") {
+                        ControllerMappingView()
+                    }
+                }
                 Toggle("settings.fpsOverlay", isOn: $showFPSOverlay)
                 Button("settings.testVibration") {
                     EKA2L1Bridge.shared.testVibration()

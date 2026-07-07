@@ -17,6 +17,8 @@ enum Scan {
     static let right: UInt32 = 0x0F
     static let hash: UInt32 = 0x7F
     static let star: UInt32 = 0x2A
+    static let call: UInt32 = 0xB4       // std_key_application_0 (green call)
+    static let end: UInt32 = 0xB5        // std_key_application_1 (red end)
 }
 
 // Digit, the phone-style letters under it, and the raw scan code. Shared by
