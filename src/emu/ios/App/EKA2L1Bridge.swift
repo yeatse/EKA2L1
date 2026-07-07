@@ -1,6 +1,12 @@
 import Foundation
 import QuartzCore
 
+// Sandbox Documents directory hosting the emulator's file tree (roms/, data/,
+// sis/, ...). Shared by every view that stages files or reads emulator output.
+func documentsRoot() -> String {
+    NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
+}
+
 struct EKA2L1AppItem: Identifiable, Hashable {
     let uid: UInt32
     let name: String
@@ -156,17 +162,6 @@ final class EKA2L1Bridge {
     // of a bottom keypad overlay.
     func setDisplayAnchorTop(pixels: Int) {
         emulator.setDisplayAnchorTopPixels(pixels)
-    }
-
-    // Rotate just the presented guest picture 90° clockwise; the interface
-    // orientation stays fixed by the keypad layout.
-    func rotateGuestDisplay() {
-        emulator.rotateGuestDisplayClockwise()
-    }
-
-    // Clear any user picture rotation; called when the keypad layout changes.
-    func resetGuestDisplayRotation() {
-        emulator.resetGuestDisplayRotation()
     }
 
     func submitRawKey(_ scanCode: UInt32, pressed: Bool) {

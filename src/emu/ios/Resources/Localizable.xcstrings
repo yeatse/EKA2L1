@@ -15,7 +15,6 @@
     "emulator.restart" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Restart Game" } } } },
     "emulator.restart.done" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Game restarted." } } } },
     "emulator.restart.failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to restart the game." } } } },
-    "emulator.rotate" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Rotate Screen" } } } },
     "emulator.saveScreenshot" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save Screenshot" } } } },
     "emulator.screenshot.failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not capture the screen." } } } },
     "emulator.screenshot.saved" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Screenshot saved to Photos." } } } },

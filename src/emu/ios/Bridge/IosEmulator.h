@@ -165,16 +165,6 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 // overlays the bottom of the screen.
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop;
 
-// Rotate just the presented guest picture 90° clockwise (wrapping at 360),
-// on top of the guest's own orientation. The interface orientation itself is
-// fixed by the keypad layout; this only spins the picture. Touch input is
-// mapped back through this rotation so taps stay aligned.
-- (void)rotateGuestDisplayClockwise;
-
-// Clear any user picture rotation (back to the guest's own orientation). The
-// frontend calls this when the keypad layout changes.
-- (void)resetGuestDisplayRotation;
-
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
 

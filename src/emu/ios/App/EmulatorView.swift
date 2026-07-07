@@ -55,7 +55,6 @@ struct EmulatorView: View {
     private var menuActions: KeypadMenuActions {
         KeypadMenuActions(
             layoutSelection: layoutSelection,
-            rotateDisplay: { EKA2L1Bridge.shared.rotateGuestDisplay() },
             saveScreenshot: { saveScreenshot() },
             restartGame: { restartGuestApp() },
             exitGame: {
@@ -145,7 +144,6 @@ struct EmulatorView: View {
         }
         .onChange(of: keypadLayout) { newLayout in
             DisplayOrientation.lock(landscape: newLayout.prefersLandscape)
-            EKA2L1Bridge.shared.resetGuestDisplayRotation()
         }
         .onDisappear {
             // The emulator screen was popped/dismissed (exit menu item or a
@@ -287,9 +285,8 @@ struct EmulatorView: View {
 // this mask from the (nonisolated) UIKit callback, hence the plain global.
 nonisolated(unsafe) var lockedInterfaceOrientationMask: UIInterfaceOrientationMask = .portrait
 
-// Pins/releases the interface orientation for the emulator screen. This is the
-// whole-screen orientation (frame + keypad); the guest picture is rotated
-// separately via EKA2L1Bridge.rotateGuestDisplay().
+// Pins/releases the interface orientation for the emulator screen (frame +
+// keypad).
 @MainActor
 enum DisplayOrientation {
     // Lock the interface to the layout's orientation and rotate to it now.

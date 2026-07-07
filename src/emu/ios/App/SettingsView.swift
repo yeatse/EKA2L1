@@ -17,7 +17,7 @@ struct SettingsView: View {
     @State private var showingClearDataConfirmation = false
 
     private var logURL: URL {
-        URL(fileURLWithPath: settingsDocumentsRoot()).appendingPathComponent("data/EKA2L1.log")
+        URL(fileURLWithPath: documentsRoot()).appendingPathComponent("data/EKA2L1.log")
     }
 
     private var storageText: String {
@@ -151,7 +151,7 @@ struct SettingsView: View {
 
     private func refreshStorageUsage() {
         DispatchQueue.global(qos: .utility).async {
-            let bytes = directorySize(at: URL(fileURLWithPath: settingsDocumentsRoot()))
+            let bytes = directorySize(at: URL(fileURLWithPath: documentsRoot()))
             DispatchQueue.main.async {
                 storageBytes = bytes
             }
@@ -161,7 +161,7 @@ struct SettingsView: View {
     private func clearData() {
         EKA2L1Bridge.shared.pause()
         EKA2L1Bridge.shared.closeRunningApp()
-        let root = URL(fileURLWithPath: settingsDocumentsRoot())
+        let root = URL(fileURLWithPath: documentsRoot())
         let fm = FileManager.default
         for name in ["data", "sis", "roms", "import_tmp"] {
             try? fm.removeItem(at: root.appendingPathComponent(name))
@@ -169,10 +169,6 @@ struct SettingsView: View {
         clearDataMessage = String(localized: "settings.clearData.done")
         refreshStorageUsage()
     }
-}
-
-private func settingsDocumentsRoot() -> String {
-    NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
 }
 
 private func directorySize(at url: URL) -> UInt64 {

@@ -19,10 +19,6 @@ private let sisTypes: [UTType] = {
     return v
 }()
 
-private func documentsRoot() -> String {
-    NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-}
-
 private enum HomeImportTarget {
     case sis
     case ngage
@@ -761,43 +757,36 @@ struct ImportDeviceView: View {
     }
 }
 
-// A large centered icon with the app name beneath, sized to fit the adaptive
-// LazyVGrid cells. The registered icon (MIF/MBM/SVGB/NVG → RGBA → PNG) is
-// lazily decoded off the main queue so scrolling the app grid stays smooth.
-// The bridge returns nil for apps without a usable icon, which falls back to
-// a generic SF Symbol placeholder.
-struct AppGridCell: View {
+// App icon shared by the grid and row cells. The registered icon
+// (MIF/MBM/SVGB/NVG → RGBA → PNG) is lazily decoded off the main queue so
+// scrolling stays smooth; the bridge returns nil for apps without a usable
+// icon, which falls back to a generic SF Symbol placeholder.
+private struct AppIconView: View {
     let uid: UInt32
-    let name: String
+    // Pixel size requested from the icon decoder; iconSide/placeholderSide are
+    // the on-screen point sizes for the decoded icon and the fallback symbol.
+    let decodePx: UInt
+    let iconSide: CGFloat
+    let placeholderSide: CGFloat
 
     @State private var icon: UIImage?
     @State private var loadedUID: UInt32?
 
     var body: some View {
-        VStack(spacing: 8) {
-            ZStack {
-                if let icon {
-                    Image(uiImage: icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 64, height: 64)
-                } else {
-                    Image(systemName: "app.dashed")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 48, height: 48)
-                        .foregroundColor(.secondary)
-                }
+        ZStack {
+            if let icon {
+                Image(uiImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: iconSide, height: iconSide)
+            } else {
+                Image(systemName: "app.dashed")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: placeholderSide, height: placeholderSide)
+                    .foregroundColor(.secondary)
             }
-            .frame(width: 72, height: 72)
-
-            Text(name)
-                .font(.caption)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity)
         }
-        .padding(.vertical, 8)
         .onAppear(perform: loadIcon)
         .onChange(of: uid) { _ in
             icon = nil
@@ -811,7 +800,7 @@ struct AppGridCell: View {
         let uid = self.uid
         loadedUID = uid
         DispatchQueue.global(qos: .userInitiated).async {
-            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 144)
+            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: decodePx)
             let image = data.flatMap { UIImage(data: $0) }
             DispatchQueue.main.async {
                 guard self.uid == uid, self.loadedUID == uid else { return }
@@ -821,56 +810,37 @@ struct AppGridCell: View {
     }
 }
 
-// Compact row used by the List layout: small leading icon, name, and UID.
-// Icon decoding mirrors AppGridCell (off the main queue, generic placeholder
-// when the bridge has no usable icon).
+// A large centered icon with the app name beneath, sized to fit the adaptive
+// LazyVGrid cells.
+struct AppGridCell: View {
+    let uid: UInt32
+    let name: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            AppIconView(uid: uid, decodePx: 144, iconSide: 64, placeholderSide: 48)
+                .frame(width: 72, height: 72)
+
+            Text(name)
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// Compact row used by the List layout: small leading icon and name.
 struct AppRow: View {
     let uid: UInt32
     let name: String
 
-    @State private var icon: UIImage?
-    @State private var loadedUID: UInt32?
-
     var body: some View {
         HStack(spacing: 12) {
-            ZStack {
-                if let icon {
-                    Image(uiImage: icon)
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 36, height: 36)
-                } else {
-                    Image(systemName: "app.dashed")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 26, height: 26)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .frame(width: 40, height: 40)
-            VStack(alignment: .leading) {
-                Text(name)
-            }
-        }
-        .onAppear(perform: loadIcon)
-        .onChange(of: uid) { _ in
-            icon = nil
-            loadedUID = nil
-            loadIcon()
-        }
-    }
-
-    private func loadIcon() {
-        guard loadedUID != uid else { return }
-        let uid = self.uid
-        loadedUID = uid
-        DispatchQueue.global(qos: .userInitiated).async {
-            let data = EKA2L1Bridge.iconPNGData(uid: uid, sizePx: 72)
-            let image = data.flatMap { UIImage(data: $0) }
-            DispatchQueue.main.async {
-                guard self.uid == uid, self.loadedUID == uid else { return }
-                self.icon = image
-            }
+            AppIconView(uid: uid, decodePx: 72, iconSide: 36, placeholderSide: 26)
+                .frame(width: 40, height: 40)
+            Text(name)
         }
     }
 }

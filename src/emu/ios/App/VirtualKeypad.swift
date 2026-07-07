@@ -89,7 +89,6 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
 // actions that operate on the emulator session. Opacity is menu-internal.
 struct KeypadMenuActions {
     var layoutSelection: Binding<String>
-    var rotateDisplay: () -> Void
     var saveScreenshot: () -> Void
     var restartGame: () -> Void
     var exitGame: () -> Void
@@ -120,8 +119,8 @@ struct VirtualKeypad: View {
 // MARK: - System menu key
 
 // The "system function" key: opens a native menu with keypad switching, keypad
-// opacity, display rotation, screenshot, restart and exit. Present in every
-// layout so the emulator screen works without a navigation bar.
+// opacity, screenshot, restart and exit. Present in every layout so the
+// emulator screen works without a navigation bar.
 struct SystemMenuKey: View {
     let actions: KeypadMenuActions
     var size: CGSize = CGSize(width: 58, height: 38)
@@ -147,11 +146,6 @@ struct SystemMenuKey: View {
                 }
             } label: {
                 Label("emulator.menu.keypadOpacity", systemImage: "circle.lefthalf.filled")
-            }
-            Button {
-                actions.rotateDisplay()
-            } label: {
-                Label("emulator.rotate", systemImage: "rectangle.landscape.rotate")
             }
             Button {
                 actions.saveScreenshot()
@@ -203,22 +197,20 @@ private struct ClassicKeypad: View {
     // A large d-pad fills the centre; the four function keys tuck into the
     // corners, clear of the round pad with a small vertical gap.
     private var navigationCluster: some View {
-        ZStack {
-            SlidingDPad(diameter: 148)
-        }
-        .frame(width: clusterSize.width, height: clusterSize.height)
-        .overlay(alignment: .topLeading) {
-            SoftKey(side: .left, size: cornerKeySize)
-        }
-        .overlay(alignment: .topTrailing) {
-            SoftKey(side: .right, size: cornerKeySize)
-        }
-        .overlay(alignment: .bottomLeading) {
-            SystemMenuKey(actions: actions, size: cornerKeySize)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            ClearKey(size: cornerKeySize)
-        }
+        SlidingDPad(diameter: 148)
+            .frame(width: clusterSize.width, height: clusterSize.height)
+            .overlay(alignment: .topLeading) {
+                SoftKey(side: .left, size: cornerKeySize)
+            }
+            .overlay(alignment: .topTrailing) {
+                SoftKey(side: .right, size: cornerKeySize)
+            }
+            .overlay(alignment: .bottomLeading) {
+                SystemMenuKey(actions: actions, size: cornerKeySize)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                ClearKey(size: cornerKeySize)
+            }
     }
 }
 
@@ -259,25 +251,23 @@ private struct CompactKeypad: View {
     // pad in the centre, system key / mode toggle in the bottom corners and the
     // clear key on the trailing edge.
     private var directionalMode: some View {
-        ZStack {
-            SlidingDPad(diameter: 188)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .topLeading) {
-            SoftKey(side: .left, size: cornerKeySize)
-        }
-        .overlay(alignment: .topTrailing) {
-            SoftKey(side: .right, size: cornerKeySize)
-        }
-        .overlay(alignment: .bottomLeading) {
-            SystemMenuKey(actions: actions, size: cornerKeySize)
-        }
-        .overlay(alignment: .trailing) {
-            ClearKey(size: cornerKeySize)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            modeToggle
-        }
+        SlidingDPad(diameter: 188)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) {
+                SoftKey(side: .left, size: cornerKeySize)
+            }
+            .overlay(alignment: .topTrailing) {
+                SoftKey(side: .right, size: cornerKeySize)
+            }
+            .overlay(alignment: .bottomLeading) {
+                SystemMenuKey(actions: actions, size: cornerKeySize)
+            }
+            .overlay(alignment: .trailing) {
+                ClearKey(size: cornerKeySize)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                modeToggle
+            }
     }
 
     // Numeric mode: soft keys plus the centre cluster (system, toggle, clear)

@@ -35,38 +35,15 @@ private final class ControllerInputBridge: @unchecked Sendable {
 
     private func attach(_ controller: GCController) {
         guard let gamepad = controller.extendedGamepad else { return }
-        gamepad.valueChangedHandler = { [weak self] pad, element in
-            self?.handle(gamepad: pad, element: element)
+        gamepad.valueChangedHandler = { [weak self] pad, _ in
+            self?.handleAll(pad)
         }
         handleAll(gamepad)
     }
 
-    private func handle(gamepad: GCExtendedGamepad, element: GCControllerElement) {
-        if element === gamepad.dpad {
-            updateDirections(prefix: "dpad", x: gamepad.dpad.xAxis.value, y: gamepad.dpad.yAxis.value)
-        } else if element === gamepad.leftThumbstick {
-            updateDirections(prefix: "leftStick", x: gamepad.leftThumbstick.xAxis.value, y: gamepad.leftThumbstick.yAxis.value)
-        } else if element === gamepad.buttonA {
-            updateButton(token: "buttonA", scan: Scan.select, pressed: gamepad.buttonA.isPressed)
-        } else if element === gamepad.buttonB {
-            updateButton(token: "buttonB", scan: Scan.rightSoft, pressed: gamepad.buttonB.isPressed)
-        } else if element === gamepad.buttonX {
-            updateButton(token: "buttonX", scan: Scan.leftSoft, pressed: gamepad.buttonX.isPressed)
-        } else if element === gamepad.buttonY {
-            updateButton(token: "buttonY", scan: Scan.hash, pressed: gamepad.buttonY.isPressed)
-        } else if element === gamepad.leftShoulder {
-            updateButton(token: "leftShoulder", scan: Scan.leftSoft, pressed: gamepad.leftShoulder.isPressed)
-        } else if element === gamepad.rightShoulder {
-            updateButton(token: "rightShoulder", scan: Scan.rightSoft, pressed: gamepad.rightShoulder.isPressed)
-        } else if element === gamepad.leftTrigger {
-            updateButton(token: "leftTrigger", scan: Scan.star, pressed: gamepad.leftTrigger.value > threshold)
-        } else if element === gamepad.rightTrigger {
-            updateButton(token: "rightTrigger", scan: Scan.hash, pressed: gamepad.rightTrigger.value > threshold)
-        } else if element === gamepad.buttonMenu {
-            updateButton(token: "buttonMenu", scan: Scan.rightSoft, pressed: gamepad.buttonMenu.isPressed)
-        }
-    }
-
+    // Re-sync every mapped control on each value change. updateButton only
+    // emits on state transitions, so this is cheap and keeps the pad-to-scan
+    // mapping in one place instead of duplicating it per element.
     private func handleAll(_ gamepad: GCExtendedGamepad) {
         updateDirections(prefix: "dpad", x: gamepad.dpad.xAxis.value, y: gamepad.dpad.yAxis.value)
         updateDirections(prefix: "leftStick", x: gamepad.leftThumbstick.xAxis.value, y: gamepad.leftThumbstick.yAxis.value)
@@ -255,12 +232,12 @@ private final class EKA2L1RenderView: UIView {
 
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began else { return }
-        EKA2L1Bridge.shared.tapRawKey(0xA7)
+        EKA2L1Bridge.shared.tapRawKey(Scan.select)
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         guard gesture.state == .ended else { return }
-        EKA2L1Bridge.shared.tapRawKey(gesture.scale >= 1.0 ? 0x10 : 0x11)
+        EKA2L1Bridge.shared.tapRawKey(gesture.scale >= 1.0 ? Scan.up : Scan.down)
     }
 
     // Map a hardware-keyboard press to an EPOC standard scan code (see

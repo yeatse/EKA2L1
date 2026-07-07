@@ -16,10 +16,6 @@ import Foundation
 final class ImportRouter {
     static let shared = ImportRouter()
 
-    private var documentsRoot: String {
-        NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first ?? NSHomeDirectory()
-    }
-
     func ingest(urls: [URL]) -> String {
         var ok = 0
         var skipped: [String] = []
@@ -57,17 +53,17 @@ final class ImportRouter {
         let fm = FileManager.default
         switch ext {
         case "sis", "sisx":
-            let dst = (documentsRoot as NSString).appendingPathComponent("sis/\(name)")
+            let dst = (documentsRoot() as NSString).appendingPathComponent("sis/\(name)")
             try copyReplacing(url: url, to: dst, fm: fm)
         case "ttf", "otf":
-            let fontsDir = (documentsRoot as NSString).appendingPathComponent("data/fonts")
+            let fontsDir = (documentsRoot() as NSString).appendingPathComponent("data/fonts")
             try fm.createDirectory(atPath: fontsDir, withIntermediateDirectories: true)
             let dst = (fontsDir as NSString).appendingPathComponent(name)
             try copyReplacing(url: url, to: dst, fm: fm)
         case "zip":
             let baseName = url.deletingPathExtension().lastPathComponent
-            let romsDir = (documentsRoot as NSString).appendingPathComponent("roms")
-            let tmpDir = (documentsRoot as NSString).appendingPathComponent("import_tmp/\(baseName).unzipped")
+            let romsDir = (documentsRoot() as NSString).appendingPathComponent("roms")
+            let tmpDir = (documentsRoot() as NSString).appendingPathComponent("import_tmp/\(baseName).unzipped")
             let dst = (romsDir as NSString).appendingPathComponent(baseName)
             if fm.fileExists(atPath: tmpDir) {
                 try fm.removeItem(atPath: tmpDir)
@@ -83,7 +79,7 @@ final class ImportRouter {
         case "rom":
             let baseName = (url.deletingPathExtension().lastPathComponent)
             let firm = baseName.lowercased()
-            let romDir = (documentsRoot as NSString).appendingPathComponent("roms/\(baseName)/data/roms/\(firm)")
+            let romDir = (documentsRoot() as NSString).appendingPathComponent("roms/\(baseName)/data/roms/\(firm)")
             try fm.createDirectory(atPath: romDir, withIntermediateDirectories: true)
             try copyReplacing(url: url, to: (romDir as NSString).appendingPathComponent("SYM.ROM"), fm: fm)
         default:
