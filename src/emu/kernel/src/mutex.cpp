@@ -83,8 +83,9 @@ namespace eka2l1 {
             if (holding == thr) {
                 ++lock_count;
             } else {
-                assert(!holding->wait_obj);
-
+                // The holder may legitimately be blocked on another wait object
+                // (e.g. a request semaphore) while owning this mutex; it will
+                // release us when it resumes and signals. Queueing is valid here.
                 kernel::thread *calm_down = thr;
                 waits.push(calm_down);
 

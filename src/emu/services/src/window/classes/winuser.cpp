@@ -1041,6 +1041,11 @@ namespace eka2l1::epoc {
         redraw_segments_.promote_last_segment();
 
         if (content_changed()) {
+            // Newly completed redraw content must be composited in correct z-order:
+            // an incremental client-path update can be overdrawn by later updates of
+            // windows behind this one (or was skipped entirely if a full server pass
+            // ran before this content arrived). Request a full server recomposite.
+            scr->flags_ |= screen::FLAG_SERVER_REDRAW_PENDING;
             try_update(ctx.msg->own_thr);
         }
 
