@@ -104,10 +104,10 @@ option(EKA2L1_DYNCOM_PROFILE "Profile guest instruction/pair frequencies in the 
 if (ARCHITECTURE_ARM32)
     target_sources(cpu PRIVATE ${SOURCE_12L1R})
     target_link_libraries(cpu PRIVATE Catch2)
-elseif ((EKA2L1_IOS AND NOT EKA2L1_IOS_SIMULATOR_DYNARMIC) OR EKA2L1_CPU_DYNCOM_ONLY)
-    # iOS device builds run the dyncom interpreter only. The dynarmic backend
-    # needs the MAP_JIT mmap path plus pthread_jit_write_protect_np toggling
-    # and the com.apple.security.cs.allow-jit entitlement at runtime.
+elseif ((EKA2L1_IOS AND NOT EKA2L1_IOS_DYNARMIC) OR EKA2L1_CPU_DYNCOM_ONLY)
+    # iOS builds without EKA2L1_IOS_DYNARMIC run the dyncom interpreter only.
+    # This is the App Store / TestFlight configuration: no JIT code is
+    # compiled in.
     message(STATUS "cpu: linking without dynarmic (dyncom only)")
     if (EKA2L1_CPU_DYNCOM_ONLY)
         # On a non-iOS host the dynarmic-detection macro would otherwise pull in

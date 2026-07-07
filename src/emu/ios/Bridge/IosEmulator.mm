@@ -36,6 +36,7 @@
 #include <common/version.h>
 #include <config/app_settings.h>
 #include <config/config.h>
+#include <cpu/arm_factory.h>
 #include <drivers/audio/audio.h>
 #include <drivers/audio/dsp.h>
 #include <drivers/audio/player.h>
@@ -1766,6 +1767,7 @@ namespace eka2l1::ios {
         @"hideSystemApps": @(_state->conf.hide_system_apps),
         @"extensiveLogging": @(_state->conf.extensive_logging),
         @"cpuBackend": [NSString stringWithUTF8String:_state->conf.cpu_backend.c_str()],
+        @"jitEnabled": @(_state->conf.ios_use_jit),
         @"deviceDisplayName": [NSString stringWithUTF8String:_state->conf.device_display_name.c_str()],
         @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()]
     };
@@ -1803,6 +1805,13 @@ namespace eka2l1::ios {
     if ([cpuBackend isKindOfClass:NSString.class]) {
         _state->conf.cpu_backend = cpuBackend.UTF8String;
     }
+    NSNumber *jitEnabled = snapshot[@"jitEnabled"];
+    if (jitEnabled && jitEnabled.boolValue != _state->conf.ios_use_jit) {
+        _state->conf.ios_use_jit = jitEnabled.boolValue;
+        // The CPU core is instantiated when the system is (re)built, so a
+        // backend switch takes effect on the next app launch's rebuild.
+        _state->needs_reboot_before_launch = true;
+    }
     NSString *deviceDisplayName = snapshot[@"deviceDisplayName"];
     if ([deviceDisplayName isKindOfClass:NSString.class]) {
         _state->conf.device_display_name = deviceDisplayName.UTF8String;
@@ -1818,6 +1827,18 @@ namespace eka2l1::ios {
 
     _state->conf.serialize();
     return YES;
+}
+
+- (BOOL)jitCompiledIn {
+#if EKA2L1_IOS_DYNARMIC
+    return YES;
+#else
+    return NO;
+#endif
+}
+
+- (BOOL)jitAvailable {
+    return eka2l1::arm::host_can_jit() ? YES : NO;
 }
 
 - (void)testVibration {

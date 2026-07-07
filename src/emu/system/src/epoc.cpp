@@ -617,21 +617,25 @@ namespace eka2l1 {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
 #elif EKA2L1_PLATFORM(IOS)
-        // Keep the iOS frontend on dyncom. Simulator builds still compile
-        // dynarmic in (EKA2L1_IOS_SIMULATOR_DYNARMIC) for targeted debugging,
-        // but it is not yet robust enough to be the default:
-        //  - N97 app launch A/B (full cold OS boot → app rendered, iPhone 16
-        //    Pro sim): dynarmic ~42s vs dyncom ~52s — only ~20% faster, because
-        //    app launch is CPU-bound on *cold* code that runs once, so the JIT's
-        //    compile cost barely amortizes. The JIT win is in sustained
-        //    execution, not one-shot launch.
-        //  - Robustness: Zip manager (0x2000023D) launches fine under dynarmic,
-        //    but Calculator (0x10005902) still SIGSEGVs inside
-        //    Dynarmic::A32::Jit::Impl::Run() — the known A32 issue. A backend
-        //    that crashes a built-in app can't be the default for a modest
-        //    cold-launch gain. Revisit once the A32 crash is fixed; a per-app or
-        //    user-opt-in toggle would be the safe way to expose it meanwhile.
+        // iOS defaults to dyncom. Dynarmic is not robust enough to be the
+        // default (Calculator 0x10005902 still SIGSEGVs inside
+        // Dynarmic::A32::Jit::Impl::Run() — the known A32 issue) and the JIT
+        // win is in sustained execution, not one-shot launch. Builds that
+        // carry dynarmic (EKA2L1_IOS_DYNARMIC: simulator, or sideload device
+        // builds) let the user opt in from the settings screen;
+        // the opt-in is the dedicated ios_use_jit flag — NOT cpu_backend,
+        // whose "dynarmic" desktop default may already be persisted in
+        // config.yml — and is honored only when the process actually has JIT
+        // permission (host_can_jit() runtime probe), else stay on dyncom.
         cpu_type = arm_emulator_type::dyncom;
+#if EKA2L1_IOS_DYNARMIC
+        if (conf_->ios_use_jit && arm::host_can_jit()) {
+            cpu_type = arm_emulator_type::dynarmic;
+        }
+        LOG_INFO(SYSTEM, "iOS CPU backend: {} (JIT opt-in: {}, JIT permission: {})",
+            (cpu_type == arm_emulator_type::dynarmic) ? "dynarmic" : "dyncom",
+            conf_->ios_use_jit, arm::host_can_jit());
+#endif
 #else
         cpu_type = /*arm::string_to_arm_emulator_type(conf_->cpu_backend);*/ arm_emulator_type::dynarmic;
 #endif

@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var nearestNeighborFiltering = true
     @State private var hideSystemApps = true
     @State private var deviceDisplayName = "EKA2L1"
+    @State private var useJIT = false
     @State private var storageBytes: UInt64 = 0
     @State private var clearDataMessage: String?
     @State private var showingClearDataConfirmation = false
@@ -27,6 +28,21 @@ struct SettingsView: View {
         Form {
             Section("settings.device") {
                 TextField("settings.displayName", text: $deviceDisplayName)
+            }
+            // Only sideload/simulator builds carry the dynarmic JIT; App Store /
+            // TestFlight builds compile without it and never show this section.
+            if EKA2L1Bridge.shared.jitCompiledIn {
+                Section {
+                    Toggle("settings.jit", isOn: $useJIT)
+                } header: {
+                    Text("settings.system")
+                } footer: {
+                    if !EKA2L1Bridge.shared.jitAvailable {
+                        Text("settings.jit.unavailable")
+                    } else {
+                        Text("settings.jit.hint")
+                    }
+                }
             }
             Section("settings.graphics") {
                 Toggle("settings.integerScaling", isOn: $integerScaling)
@@ -84,6 +100,7 @@ struct SettingsView: View {
             refreshStorageUsage()
         }
         .onChange(of: audioMasterVolume) { _ in save() }
+        .onChange(of: useJIT) { _ in save() }
         .onChange(of: integerScaling) { _ in save() }
         .onChange(of: nearestNeighborFiltering) { _ in save() }
         .onChange(of: hideSystemApps) { _ in save() }
@@ -115,6 +132,9 @@ struct SettingsView: View {
         if let value = snapshot["deviceDisplayName"] as? String {
             deviceDisplayName = value
         }
+        if let value = snapshot["jitEnabled"] as? NSNumber {
+            useJIT = value.boolValue
+        }
     }
 
     private func save() {
@@ -123,7 +143,7 @@ struct SettingsView: View {
             "integerScaling": integerScaling,
             "nearestNeighborFiltering": nearestNeighborFiltering,
             "hideSystemApps": hideSystemApps,
-            "cpuBackend": "dyncom",
+            "jitEnabled": useJIT && EKA2L1Bridge.shared.jitCompiledIn,
             "deviceDisplayName": deviceDisplayName
         ]
         _ = EKA2L1Bridge.shared.applyConfigSnapshot(snapshot)

@@ -24,6 +24,14 @@
 #   EKA2L1_IOS_DEPLOYMENT_TARGET   default 16.0
 #   EKA2L1_IOS_CONFIGURATION       default Debug
 #   EKA2L1_IOS_SCHEME              default EKA2L1
+#   EKA2L1_IOS_DYNARMIC            ON/OFF: compile the dynarmic JIT in.
+#                                  Defaults: ON for simulator builds and the
+#                                  unsigned `device` build (sideload IPA),
+#                                  OFF for signed device builds; `archive` is
+#                                  always OFF so App Store / TestFlight
+#                                  binaries never carry JIT code. Runtime
+#                                  still requires the sideloaded process to
+#                                  have JIT permission.
 #   EKA2L1_IOS_DEVELOPMENT_TEAM    Apple Development team id (device signing)
 #   EKA2L1_IOS_DEVICE              target device name/udid for `install`
 #   EKA2L1_IOS_ARCHIVE_PATH        .xcarchive output for `archive`
@@ -55,6 +63,7 @@ configure_one() {
     local platform="$2"
     local sdk="$3"
     local team="$4"
+    local jit="${5:-OFF}"
     local build_dir="build/ios-${label}"
 
     scripts/build_ios_ffmpeg.sh "${label}"
@@ -82,6 +91,7 @@ configure_one() {
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
         -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
+        -DEKA2L1_IOS_DYNARMIC="${jit}" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_XCODE_ATTRIBUTE_SKIP_INSTALL=YES
     # SKIP_INSTALL=YES above keeps the dozens of static-lib targets out of the
@@ -102,7 +112,18 @@ build_one() {
         team="${DEVELOPMENT_TEAM}"
     fi
 
-    configure_one "${label}" "${platform}" "${sdk}" "${team}"
+    # Dynarmic default: ON for simulator builds and the unsigned device build
+    # (the sideload IPA), OFF for signed device builds. EKA2L1_IOS_DYNARMIC
+    # overrides both ways.
+    local jit_default=OFF
+    if [ "${label}" = "simulator" ]; then
+        jit_default=ON
+    elif [ "${label}" = "device" ] && [ -z "${team}" ]; then
+        jit_default=ON
+    fi
+    local jit="${EKA2L1_IOS_DYNARMIC:-${jit_default}}"
+
+    configure_one "${label}" "${platform}" "${sdk}" "${team}" "${jit}"
 
     echo "==> Building ${label}"
     if [ -n "${team}" ]; then
@@ -141,7 +162,8 @@ archive_device() {
         exit 6
     fi
 
-    configure_one device OS64 iphoneos "${DEVELOPMENT_TEAM}"
+    # The archive feeds App Store / TestFlight: never compile the JIT in.
+    configure_one device OS64 iphoneos "${DEVELOPMENT_TEAM}" OFF
 
     local archive_path="${EKA2L1_IOS_ARCHIVE_PATH:-build/ios-device/EKA2L1.xcarchive}"
 

@@ -97,10 +97,10 @@ add_subdirectory(glm)
 # Dynarmic: disable tests
 option(DYNARMIC_TESTS "Enable dynarmic tests" OFF)
 
-if (NOT ARCHITECTURE_ARM32 AND (NOT EKA2L1_IOS OR EKA2L1_IOS_SIMULATOR_DYNARMIC))
-    # iOS device builds still omit dynarmic until the MAP_JIT entitlement path
-    # lands. Simulator builds run as host macOS processes and can use dynarmic
-    # for stage-2 acceptance coverage.
+if (NOT ARCHITECTURE_ARM32 AND (NOT EKA2L1_IOS OR EKA2L1_IOS_DYNARMIC))
+    # On iOS, dynarmic is only compiled when EKA2L1_IOS_DYNARMIC is set
+    # (simulator default, sideload-only device builds); App Store / TestFlight
+    # builds omit it entirely.
     add_subdirectory(dynarmic)
 endif()
 

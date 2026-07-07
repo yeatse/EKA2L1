@@ -662,6 +662,18 @@ namespace eka2l1 {
         void thread::wait_for_any_request() {
             kernel::process *owner = owning_process();
 
+            // The wait-stub identification below reads this thread's saved
+            // context, which is only refreshed when the scheduler switches the
+            // thread out. When the wait is serviced without blocking (a signal
+            // is already queued — common under the JIT, where completions land
+            // before the guest reaches WaitForAnyRequest), the snapshot still
+            // points at an older SVC site and the stray-absorb check misfires.
+            // Refresh from the live core so the check sees the SVC actually
+            // executing.
+            if (kern->crr_thread() == this) {
+                kern->get_cpu()->save_context(ctx);
+            }
+
             do {
                 const int before_count = request_sema->count();
                 utils::active_scheduler *act_sched_pre = ldata->scheduler.cast<utils::active_scheduler>().get(owner);
@@ -681,8 +693,13 @@ namespace eka2l1 {
                 utils::active_scheduler *act_sched = ldata->scheduler.cast<utils::active_scheduler>().get(owner);
                 const bool has_ready_request = act_sched && act_sched->has_ready_request(owner);
                 // Only absorb stale signals from User::WaitForAnyRequest's direct
-                // stub, not from User::WaitForRequest wrappers or arbitrary waits.
-                const wait_request_stub_info stub = identify_wait_request_stub(mem, owner, ctx, false);
+                // stubs, not from User::WaitForRequest wrappers or arbitrary waits.
+                // The fast-exec stub is allowed here because the wrapper form is
+                // told apart inside identify_wait_request_stub (a wrapper carries
+                // its target request status in r0): the active scheduler waits
+                // through the fast stub too, and a stray delivered there must be
+                // absorbed the same way or the guest panics E32USER-CBase 46.
+                const wait_request_stub_info stub = identify_wait_request_stub(mem, owner, ctx, true);
 
                 if (!act_sched || has_ready_request) {
                     break;

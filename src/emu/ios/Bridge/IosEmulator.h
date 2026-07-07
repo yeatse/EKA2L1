@@ -177,6 +177,15 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
+
+// JIT (dynarmic) support. `jitCompiledIn` is YES when this build carries the
+// dynarmic backend (EKA2L1_IOS_DYNARMIC: simulator, or a sideload device
+// build — never App Store / TestFlight). `jitAvailable` additionally
+// requires the running process to have JIT permission (sideloaded with a
+// debugger / JIT enabler attached); without it the emulator silently falls
+// back to the interpreter even if the user opted in.
+@property(nonatomic, readonly) BOOL jitCompiledIn;
+@property(nonatomic, readonly) BOOL jitAvailable;
 - (void)testVibration;
 - (uint64_t)renderedFrameCount;
 

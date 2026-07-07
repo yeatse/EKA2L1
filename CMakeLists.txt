@@ -32,11 +32,24 @@ if (EKA2L1_IOS)
     if (CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]honeSimulator")
         set(EKA2L1_IOS_SIMULATOR ON)
     endif()
-    option(EKA2L1_IOS_SIMULATOR_DYNARMIC "Enable Dynarmic for iOS simulator builds" ${EKA2L1_IOS_SIMULATOR})
-    if (EKA2L1_IOS_SIMULATOR_DYNARMIC)
-        add_compile_definitions(EKA2L1_IOS_SIMULATOR_DYNARMIC=1)
+    # Dynarmic JIT on iOS — one option, one compile macro, simulator and
+    # device alike. Defaults: ON for simulator builds (the sim process runs on
+    # macOS and can always JIT), OFF for device builds. On device only
+    # sideload/unsigned-IPA builds should turn this on: executable memory on a
+    # jailed iPhone needs the process to be debuggable (re-signed with
+    # get-task-allow, JIT enabled via debugger or a JIT enabler) — App Store /
+    # TestFlight processes can never flip pages to RX, so distribution builds
+    # keep this OFF and ship without any JIT code (build_ios.sh wires the
+    # per-flavor defaults). Availability is still probed at runtime
+    # (arm::host_can_jit()); when the probe fails the emulator falls back to
+    # the dyncom interpreter.
+    option(EKA2L1_IOS_DYNARMIC "Compile the dynarmic JIT into iOS builds (device: sideload/unsigned IPA only)" ${EKA2L1_IOS_SIMULATOR})
+
+    if (EKA2L1_IOS_DYNARMIC)
+        add_compile_definitions(EKA2L1_IOS_DYNARMIC=1)
+        # boost still uses std::unary_function, removed from libc++'s C++17 mode.
         add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1)
-        message(STATUS "iOS simulator build: Dynarmic backend enabled")
+        message(STATUS "iOS build: Dynarmic JIT compiled in")
     endif()
 
     # MetalANGLE (GLES -> Metal) backend. Defined here (not just in the ios app

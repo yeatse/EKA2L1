@@ -23,14 +23,16 @@
 
 #include <cpu/dyncom/arm_dyncom.h>
 
-// iOS device builds have no JIT backend wired up yet; simulator builds run as
-// host macOS processes and can use dynarmic for acceptance coverage. The
-// dyncom-only build (e.g. the differential test harness) forces dynarmic off on
-// any host so it doesn't drag in the dynarmic headers/library.
+// Dynarmic availability: on iOS the EKA2L1_IOS_DYNARMIC flag (one cmake
+// option = one compile macro) marks builds that carry dynarmic — simulator
+// builds by default, sideload-only device builds opt in, App Store /
+// TestFlight never. The dyncom-only build (e.g. the differential test
+// harness) forces dynarmic off on any host so it doesn't drag in the
+// dynarmic headers/library.
 #if !defined(EKA2L1_CPU_DYNCOM_ONLY_BUILD)
 #define EKA2L1_CPU_DYNCOM_ONLY_BUILD 0
 #endif
-#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && (!EKA2L1_PLATFORM(IOS) || EKA2L1_IOS_SIMULATOR_DYNARMIC) && !EKA2L1_CPU_DYNCOM_ONLY_BUILD)
+#define EKA2L1_CPU_HAS_DYNARMIC (!EKA2L1_ARCH(ARM) && (!EKA2L1_PLATFORM(IOS) || EKA2L1_IOS_DYNARMIC) && !EKA2L1_CPU_DYNCOM_ONLY_BUILD)
 
 #if EKA2L1_ARCH(ARM)
 #include <cpu/12l1r/arm_12l1r.h>
@@ -40,11 +42,46 @@
 
 #include <cpu/12l1r/exclusive_monitor.h>
 
+#if EKA2L1_PLATFORM(IOS) && EKA2L1_IOS_DYNARMIC
+#include <libkern/OSCacheControl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace eka2l1::arm {
+#if EKA2L1_PLATFORM(IOS) && EKA2L1_IOS_DYNARMIC
+    // Probe whether this process can actually create and run generated code.
+    // On a jailed iPhone, mprotect(RW -> RX) on dirty anonymous pages only
+    // succeeds when the process is debuggable (CS_DEBUGGED), i.e. a sideloaded
+    // build with JIT enabled via debugger / JIT enabler. App Store and
+    // TestFlight processes always fail the mprotect, so this degrades cleanly.
+    // Mirrors the RW->RX dance oaknut's CodeBlock does on TARGET_OS_IPHONE.
+    static bool probe_ios_jit() {
+        const size_t page = static_cast<size_t>(getpagesize());
+        void *mem = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        if (mem == MAP_FAILED) {
+            return false;
+        }
+
+        // AArch64 `ret`.
+        *reinterpret_cast<std::uint32_t *>(mem) = 0xD65F03C0;
+
+        bool ok = (mprotect(mem, page, PROT_READ | PROT_EXEC) == 0);
+        if (ok) {
+            sys_icache_invalidate(mem, page);
+            reinterpret_cast<void (*)()>(mem)();
+        }
+
+        munmap(mem, page);
+        return ok;
+    }
+#endif
+
     bool host_can_jit() {
 #if EKA2L1_PLATFORM(IOS)
-#if EKA2L1_IOS_SIMULATOR_DYNARMIC
-        return true;
+#if EKA2L1_IOS_DYNARMIC
+        static const bool available = probe_ios_jit();
+        return available;
 #else
         return false;
 #endif
@@ -62,10 +99,16 @@ namespace eka2l1::arm {
         const char *reason = nullptr;
         arm_emulator_type resolved = requested;
 
-#if EKA2L1_PLATFORM(IOS) && !EKA2L1_IOS_SIMULATOR_DYNARMIC
-        if (requested == arm_emulator_type::dynarmic || requested == arm_emulator_type::r12l1
-            || requested == arm_emulator_type::unicorn) {
-            reason = "no-jit-on-ios-device (no MAP_JIT entitlement path yet)";
+#if EKA2L1_PLATFORM(IOS)
+        if (requested == arm_emulator_type::r12l1 || requested == arm_emulator_type::unicorn) {
+            reason = "backend not available on iOS";
+            resolved = arm_emulator_type::dyncom;
+        } else if (requested == arm_emulator_type::dynarmic && !host_can_jit()) {
+#if EKA2L1_IOS_DYNARMIC
+            reason = "process has no JIT permission (needs sideload + debugger/JIT enabler)";
+#else
+            reason = "JIT not compiled into this build (App Store / TestFlight)";
+#endif // EKA2L1_IOS_DYNARMIC
             resolved = arm_emulator_type::dyncom;
         }
 #else

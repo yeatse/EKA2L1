@@ -189,6 +189,18 @@ final class EKA2L1Bridge {
         emulator.applyConfigSnapshot(snapshot)
     }
 
+    // YES when this build carries the dynarmic JIT (sideload/simulator builds
+    // only; App Store / TestFlight builds compile without it).
+    var jitCompiledIn: Bool {
+        emulator.jitCompiledIn
+    }
+
+    // YES when the running process additionally has JIT permission (debugger /
+    // JIT enabler). Without it the emulator falls back to the interpreter.
+    var jitAvailable: Bool {
+        emulator.jitAvailable
+    }
+
     func testVibration() {
         emulator.testVibration()
     }
