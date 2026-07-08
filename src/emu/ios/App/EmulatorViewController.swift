@@ -138,6 +138,21 @@ private final class EKA2L1RenderView: UIView {
     // exposed game area so guest touch input still works.
     var keypadHitRegion: CGRect = .null
 
+    // When the guest handles touch itself (fullscreen layout, e.g. Angry Birds),
+    // the keypad gesture shortcuts are disabled so native multi-touch — pinch to
+    // zoom, press-drag-release aiming — reaches the guest instead of being
+    // cancelled or collapsed into a single Up/Down/Select key.
+    var forwardsRawTouch = false {
+        didSet {
+            guard forwardsRawTouch != oldValue else { return }
+            longPressRecognizer.isEnabled = !forwardsRawTouch
+            pinchRecognizer.isEnabled = !forwardsRawTouch
+        }
+    }
+
+    private let longPressRecognizer = UILongPressGestureRecognizer()
+    private let pinchRecognizer = UIPinchGestureRecognizer()
+
     override class var layerClass: AnyClass {
         CAEAGLLayer.self
     }
@@ -161,12 +176,12 @@ private final class EKA2L1RenderView: UIView {
         backgroundColor = .black
         eaglLayer.isOpaque = true
 
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.45
-        addGestureRecognizer(longPress)
+        longPressRecognizer.addTarget(self, action: #selector(handleLongPress(_:)))
+        longPressRecognizer.minimumPressDuration = 0.45
+        addGestureRecognizer(longPressRecognizer)
 
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-        addGestureRecognizer(pinch)
+        pinchRecognizer.addTarget(self, action: #selector(handlePinch(_:)))
+        addGestureRecognizer(pinchRecognizer)
     }
 
     @available(*, unavailable)
@@ -361,6 +376,14 @@ final class EmulatorViewController: UIViewController {
             }
         }
     }
+    // Forwarded to the render view; see EKA2L1RenderView.forwardsRawTouch.
+    var forwardsRawTouch = false {
+        didSet {
+            if isViewLoaded {
+                gameView.forwardsRawTouch = forwardsRawTouch
+            }
+        }
+    }
     private var launched = false
     private let controllerInput = ControllerInputBridge()
     private var gameView: EKA2L1RenderView {
@@ -393,6 +416,7 @@ final class EmulatorViewController: UIViewController {
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         renderView.anchorsDisplayTop = anchorsDisplayTop
         renderView.keypadHitRegion = keypadHitRegion
+        renderView.forwardsRawTouch = forwardsRawTouch
         view = renderView
     }
 

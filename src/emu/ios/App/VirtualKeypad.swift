@@ -98,6 +98,17 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
     var allowsFreeRotation: Bool {
         self == .fullscreen
     }
+
+    // Touch-driven guests (fullscreen layout on S60v5 / Symbian^3+) drive their
+    // own UI — including native multi-touch such as Angry Birds' pinch-to-zoom
+    // and press-drag-release slingshot aiming — straight from the screen. The
+    // render view's long-press→Select and pinch→up/down gesture shortcuts only
+    // make sense for keypad-driven guests; on a touch guest they would cancel
+    // the in-flight touches (cancelsTouchesInView) and swallow the second
+    // finger, so raw touches must pass through untouched instead.
+    var guestHandlesRawTouch: Bool {
+        self == .fullscreen
+    }
 }
 
 // What the keypad's system menu key needs from the hosting screen: the layout

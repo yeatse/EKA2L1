@@ -71,6 +71,7 @@ struct EmulatorView: View {
                     uid: uid,
                     host: hostProxy,
                     anchorsDisplayTop: keypadLayout.prefersTopAnchoredDisplay && showVirtualKeypad,
+                    forwardsRawTouch: keypadLayout.guestHandlesRawTouch,
                     keypadHitRegion: keypadFrame,
                     onAppExit: { fatalDetails in
                         if let fatalDetails {
@@ -416,6 +417,9 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
     let host: EmulatorHostProxy
     let anchorsDisplayTop: Bool
+    // When the guest drives its own touch UI (fullscreen layout), the render
+    // view forwards raw multi-touch and drops the keypad gesture shortcuts.
+    let forwardsRawTouch: Bool
     // Screen-space region covered by the keypad overlay; the render view yields
     // touches there so the keys (drawn above it) receive them.
     let keypadHitRegion: CGRect
@@ -425,6 +429,7 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
         let controller = EmulatorViewController(uid: uid)
         controller.onAppExit = onAppExit
         controller.anchorsDisplayTop = anchorsDisplayTop
+        controller.forwardsRawTouch = forwardsRawTouch
         controller.keypadHitRegion = keypadHitRegion
         host.viewController = controller
         return controller
@@ -433,6 +438,7 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {
         uiViewController.onAppExit = onAppExit
         uiViewController.anchorsDisplayTop = anchorsDisplayTop
+        uiViewController.forwardsRawTouch = forwardsRawTouch
         uiViewController.keypadHitRegion = keypadHitRegion
         host.viewController = uiViewController
     }
