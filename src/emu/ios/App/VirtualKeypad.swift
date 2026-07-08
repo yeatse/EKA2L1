@@ -77,10 +77,26 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
         self == .full || self == .compact
     }
 
-    // The N-Gage layout is designed around a landscape screen; entering it
-    // requests a rotation.
-    var prefersLandscape: Bool {
-        self == .ngage
+    // Interface orientations the emulator screen permits while this layout is
+    // active. The keypad layouts are drawn for one fixed orientation and pin
+    // it (classic/compact portrait, N-Gage landscape). The fullscreen (touch)
+    // layout carries no keypad furniture, so it lets the user rotate freely —
+    // a landscape guest such as Angry Birds then fills the screen once the
+    // device is turned sideways instead of sitting letterboxed in portrait.
+    var supportedOrientations: UIInterfaceOrientationMask {
+        switch self {
+        case .full, .compact: return .portrait
+        case .ngage: return .landscape
+        case .fullscreen: return .allButUpsideDown
+        }
+    }
+
+    // True when the layout follows the physical device rather than pinning a
+    // single orientation. Free-rotation layouts must not force a rotation on
+    // entry — they leave the current orientation alone and just widen the
+    // allowed set.
+    var allowsFreeRotation: Bool {
+        self == .fullscreen
     }
 }
 

@@ -102,8 +102,12 @@ final class EKA2L1Bridge {
         }
     }
 
-    func launchApp(uid: UInt32) -> Bool {
-        emulator.launchApp(withUID: uid)
+    // Launch runs off the main thread inside the bridge (it drives synchronous
+    // graphics commands that would deadlock a main-thread caller against the
+    // graphics worker's main-queue CAEAGLLayer attach). The completion, when
+    // provided, is delivered back on the main queue with the launch result.
+    func launchApp(uid: UInt32, completion: ((Bool) -> Void)? = nil) {
+        emulator.launchApp(withUID: uid, completion: completion)
     }
 
     // Set/clear the callback fired (on the main queue) when the running app's

@@ -140,10 +140,10 @@ struct EmulatorView: View {
                 Self.launchLayoutApplied = true
                 layoutSelection.wrappedValue = forced.rawValue
             }
-            DisplayOrientation.lock(landscape: keypadLayout.prefersLandscape)
+            DisplayOrientation.apply(keypadLayout)
         }
         .onChange(of: keypadLayout) { newLayout in
-            DisplayOrientation.lock(landscape: newLayout.prefersLandscape)
+            DisplayOrientation.apply(newLayout)
         }
         .onDisappear {
             // The emulator screen was popped/dismissed (exit menu item or a
@@ -224,10 +224,12 @@ struct EmulatorView: View {
         EKA2L1Bridge.shared.closeRunningApp()
         Task { @MainActor in
             try? await Task.sleep(until: .now + .milliseconds(350))
-            if EKA2L1Bridge.shared.launchApp(uid: uid) {
-                sessionMessage = String(localized: "emulator.restart.done")
-            } else {
-                sessionMessage = String(localized: "emulator.restart.failed")
+            EKA2L1Bridge.shared.launchApp(uid: uid) { success in
+                Task { @MainActor in
+                    sessionMessage = String(localized: success
+                        ? "emulator.restart.done"
+                        : "emulator.restart.failed")
+                }
             }
         }
     }
@@ -285,14 +287,48 @@ struct EmulatorView: View {
 // this mask from the (nonisolated) UIKit callback, hence the plain global.
 nonisolated(unsafe) var lockedInterfaceOrientationMask: UIInterfaceOrientationMask = .portrait
 
+// SwiftUI hosts every screen in system UIHostingControllers we can't subclass,
+// and their supportedInterfaceOrientations otherwise caps the window at portrait
+// (a navigation push settles there), so requestGeometryUpdate and autorotation
+// both refuse landscape even when the app delegate allows it. Route each hosting
+// controller in the live chain through the single global authority the first
+// time we see it. The concrete UIHostingController<…> classes are only known at
+// runtime, hence the per-class swizzle rather than a subclass or Info.plist cap.
+@MainActor private var routedOrientationClasses = Set<ObjectIdentifier>()
+
+@MainActor private func routeOrientationThroughLiveControllers(from root: UIViewController?) {
+    var vc = root
+    var depth = 0
+    while let current = vc, depth < 12 {
+        let cls: AnyClass = type(of: current)
+        if routedOrientationClasses.insert(ObjectIdentifier(cls)).inserted,
+           let method = class_getInstanceMethod(cls, #selector(getter: UIViewController.supportedInterfaceOrientations)) {
+            let block: @convention(block) (UIViewController) -> UIInterfaceOrientationMask = { _ in
+                lockedInterfaceOrientationMask
+            }
+            method_setImplementation(method, imp_implementationWithBlock(block))
+        }
+        vc = current.presentedViewController ?? current.children.last
+        depth += 1
+    }
+}
+
 // Pins/releases the interface orientation for the emulator screen (frame +
 // keypad).
 @MainActor
 enum DisplayOrientation {
-    // Lock the interface to the layout's orientation and rotate to it now.
-    static func lock(landscape: Bool) {
-        lockedInterfaceOrientationMask = landscape ? .landscape : .portrait
-        request(landscape: landscape)
+    // Apply a layout's permitted orientations. A pinned layout (classic/compact
+    // portrait, N-Gage landscape) rotates to its orientation immediately; the
+    // fullscreen touch layout widens the allowed set and follows the physical
+    // device, so the user can turn a landscape guest sideways to fill the screen.
+    static func apply(_ layout: KeypadLayout) {
+        lockedInterfaceOrientationMask = layout.supportedOrientations
+        routeOrientationThroughLiveControllers(from: activeScene?.keyWindow?.rootViewController)
+        rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        // A free-rotation layout keeps the current orientation and lets the user
+        // turn the device; a pinned layout rotates to its orientation now.
+        guard !layout.allowsFreeRotation else { return }
+        request(landscape: layout.supportedOrientations.contains(.landscape))
     }
 
     // Release back to portrait when leaving the emulator (home screen is
@@ -304,14 +340,16 @@ enum DisplayOrientation {
 
     private static func request(landscape: Bool) {
         guard let scene = activeScene else { return }
+        routeOrientationThroughLiveControllers(from: scene.keyWindow?.rootViewController)
         rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait))
-        // The request is rejected while a navigation transition is running
-        // (typical when the emulator screen is being pushed), so confirm after
-        // the transition settles and re-request once if it didn't stick.
+        // The request is rejected while a navigation transition is running (the
+        // emulator screen is usually mid-push), so confirm after it settles and
+        // re-request once if it didn't stick.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
             guard let scene = activeScene,
                   scene.interfaceOrientation.isLandscape != landscape else { return }
+            routeOrientationThroughLiveControllers(from: scene.keyWindow?.rootViewController)
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait))
         }
     }

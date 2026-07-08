@@ -95,8 +95,14 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // Trigger applist rescan + return the resulting (uid, name) list.
 - (NSArray<EKA2L1AppEntry *> *)rescanApps;
 
-// Launch a previously-listed app.
-- (BOOL)launchAppWithUID:(uint32_t)uid;
+// Launch a previously-listed app. Runs off the main thread: binding the
+// graphics driver / setting the screen mode issues synchronous graphics
+// commands, and the graphics worker thread bounces the CAEAGLLayer attach back
+// onto the main queue (an iOS-26 hard requirement). Driving the launch on the
+// main thread would deadlock those two against each other, so the work runs on
+// a serial control queue and `completion` (if given) fires on the main queue
+// with the launch result. Set appExitHandler before calling.
+- (void)launchAppWithUID:(uint32_t)uid completion:(nullable void (^)(BOOL success))completion;
 
 // Invoked on the main queue when the currently-running app's process exits —
 // whether it left normally (Exit soft key), was killed, or panicked. The

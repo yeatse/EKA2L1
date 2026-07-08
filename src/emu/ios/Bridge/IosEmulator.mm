@@ -671,6 +671,8 @@ namespace eka2l1::ios {
 // identifies the launch the logon belonged to, so a stale re-fire is dropped.
 - (void)handleRunningAppExitedForGeneration:(std::uint64_t)generation
                                fatalDetails:(nullable NSString *)fatalDetails;
+// Synchronous launch body, run off the main thread by launchAppWithUID:completion:.
+- (BOOL)runLaunchAppWithUID:(uint32_t)uid;
 @end
 
 @implementation EKA2L1Emulator {
@@ -1275,7 +1277,30 @@ namespace eka2l1::ios {
     return out;
 }
 
-- (BOOL)launchAppWithUID:(uint32_t)uid {
+- (void)launchAppWithUID:(uint32_t)uid completion:(void (^)(BOOL))completion {
+    // Serialize launches and keep them off the main thread. The launch path
+    // issues synchronous graphics commands (bind_graphics_driver ->
+    // set_screen_mode -> create_bitmap) while the graphics worker thread bounces
+    // the CAEAGLLayer attach back onto the main queue via dispatch_sync. If the
+    // launch ran on the main thread the two would deadlock: main blocks on the
+    // graphics thread, which blocks on a main queue that will never drain. Off
+    // the main thread the main run loop stays free to service that bounce.
+    static dispatch_queue_t control_queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        control_queue = dispatch_queue_create("com.eka2l1.emulator.control", DISPATCH_QUEUE_SERIAL);
+    });
+    dispatch_async(control_queue, ^{
+        BOOL ok = [self runLaunchAppWithUID:uid];
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(ok);
+            });
+        }
+    });
+}
+
+- (BOOL)runLaunchAppWithUID:(uint32_t)uid {
     if (!_state || !_state->symsys) {
         return NO;
     }

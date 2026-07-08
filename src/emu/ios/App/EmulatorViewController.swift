@@ -377,6 +377,17 @@ final class EmulatorViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // The emulator screen's permitted orientations are owned by the keypad
+    // layout (see DisplayOrientation). requestGeometryUpdate validates against
+    // the view-controller chain, so this must widen with the layout — otherwise
+    // the SwiftUI host caps the screen at portrait and a fullscreen (touch)
+    // layout can't rotate a landscape guest sideways.
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        lockedInterfaceOrientationMask
+    }
+
+    override var shouldAutorotate: Bool { true }
+
     override func loadView() {
         let renderView = EKA2L1RenderView(frame: UIScreen.main.bounds)
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -404,7 +415,7 @@ final class EmulatorViewController: UIViewController {
             EKA2L1Bridge.shared.setAppExitHandler { [weak self] fatalDetails in
                 self?.handleAppExited(fatalDetails: fatalDetails)
             }
-            _ = EKA2L1Bridge.shared.launchApp(uid: uid)
+            EKA2L1Bridge.shared.launchApp(uid: uid)
         }
     }
 
