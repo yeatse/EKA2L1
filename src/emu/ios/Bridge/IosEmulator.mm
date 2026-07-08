@@ -1263,11 +1263,13 @@ namespace eka2l1::ios {
         entry.uid = reg.mandatory_info.uid;
         std::string name = eka2l1::common::ucs2_to_utf8(reg.mandatory_info.long_caption.to_std_string(nullptr));
         entry.name = [NSString stringWithUTF8String:name.c_str()];
-        // Mirror the Qt/Android heuristic: a built-in system app lands on the
-        // ROM drive (Z) and uses a UID below the user-installable range.
-        constexpr std::uint32_t WARE_APP_UID_START = 0x10300000;
-        entry.system = (reg.land_drive == drive_z) &&
-                       (reg.mandatory_info.uid < WARE_APP_UID_START);
+        // Anything staged on the ROM drive (Z) ships with the firmware, so it is
+        // a built-in/system app. User-installed packages land on a writable
+        // drive (C/E). The iOS home screen hides system apps by default and only
+        // offers uninstall for user apps, so treat the land drive as the sole
+        // signal — the Qt UID-range check let ROM apps with high UIDs slip
+        // through the "hide system apps" filter.
+        entry.system = (reg.land_drive == drive_z);
         [out addObject:entry];
     }
     return out;

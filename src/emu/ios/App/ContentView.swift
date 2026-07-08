@@ -217,10 +217,18 @@ struct ContentView: View {
         }
     }
 
-    // Context-menu content for an app. Only user-installed apps can be removed;
-    // ROM/system apps get no menu items (the menu simply won't appear).
+    // Context-menu content for an app. Every app exposes a "copy UID" entry
+    // (the hex UID doubles as the label); only user-installed apps additionally
+    // offer uninstall — ROM/system apps cannot be removed.
     @ViewBuilder
-    private func uninstallMenu(for app: EKA2L1AppItem) -> some View {
+    private func appContextMenu(for app: EKA2L1AppItem) -> some View {
+        Button {
+            UIPasteboard.general.string = uidHexString(app.uid)
+            banner = "Copied \(uidHexString(app.uid))."
+        } label: {
+            Label(uidHexString(app.uid), systemImage: "doc.on.doc")
+        }
+
         if !app.system {
             Button(role: .destructive) {
                 pendingUninstall = app
@@ -228,6 +236,11 @@ struct ContentView: View {
                 Label("Uninstall", systemImage: "trash")
             }
         }
+    }
+
+    // Canonical hex form used both on the menu label and on the clipboard.
+    private func uidHexString(_ uid: UInt32) -> String {
+        String(format: "0x%08X", uid)
     }
 
     @ViewBuilder
@@ -288,14 +301,16 @@ struct ContentView: View {
                     Text(emptyAppsHint)
                         .font(.caption).foregroundColor(.secondary)
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 16)],
+                    // Narrower columns so a phone-width screen fits four icons
+                    // per row (72pt icon + label, ~4pt slack).
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 76), spacing: 12)],
                               spacing: 16) {
                         ForEach(visibleApps, id: \.uid) { app in
                             NavigationLink(destination: EmulatorView(uid: app.uid)) {
                                 AppGridCell(uid: app.uid, name: app.name)
                             }
                             .buttonStyle(.plain)
-                            .contextMenu { uninstallMenu(for: app) }
+                            .contextMenu { appContextMenu(for: app) }
                         }
                     }
                     .id(currentIndex)
@@ -319,7 +334,7 @@ struct ContentView: View {
                     NavigationLink(destination: EmulatorView(uid: app.uid)) {
                         AppRow(uid: app.uid, name: app.name)
                     }
-                    .contextMenu { uninstallMenu(for: app) }
+                    .contextMenu { appContextMenu(for: app) }
                 }
             }
         }
