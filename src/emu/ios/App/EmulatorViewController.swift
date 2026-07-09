@@ -138,21 +138,6 @@ private final class EKA2L1RenderView: UIView {
     // exposed game area so guest touch input still works.
     var keypadHitRegion: CGRect = .null
 
-    // When the guest handles touch itself (fullscreen layout, e.g. Angry Birds),
-    // the keypad gesture shortcuts are disabled so native multi-touch — pinch to
-    // zoom, press-drag-release aiming — reaches the guest instead of being
-    // cancelled or collapsed into a single Up/Down/Select key.
-    var forwardsRawTouch = false {
-        didSet {
-            guard forwardsRawTouch != oldValue else { return }
-            longPressRecognizer.isEnabled = !forwardsRawTouch
-            pinchRecognizer.isEnabled = !forwardsRawTouch
-        }
-    }
-
-    private let longPressRecognizer = UILongPressGestureRecognizer()
-    private let pinchRecognizer = UIPinchGestureRecognizer()
-
     override class var layerClass: AnyClass {
         CAEAGLLayer.self
     }
@@ -175,13 +160,6 @@ private final class EKA2L1RenderView: UIView {
         isOpaque = true
         backgroundColor = .black
         eaglLayer.isOpaque = true
-
-        longPressRecognizer.addTarget(self, action: #selector(handleLongPress(_:)))
-        longPressRecognizer.minimumPressDuration = 0.45
-        addGestureRecognizer(longPressRecognizer)
-
-        pinchRecognizer.addTarget(self, action: #selector(handlePinch(_:)))
-        addGestureRecognizer(pinchRecognizer)
     }
 
     @available(*, unavailable)
@@ -260,16 +238,6 @@ private final class EKA2L1RenderView: UIView {
                 pointerId: UInt(bitPattern: ObjectIdentifier(touch))
             )
         }
-    }
-
-    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
-        EKA2L1Bridge.shared.tapRawKey(Scan.select)
-    }
-
-    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        guard gesture.state == .ended else { return }
-        EKA2L1Bridge.shared.tapRawKey(gesture.scale >= 1.0 ? Scan.up : Scan.down)
     }
 
     // User-edited keyboard binding (Settings > Button mapping), keyed by HID
@@ -376,14 +344,6 @@ final class EmulatorViewController: UIViewController {
             }
         }
     }
-    // Forwarded to the render view; see EKA2L1RenderView.forwardsRawTouch.
-    var forwardsRawTouch = false {
-        didSet {
-            if isViewLoaded {
-                gameView.forwardsRawTouch = forwardsRawTouch
-            }
-        }
-    }
     private var launched = false
     private let controllerInput = ControllerInputBridge()
     private var gameView: EKA2L1RenderView {
@@ -416,7 +376,6 @@ final class EmulatorViewController: UIViewController {
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         renderView.anchorsDisplayTop = anchorsDisplayTop
         renderView.keypadHitRegion = keypadHitRegion
-        renderView.forwardsRawTouch = forwardsRawTouch
         view = renderView
     }
 
