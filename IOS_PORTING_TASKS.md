@@ -64,6 +64,7 @@
   - [阶段 3 修复清单（按出现顺序）](#阶段-3-修复清单按出现顺序)
   - [阶段 3 已知风险](#阶段-3-已知风险)
 - [阶段 4：dynarmic JIT + 发布通道 + CI](#阶段-4dynarmic-jit--发布通道--ci)
+- [阶段 5：系统能力对齐 Android](#阶段-5系统能力对齐-android)
 - [变更日志](#变更日志)
 
 ---
@@ -77,6 +78,7 @@
 | 2 | iOS 前端壳 + GLES 渲染上下文，能显示一帧并完成一次真实交互 | ✅（Calculator 真实 UI 出帧、稳定 ≥10s、SIS 安装后 Final Battle 进 applist 并能 launch；详见 3.2 / 阶段 3 修复清单第 3 条） |
 | 3 | 解锁 mount 链路 + 完成阶段 2 验收 + 音频 / 振动 / 文件导入 / 设置 / 图标完整体验 | 🟡 |
 | 4 | dynarmic JIT（MAP_JIT / W^X / entitlement）+ 发布通道（开发者签名 / TrollStore / 越狱）+ CI | ⬜ |
+| 5 | 系统能力对齐 Android（防休眠 / 相机 / 系统语言 / 蓝牙联机等） | 🟡 |
 
 > 产品化（App Store 上架 + 面向大众）的差距清单单独维护在
 > [`docs/ios-productization-checklist.md`](./docs/ios-productization-checklist.md)（按 P0–P3 优先级；
@@ -535,6 +537,42 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 > 进入此阶段时再拆。
 >
 > 已落地：`EKA2L1_IOS_DYNARMIC` 统一开关（模拟器默认 ON、真机仅 unsigned/sideload 构建 ON，TestFlight/App Store 不编入任何 JIT 代码）+ 运行时 JIT 权限探测 + 设置页 dynarmic 开关（详见变更日志 2026-07-07）。遗留：dynarmic 的 A32 崩溃（Calculator SIGSEGV）未修，故 dyncom 仍是默认，JIT 为实验性 opt-in；真机 JIT-enabled 环境实测与 benchmark 未做。
+
+---
+
+## 阶段 5：系统能力对齐 Android
+
+### 目标
+
+盘点并补齐 iOS 相对 Android 前端缺失的平台系统能力（盘点日期 2026-07-10）。已确认对齐、无需动作的能力：传感器（两端均只有加速度计，通道模型一致）、振动、音频输出（AudioUnit vs cubeb）、FFmpeg 音视频解码、输入/是否对话框、截图、手柄、虚拟键盘、E 盘挂载。
+
+### 子任务（按实施顺序）
+
+#### 5.1 防休眠（wakelock 对标）⬜
+
+- Android 有 `enable-wakelock` 偏好（`FLAG_KEEP_SCREEN_ON`）；iOS 全工程无 `idleTimerDisabled` 调用，长时间不触屏（过场动画、重力感应玩法）会自动锁屏。
+- 修法：模拟器界面激活期间 `UIApplication.shared.isIdleTimerDisabled = true`，离开/退后台恢复。
+
+#### 5.2 相机后端（ECam / AVFoundation）⬜
+
+- 驱动层唯一整块缺失的后端：Android 有 `drivers/src/camera/backend/android/`（Camera2 取景器帧 + 拍照回调）+ `EmulatorCamera.java`；iOS 落到 `camera_collection_null`，拍照类应用与用相机的游戏无画面。
+- 修法：新增 AVFoundation `camera_collection_ios` / `camera_ios`（接口对齐 `drivers::camera::collection` / `instance`），接入 `camera_collection.cpp` 工厂与 drivers CMake，`Info.plist` 补 `NSCameraUsageDescription`。
+
+#### 5.3 系统语言设置 ⬜
+
+- Android 经 `getLanguageIds` / `getLanguageNames` / `setLanguage` 暴露 guest 系统语言；iOS `currentConfigSnapshot` 不含语言，用户只能手改 `config.yml`。影响 guest 应用显示语言，是缺失配置项中影响最大的。
+- 修法：桥接层暴露语言列表 / 当前语言 / 设置语言，SettingsView 增加选择器，持久化并生效。
+
+#### 5.4 蓝牙联机（BT Netplay）⬜
+
+- 核心 `btmidman_inet` 协议栈跨平台、iOS 也编译，但三处断链：① `miniupnpc` 在 iOS 被排除构建（`src/external/CMakeLists.txt`，`upnp.cpp` 在 iOS 是 no-op，任务 0.5 遗留）；② 前端无任何配置 UI（Android 有整套 `BTNetplaySettingsFragment`：中央服务器 URL、直连好友 IP、端口偏移、密码、发现模式）；③ `Info.plist` 无 `NSLocalNetworkUsageDescription`，真机本地 UDP 直连/广播被系统拦截。N-Gage 联机对战在 iOS 实际不可用。
+
+### 待排期（暂不实施，视反馈提升优先级）
+
+- **每应用设置 UI**：核心 `config::app_settings` 已实例化（手放配置文件会生效），但无编辑入口；Android 经 `updateAppSetting` + AppDataStore 暴露 per-app FPS / time delay / 屏幕旋转 / upscale / filter shader / child-inherit。
+- **其余系统配置项 UI**：IMEI、MMC ID、RTOS level、MIDI 后端选择（tsf/minibae）、屏幕缓冲同步。
+- **SIS 包管理 + N-Gage 2.0 license**：Android 有 `getPackages` / `uninstallPackage`（SIS 注册包粒度）与 `installNG2Licenses` / `getFailedInstalledLicenseGames`；iOS 只有按 app UID 卸载与经典 N-Gage 安装。
+- **miniBAE HSB 音色库**：iOS 只 stage 了 `defaultbank.sf2`，切 minibae 后端会缺 `defaultbank.hsb`（默认 tsf 不受影响）。
 
 ---
 
