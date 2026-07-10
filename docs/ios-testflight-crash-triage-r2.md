@@ -91,6 +91,37 @@ fbs server 连同它的 `allocator_lock_` 已被释放 → 锁已释放的 mutex
 `dispatch_sync` 回主队列挂接 CAEAGLLayer，阻塞即死锁（同 [[x7-calc-launch-deadlock]] 的锁形）。
 `ios/Bridge/IosEmulator.mm`。
 
+### R7. 音频渲染线程 vs 拆除顺序（`EKA2L1-2026-07-10-155539.ips`，退出游戏后切设备偶现）
+
+```
+崩溃线程 AURemoteIO::IOThread：SIGABRT，demangling_terminate_handler（未捕获 C++ 异常）
+  ← AudioConverterFillComplexBufferRealtimeSafe（我们的 output_render_cb 输入回调内抛出）
+thread 10（user-initiated 队列 = switchDevice）：卡在 AURemoteIO::Stop 的 mach_msg 等待
+  ← EKA2L1 帧（bootDeviceAtIndex → ~system_impl → dispatcher shutdown → 音频流拆除）
+```
+
+**根因**：`~dsp_epoc_stream` 只调 `ll_stream_->stop()`——那是**虚拟 stop**（清 buffer、还把
+`more_requested` 复位，反而重新武装 more-buffer 回调），硬件 AudioUnit 仍在跑。随后成员逆序析构：
+`lock_`（mutex）先死，真正同步停硬件的 `ll_stream_`（`~dsp_output_stream_shared → stream_->stop()`，
+即阻塞等待渲染周期结束的 `AudioOutputUnitStop`）最后死。窗口期内渲染回调进来：buffer 已空 → 触发
+more-buffer lambda → `std::lock_guard(epoc_stream->lock_)` 锁**已析构的 mutex** → libc++ 抛
+`std::system_error` → 异常穿过 CoreAudio 的 C 回调边界 → `std::terminate`。
+
+**修复原则（不是 try/catch）**：`AudioOutputUnitStop` 同步返回即保证回调不再执行——**先停硬件流，
+再析构回调可达的一切状态**。按此修四处（后三处为同族审计发现，同一窗口不同死法）：
+
+1. `~dsp_epoc_stream`：析构体内显式 `ll_stream_.reset()`，让硬件停流发生在 `lock_`/`copied_info_`
+   仍存活时（`dispatch/src/audio.cpp`）。guest 运行期 `eaudio_dsp_stream_destroy` 同样受益。
+2. `~dsp_epoc_player`：notify 回调解引用 `eplayer->impl_`，而 `unique_ptr` 析构**先置空指针再跑
+   deleter**，默认成员析构留下 null 解引用窗口；改为 `impl_->stop()` + `impl_.reset()`。
+3. `~player_tsf`：原先先 `tsf_close(synth_)`/`tml_free` 后停流，回调期间 `tsf_render` 写已释放内存
+   （宿主堆损坏的现成来源，MIDI 在 Symbian 游戏里极常见）；改为先停流（`player_tsf.cpp`）。
+4. `~player_ffmpeg`：`deinit()` 先释放解码上下文、停流在基类 `~player_shared` 里更晚，且派生析构结束后
+   vtable 回滚令 `get_more_data` 变纯虚；改为析构第一步先停流（`player_ffmpeg.cpp`）。
+
+后两处跨平台生效（桌面 cubeb 后端同一回调形状）。未加 try/catch：锁死 mutex 是 UB，抛异常只是这次
+恰好的死法，捕获只会把崩溃变成静默损坏；顺序正确后回调根本无机会碰到半死对象。
+
 ### 附带：sensor 空驱动空指针（iOS 必崩点）
 
 iOS 前端未接 sensor driver，guest 一查询传感器通道（`query_channels` / `open_channel`）即解引用 null。
