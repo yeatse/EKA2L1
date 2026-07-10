@@ -164,5 +164,7 @@
             </dict>
         </dict>
     </array>
+    <key>NSCameraUsageDescription</key>
+    <string>Symbian apps running in the emulator can use the camera for their viewfinder and photo capture features.</string>
 </dict>
 </plist>

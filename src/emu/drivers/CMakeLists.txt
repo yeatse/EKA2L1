@@ -136,10 +136,11 @@ if (ANDROID)
         src/sensor/backend/android/sensor_android.h)
 elseif (EKA2L1_IOS)
     # iOS sensor backend rides on CoreMotion (accelerometer, parity with the
-    # Android backend). Camera keeps the null backend from the unconditional
-    # source block. Input/window handling is provided by the iOS frontend
-    # (no SDL2, no shared emu_window.cpp).
+    # Android backend), camera on AVFoundation. Input/window handling is
+    # provided by the iOS frontend (no SDL2, no shared emu_window.cpp).
     target_sources(drivers PRIVATE
+        include/drivers/camera/backend/ios/camera_ios.h
+        src/camera/backend/ios/camera_ios.mm
         src/sensor/backend/ios/sensor_ios.h
         src/sensor/backend/ios/sensor_ios.mm)
 else()
@@ -239,7 +240,11 @@ if (EKA2L1_IOS)
         "-framework AudioToolbox"
         "-framework CoreAudio"
         "-framework CoreHaptics"
-        "-framework CoreMotion")
+        "-framework CoreMotion"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreGraphics"
+        "-framework ImageIO")
 else()
     target_link_libraries(drivers PRIVATE cubeb glad)
 endif()

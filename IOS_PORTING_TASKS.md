@@ -552,10 +552,11 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 - 盘点时大小写敏感的 grep（`idleTimer`）漏掉了 `isIdleTimerDisabled`：`EmulatorView.swift` 的 `onAppear`/`onDisappear` 早已成对设置/恢复 `UIApplication.shared.isIdleTimerDisabled`，模拟器界面期间不会锁屏。无需动作。
 
-#### 5.2 相机后端（ECam / AVFoundation）⬜
+#### 5.2 相机后端（ECam / AVFoundation）🟡（已落地，待真机功能验证）
 
-- 驱动层唯一整块缺失的后端：Android 有 `drivers/src/camera/backend/android/`（Camera2 取景器帧 + 拍照回调）+ `EmulatorCamera.java`；iOS 落到 `camera_collection_null`，拍照类应用与用相机的游戏无画面。
-- 修法：新增 AVFoundation `camera_collection_ios` / `camera_ios`（接口对齐 `drivers::camera::collection` / `instance`），接入 `camera_collection.cpp` 工厂与 drivers CMake，`Info.plist` 补 `NSCameraUsageDescription`。
+- 驱动层唯一整块缺失的后端：Android 有 `drivers/src/camera/backend/android/`（Camera2 取景器帧 + 拍照回调）+ `EmulatorCamera.java`；iOS 此前落到 `camera_collection_null`，拍照类应用与用相机的游戏无画面。
+- 已落地：`drivers/{include,src}/.../camera/backend/ios/camera_ios.{h,mm}` —— `collection_ios`/`instance_ios` 对齐 Android 后端语义（索引 0=后置 1=前置、reserve 独占、7 种帧格式、尺寸阶梯对标 Camera2 列表形状）。取景器走 `AVCaptureVideoDataOutput`（BGRA→按 guest 请求缩放/转 FBS 16MU / 64K，行对齐同 Android）、拍照走 `AVCapturePhotoOutput`（JPEG/EXIF 直通或重缩放重编码；raw 格式经 CG 解码转换）；权限在 `ecam_create` 解锁内核期间信号量阻塞等待；回调采用拷贝后锁外调用，避免 Android 后端存在的 kern↔callback ABBA 死锁形。`Info.plist` 已加 `NSCameraUsageDescription`。
+- 验证：模拟器无相机设备（count=0，行为同旧 null 后端），Release 回归 8/8；device（OS64）构建通过。**遗留**：真机上找一个用取景器/拍照的 guest 应用做功能验证（iPhone Air 当前不在线）。
 
 #### 5.3 系统语言设置 ⬜
 
@@ -579,6 +580,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-07-10 | **接入 iOS 相机后端（AVFoundation，对标 Android，阶段 5.2）**：新增 `drivers/{include,src}/.../camera/backend/ios/camera_ios.{h,mm}`，`camera_collection.cpp` 工厂增 iOS 分支，drivers CMake 补 CoreMedia/CoreVideo/CoreGraphics/ImageIO，`Info.plist` 加 `NSCameraUsageDescription`。语义对齐 Android：索引 0=后置 1=前置（各至多一个）、reserve 独占、同一组 7 种帧格式与 `CAPTURE_OPTION_ALL`；取景器 `AVCaptureVideoDataOutput` BGRA→缩放→FBS 16MU/64K（行对齐同 Android），拍照 `AVCapturePhotoOutput` JPEG 直通/重编码或 CG 解码转 raw；相机权限在 `ecam_create` 已解锁内核的窗口内以信号量阻塞请求。回调设计沿用 sensor_ios 的拷贝后锁外调用，规避 Android 后端的 kern↔callback ABBA 死锁形。验证：模拟器 Release 回归 **8/8**（模拟器无相机设备，行为不变）、unsigned device 构建通过；真机 guest 相机应用功能验证待 iPhone Air 在线后补。 |
 | 2026-07-10 | **修复退出游戏后切设备闪退第二例（EGL surface 悬垂窗口指针，R8）**：`egl_surface` 持背靠窗口裸指针并注册 canvas observer，但 `~canvas_base` 从不通知/清空 observers——游戏退出销毁窗口后，未 `eglDestroySurface` 的残留 surface 在切设备拆 dispatcher 时 `remove_canvas_observer` 解引用已释放窗口（野地址 SIGSEGV，与 `.ips` 吻合；运行期 dead_pending 清理同样可触发）。修复=观察者双向解绑：`canvas_observer` 新增 `on_window_destroyed()`，`~canvas_base` 弹出并通知，`egl_surface` 置空指针（运行期使用点本就判空），跨平台生效。验证：Release 回归 **8/8** + AB（GLES 路径）**5/5**。详见 [docs/ios-testflight-crash-triage-r2.md](./docs/ios-testflight-crash-triage-r2.md) R8。 |
 | 2026-07-10 | **接入 iOS 传感器后端（CoreMotion，对标 Android）**：新增 `drivers/src/sensor/backend/ios/sensor_ios.{h,mm}`——`CMMotionManager` 加速度计，通道模型与 Android 后端一致（Nokia 5800 标定：scaled S8 ±127、量程 {19.62, 78.48} m/s²、采样率 {10,40,50} Hz），坐标系换算 = 取负 × 9.80665（iOS 报 g 且重力为负轴，Symbian/Android 报反作用力 m/s²）。工厂 `sensor_driver::instantiate()` 增 iOS 分支；前端 boot 时 `set_sensor_driver`、前后台随 `pause`/`resume` 启停、`bootDeviceAtIndex:` 重建前 pause 兼作在途回调 barrier（RAII 恢复）。锁序设计：回调收集与调用分离，避免 Android 后端存在的 kern↔sensor ABBA 死锁形；`sensor_driver` 基类补虚析构（跨平台 UB 修复）。模拟器无加速度计（查询回 0 通道，等价旧行为）；验证：Release 回归 **8/8** + AB 套件 **5/5**，真机功能验证待重力感应游戏确认。 |
 | 2026-07-10 | **修复退出游戏后切设备偶现闪退（音频渲染线程 vs 拆除顺序，R7）**：`~dsp_epoc_stream` 只做虚拟 stop，成员逆序析构令 `lock_` 先于真正停硬件的 `ll_stream_` 死亡，窗口期渲染回调锁已析构 mutex → 异常穿过 CoreAudio C 回调边界 → `std::terminate`（`.ips` 里渲染线程 SIGABRT + switchDevice 线程卡 `AURemoteIO::Stop` 完全吻合）。修复原则=先同步停硬件流再析构回调可达状态（不是 try/catch）：`~dsp_epoc_stream` 显式 `ll_stream_.reset()`；同族审计另修 `~dsp_epoc_player`（unique_ptr 先置空后跑 deleter 的 null 窗口）、`~player_tsf`（先 `tsf_close` 后停流 = 渲染期写已释放 synth，堆损坏来源）、`~player_ffmpeg`（deinit 先于基类停流 + vtable 回滚纯虚）。验证：Release `ios_regression_test.sh` **8/8**（FBattle 音频 + 退出重建路径）。详见 [docs/ios-testflight-crash-triage-r2.md](./docs/ios-testflight-crash-triage-r2.md) R7。 |
