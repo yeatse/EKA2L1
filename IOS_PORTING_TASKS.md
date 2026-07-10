@@ -548,10 +548,9 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 ### 子任务（按实施顺序）
 
-#### 5.1 防休眠（wakelock 对标）⬜
+#### 5.1 防休眠（wakelock 对标）✅（盘点误报，已存在）
 
-- Android 有 `enable-wakelock` 偏好（`FLAG_KEEP_SCREEN_ON`）；iOS 全工程无 `idleTimerDisabled` 调用，长时间不触屏（过场动画、重力感应玩法）会自动锁屏。
-- 修法：模拟器界面激活期间 `UIApplication.shared.isIdleTimerDisabled = true`，离开/退后台恢复。
+- 盘点时大小写敏感的 grep（`idleTimer`）漏掉了 `isIdleTimerDisabled`：`EmulatorView.swift` 的 `onAppear`/`onDisappear` 早已成对设置/恢复 `UIApplication.shared.isIdleTimerDisabled`，模拟器界面期间不会锁屏。无需动作。
 
 #### 5.2 相机后端（ECam / AVFoundation）⬜
 
