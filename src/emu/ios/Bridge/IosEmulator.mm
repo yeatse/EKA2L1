@@ -1854,7 +1854,15 @@ namespace eka2l1::ios {
     const std::u16string ext = eka2l1::common::lowercase_ucs2_string(
         eka2l1::path_extension(reg->icon_file_path));
 
-    const std::string cache_dir = eka2l1::add_path(_state->documents_root, "data/cache/icons");
+    // Key the debinarized-SVG cache by firmware code: the same app UID ships
+    // different icon assets per device (e.g. X7 vs 5320), and the mtime-based
+    // freshness check would otherwise keep serving the previous ROM's icon.
+    std::string cache_dir = eka2l1::add_path(_state->documents_root, "data/cache/icons");
+    auto *dvc_mngr = _state->symsys->get_device_manager();
+    if (eka2l1::device *crr_dvc = dvc_mngr ? dvc_mngr->get_current() : nullptr) {
+        cache_dir = eka2l1::add_path(cache_dir,
+            eka2l1::common::lowercase_string(crr_dvc->firmware_code));
+    }
     const std::size_t side = static_cast<std::size_t>(sizePx);
 
     NSData *out = nil;
