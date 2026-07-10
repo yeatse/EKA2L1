@@ -13,10 +13,19 @@
 #   Calculator   (0x10005902) : renders its default UI, accepts number input,
 #                               left soft key opens the Options menu, right soft
 #                               key closes it.
+#   Angry Birds  (0x20030E51) : Symbian^3 touch-guest suite (opt-in, not part
+#                               of `all`): boots the X7 (rm-707), taps the
+#                               loading screen once (used to wedge all input
+#                               permanently), then asserts the main-menu PLAY
+#                               tap and the episode-carousel swipe still
+#                               respond. Guards the raw-touch pointer path
+#                               (UITouch -> guest pointer-slot mapping).
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
 # (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
-# ImageMagick (`magick`) on PATH. It does NOT build.
+# ImageMagick (`magick`) on PATH. The angrybirds suite additionally needs the
+# X7 (rm-707) device installed with Angry Birds v2.00 on it, and the `axe` HID
+# tool (bundled inside xcodebuildmcp; auto-located). It does NOT build.
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
 # Debug (artifacts land in Debug-iphonesimulator) — build Release explicitly
@@ -27,15 +36,19 @@
 #       build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
 #
 # Usage:
-#   scripts/ios_regression_test.sh                 # run both suites
+#   scripts/ios_regression_test.sh                 # fbattle + calculator
 #   scripts/ios_regression_test.sh fbattle         # FBattle only
 #   scripts/ios_regression_test.sh calculator      # Calculator only
+#   scripts/ios_regression_test.sh angrybirds      # X7 touch suite only
 #   scripts/ios_regression_test.sh --install <path-to-EKA2L1.app> [suite]
 #
 # Env overrides:
 #   EKA2L1_BUNDLE_ID         default com.eka2l1.emulator
 #   EKA2L1_REG_OUTDIR        default /tmp/eka2l1-regression
 #   EKA2L1_REG_INGAME_WAIT   FBattle in-game dwell seconds (default 90)
+#   EKA2L1_REG_AB_ROM        Angry Birds device firmware code (default rm-707)
+#   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
+#                            seconds, each phase (default 180)
 
 set -uo pipefail
 
@@ -44,6 +57,13 @@ OUTDIR="${EKA2L1_REG_OUTDIR:-/tmp/eka2l1-regression}"
 INGAME_WAIT="${EKA2L1_REG_INGAME_WAIT:-90}"
 FBATTLE_UID="0xA0003C62"
 CALC_UID="0x10005902"
+AB_UID="0x20030E51"
+AB_ROM="${EKA2L1_REG_AB_ROM:-rm-707}"
+AB_TIMEOUT="${EKA2L1_REG_AB_TIMEOUT:-180}"
+# Full-screen transitions (splash -> menu -> episode select) repaint most of the
+# guest band; idle animations (clouds, sun rays, LOADING pulse) don't come
+# close. Used instead of SCREEN_DIFF_MIN for the Angry Birds assertions.
+AB_DIFF_MIN="${EKA2L1_REG_AB_DIFF_MIN:-150000}"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
 # clock / FPS-counter noise between captures).
@@ -125,15 +145,51 @@ shot() {
     echo "$path"
 }
 
+# launch_uid <uid> [rom] [keypad-layout]
+# Default (no layout): -EKA2L1RegressionMode forces the classic keypad layout
+# regardless of the persisted preference, so soft-key assertions stay stable no
+# matter which layout the developer last selected (lands in NSArgumentDomain,
+# so it never overwrites the saved value). With an explicit layout, RegressionMode
+# must NOT be passed — it pins classic and overrides -LaunchKeypadLayout.
 launch_uid() {
+    local uid="$1" rom="${2:-rm-409}" layout="${3:-}"
     xcrun simctl terminate "$SIM" "$BUNDLE_ID" >/dev/null 2>&1 || true
     wait_s 2
-    # -EKA2L1RegressionMode forces the classic keypad layout regardless of the
-    # persisted preference, so the soft-key assertions below stay stable no
-    # matter which layout the developer last selected (lands in NSArgumentDomain,
-    # so it never overwrites the saved value).
-    xcrun simctl launch "$SIM" "$BUNDLE_ID" -EKA2L1RegressionMode 1 -LaunchROMCode rm-409 -LaunchAppUID "$1" >/dev/null 2>&1
+    local args=(-LaunchROMCode "$rom" -LaunchAppUID "$uid")
+    if [ -n "$layout" ]; then
+        args+=(-LaunchKeypadLayout "$layout")
+    else
+        args+=(-EKA2L1RegressionMode 1)
+    fi
+    xcrun simctl launch "$SIM" "$BUNDLE_ID" "${args[@]}" >/dev/null 2>&1
 }
+
+# ---- coordinate touch (axe) -------------------------------------------------
+# Touch guests (fullscreen layout) expose no accessibility elements for the
+# guest screen, so ui-automation elementRef taps can't reach them. Drive them
+# with the AXe HID tool that ships inside xcodebuildmcp.
+
+AXE=""
+find_axe() {
+    AXE="$(command -v axe 2>/dev/null || true)"
+    [ -n "$AXE" ] && return 0
+    AXE="$(ls -t /opt/homebrew/Cellar/xcodebuildmcp/*/libexec/bundled/axe 2>/dev/null | head -1)"
+    [ -n "$AXE" ] && return 0
+    AXE="$(ls -t "$HOME"/.npm/_npx/*/node_modules/xcodebuildmcp/bundled/axe 2>/dev/null | head -1)"
+    [ -n "$AXE" ]
+}
+
+# Window size in points -> SCR_W / SCR_H (guest coords are derived from it).
+screen_size() {
+    local frame
+    frame="$("$AXE" describe-ui --udid "$SIM" 2>/dev/null | jq -r '.[0].frame | "\(.width) \(.height)"' 2>/dev/null)"
+    SCR_W="${frame%% *}"; SCR_H="${frame##* }"
+    [ -n "$SCR_W" ] && [ "$SCR_W" != null ] && [ "${SCR_W%.*}" -gt 0 ] 2>/dev/null
+}
+
+tap_xy()   { "$AXE" tap -x "$1" -y "$2" --udid "$SIM" >/dev/null 2>&1; }
+swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --udid "$SIM" >/dev/null 2>&1; }
+pt() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", a*b}'; }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
 # notation for large diffs, so coerce to a plain integer).
@@ -238,6 +294,86 @@ test_calculator() {
     assert_no_crash "$base" "Calculator"
 }
 
+test_angrybirds() {
+    echo "== Angry Birds ($AB_UID on $AB_ROM) =="
+    if ! find_axe; then
+        check FAIL "AngryBirds: axe HID tool located"
+        return
+    fi
+
+    launch_uid "$AB_UID" "$AB_ROM" fullscreen
+    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
+    local base; base="$(log_baseline)"
+
+    # 1) Wait for the first rendered guest frame (the Rovio splash). Until the
+    # guest presents, the emulator screen is solid black; the SwiftUI app list
+    # flashes for <5s at launch which the initial dwell skips past.
+    wait_s 10
+    local s_splash="" deadline=$((SECONDS+AB_TIMEOUT))
+    while [ $SECONDS -lt $deadline ]; do
+        s_splash="$(shot ab_1_splash)"
+        is_blank "$s_splash" || break
+        wait_s 5
+    done
+    if is_blank "$s_splash"; then
+        check FAIL "AngryBirds: splash rendered (boot)"
+        assert_no_crash "$base" "AngryBirds"
+        return
+    fi
+    check PASS "AngryBirds: splash rendered (boot)"
+
+    screen_size || { check FAIL "AngryBirds: read screen geometry"; return; }
+
+    # 2) Tap the loading screen once. This is the regression trigger: the
+    # UITouch identity from this tap must not poison the guest pointer slots
+    # (pre-fix it permanently killed all later gestures on Symbian^3 guests).
+    tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
+    echo "    tapped the loading screen; waiting for the main menu..."
+
+    # 3) Wait for the main menu: a full-band repaint relative to the splash.
+    local s_menu="" diff=0
+    deadline=$((SECONDS+AB_TIMEOUT))
+    while [ $SECONDS -lt $deadline ]; do
+        wait_s 8
+        s_menu="$(shot ab_2_menu)"
+        is_blank "$s_menu" && continue
+        diff="$(screen_diff_px "$s_splash" "$s_menu")"
+        [ "$diff" -ge "$AB_DIFF_MIN" ] && break
+    done
+    if [ "$diff" -lt "$AB_DIFF_MIN" ]; then
+        check FAIL "AngryBirds: reached main menu"
+        assert_no_crash "$base" "AngryBirds"
+        return
+    fi
+    check PASS "AngryBirds: reached main menu"
+    wait_s 5
+
+    # 4) PLAY sits at the centre of the letterboxed guest band (= screen
+    # centre). It must respond even though the loading screen was tapped.
+    s_menu="$(shot ab_2_menu)"
+    tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
+    wait_s 6
+    local s_episodes; s_episodes="$(shot ab_3_episodes)"
+    if [ "$(screen_diff_px "$s_menu" "$s_episodes")" -ge "$AB_DIFF_MIN" ]; then
+        check PASS "AngryBirds: PLAY tap opens episode select (touch alive after loading tap)"
+    else
+        check FAIL "AngryBirds: PLAY tap opens episode select (touch alive after loading tap)"
+    fi
+
+    # 5) Swipe the episode carousel (drag path: down -> moves -> up).
+    local y; y="$(pt "$SCR_H" 0.54)"
+    swipe_xy "$(pt "$SCR_W" 0.8)" "$y" "$(pt "$SCR_W" 0.2)" "$y" 0.5
+    wait_s 4
+    local s_swiped; s_swiped="$(shot ab_4_swiped)"
+    if [ "$(screen_diff_px "$s_episodes" "$s_swiped")" -ge "$AB_DIFF_MIN" ]; then
+        check PASS "AngryBirds: carousel swipe scrolls episodes (drag responds)"
+    else
+        check FAIL "AngryBirds: carousel swipe scrolls episodes (drag responds)"
+    fi
+
+    assert_no_crash "$base" "AngryBirds"
+}
+
 # ---- main ------------------------------------------------------------------
 
 need xcodebuildmcp; need jq; need magick; need xcrun
@@ -255,8 +391,9 @@ fi
 case "$SUITE" in
     fbattle)    test_fbattle ;;
     calculator|calc) test_calculator ;;
+    angrybirds|ab) test_angrybirds ;;
     all|"")     test_fbattle; test_calculator ;;
-    *) die "unknown suite: $SUITE (use fbattle|calculator|all)" ;;
+    *) die "unknown suite: $SUITE (use fbattle|calculator|angrybirds|all)" ;;
 esac
 
 echo
