@@ -565,9 +565,11 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 - **顺带修复跨平台缺陷**：`applist_server::app_language` 此前硬编码返回英语——AVKON 通过 apparc 的该查询决定加载哪份 `.rXX` 翻译，导致即使内核语言已切换、ROM 也带翻译，应用 UI 仍是英文；改为返回 `kern->get_current_language()`（非法/any 回退英语），三平台同收益。
 - 验证（模拟器 N95/rm-320，Release）：设置页列出 ROM 全部 6 语言，选 French 后 `config.yml` `language: 2`，重启进 Calculator 软键变 “Quitter”（calcsoft.r02 生效）；切回英语后回归 **8/8**。
 
-#### 5.4 蓝牙联机（BT Netplay）⬜
+#### 5.4 蓝牙联机（BT Netplay）🟡（已落地，待真机双机联测）
 
-- 核心 `btmidman_inet` 协议栈跨平台、iOS 也编译，但三处断链：① `miniupnpc` 在 iOS 被排除构建（`src/external/CMakeLists.txt`，`upnp.cpp` 在 iOS 是 no-op，任务 0.5 遗留）；② 前端无任何配置 UI（Android 有整套 `BTNetplaySettingsFragment`：中央服务器 URL、直连好友 IP、端口偏移、密码、发现模式）；③ `Info.plist` 无 `NSLocalNetworkUsageDescription`，真机本地 UDP 直连/广播被系统拦截。N-Gage 联机对战在 iOS 实际不可用。
+- 此前三处断链：① `miniupnpc` 在 iOS 被排除构建（`upnp.cpp` no-op，任务 0.5 遗留）；② 前端无配置 UI；③ `Info.plist` 无本地网络权限声明。
+- 已落地：① miniupnpc 纳入 iOS 构建（模拟器 + OS64 真机均编译通过），`upnp.cpp` 移除 iOS stub 走真实 Dolphin 移植实现；② SettingsView 新增 Bluetooth Netplay 区块（发现模式 Off/Direct IP/Local network/Central server、端口偏移、密码、UPnP 开关、Direct IP 好友地址增删），config snapshot 桥接 `btnet_*`/`enable_upnp`/`friend_addresses`；③ `Info.plist` 补 `NSLocalNetworkUsageDescription`。midman 在设备 boot 时读配置，改动自下次 app 启动生效（UI footer 已注明）。
+- 验证：Release 回归 8/8；UI 实测切 Direct IP → `btnet-discovery-mode: 1` 写盘、添加 192.168.1.50:35689 → `internet-bluetooth-friends` 正确序列化。**遗留**：真机双设备实际联机对战（如 N-Gage 双人游戏）未测；`btnet_password` / 中央服务器路径未实测。
 
 ### 待排期（暂不实施，视反馈提升优先级）
 
@@ -582,6 +584,7 @@ JIT 和发布通道绑在一起是因为各通道下能否拿到 JIT entitlement
 
 | 日期 | 改动 |
 |------|------|
+| 2026-07-11 | **打通 iOS 蓝牙联机（BT Netplay，阶段 5.4）**：miniupnpc 纳入 iOS 构建（去掉 `src/external`/`common` 两处 `NOT EKA2L1_IOS` 守卫，模拟器 + OS64 真机编译通过），`common/upnp.cpp` 删除 iOS no-op stub 启用真实 UPnP 端口映射；`Info.plist` 加 `NSLocalNetworkUsageDescription`；SettingsView 新增 Bluetooth Netplay 区块（发现模式四选、端口偏移、密码、UPnP、Direct IP 好友地址增删——好友地址用 addr+port 字典桥接以兼容 IPv6 冒号），config snapshot 桥接全部 `btnet_*` 字段。midman 在 boot 构建时读配置，改动自下次 app 启动生效。验证：Release 回归 **8/8**；UI 实测发现模式写盘 `btnet-discovery-mode: 1`、好友地址序列化进 `internet-bluetooth-friends`。遗留：真机双机联机对战未实测。 |
 | 2026-07-10 | **iOS 系统语言设置（阶段 5.3）+ 修复 applist AppLanguage 硬编码英语的跨平台缺陷**：桥接层新增 `availableLanguages`/`currentLanguageCode`/`setSystemLanguageCode:`（写 config + `set_system_language` + 重写 locale 内核属性，对齐 Android `set_language_current`），`bootDeviceAtIndex:` 在配置语言不属于目标设备 ROM 语言表时回退设备默认（对齐 Android `set_current_device`），SettingsView 设备区加 System language 选择器。关键根因：仅切内核语言后 guest UI 仍英文——`applist_server::app_language` stub 硬编码 ELangEnglish，而 AVKON 用它决定加载哪份 `.rXX` 翻译；改为返回 `kern->get_current_language()`（非法/any 回退英语），Qt/Android/iOS 同收益。验证（N95 模拟器 Release）：语言表列全 6 项、选 French 持久化 `language: 2`、Calculator 软键变 “Quitter”；回归 **8/8**。 |
 | 2026-07-10 | **接入 iOS 相机后端（AVFoundation，对标 Android，阶段 5.2）**：新增 `drivers/{include,src}/.../camera/backend/ios/camera_ios.{h,mm}`，`camera_collection.cpp` 工厂增 iOS 分支，drivers CMake 补 CoreMedia/CoreVideo/CoreGraphics/ImageIO，`Info.plist` 加 `NSCameraUsageDescription`。语义对齐 Android：索引 0=后置 1=前置（各至多一个）、reserve 独占、同一组 7 种帧格式与 `CAPTURE_OPTION_ALL`；取景器 `AVCaptureVideoDataOutput` BGRA→缩放→FBS 16MU/64K（行对齐同 Android），拍照 `AVCapturePhotoOutput` JPEG 直通/重编码或 CG 解码转 raw；相机权限在 `ecam_create` 已解锁内核的窗口内以信号量阻塞请求。回调设计沿用 sensor_ios 的拷贝后锁外调用，规避 Android 后端的 kern↔callback ABBA 死锁形。验证：模拟器 Release 回归 **8/8**（模拟器无相机设备，行为不变）、unsigned device 构建通过；真机 guest 相机应用功能验证待 iPhone Air 在线后补。 |
 | 2026-07-10 | **修复退出游戏后切设备闪退第二例（EGL surface 悬垂窗口指针，R8）**：`egl_surface` 持背靠窗口裸指针并注册 canvas observer，但 `~canvas_base` 从不通知/清空 observers——游戏退出销毁窗口后，未 `eglDestroySurface` 的残留 surface 在切设备拆 dispatcher 时 `remove_canvas_observer` 解引用已释放窗口（野地址 SIGSEGV，与 `.ips` 吻合；运行期 dead_pending 清理同样可触发）。修复=观察者双向解绑：`canvas_observer` 新增 `on_window_destroyed()`，`~canvas_base` 弹出并通知，`egl_surface` 置空指针（运行期使用点本就判空），跨平台生效。验证：Release 回归 **8/8** + AB（GLES 路径）**5/5**。详见 [docs/ios-testflight-crash-triage-r2.md](./docs/ios-testflight-crash-triage-r2.md) R8。 |

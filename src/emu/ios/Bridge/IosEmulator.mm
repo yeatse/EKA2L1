@@ -1849,6 +1849,13 @@ namespace eka2l1::ios {
     if (!_state) {
         return @{};
     }
+    NSMutableArray<NSDictionary *> *friends = [NSMutableArray array];
+    for (const eka2l1::config::friend_address &address: _state->conf.friend_addresses) {
+        [friends addObject:@{
+            @"addr": [NSString stringWithUTF8String:address.addr_.c_str()],
+            @"port": @(address.port_)
+        }];
+    }
     return @{
         @"audioMasterVolume": @(_state->conf.audio_master_volume),
         @"integerScaling": @(_state->conf.integer_scaling),
@@ -1858,7 +1865,13 @@ namespace eka2l1::ios {
         @"cpuBackend": [NSString stringWithUTF8String:_state->conf.cpu_backend.c_str()],
         @"jitEnabled": @(_state->conf.ios_use_jit),
         @"deviceDisplayName": [NSString stringWithUTF8String:_state->conf.device_display_name.c_str()],
-        @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()]
+        @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()],
+        @"btnetDiscoveryMode": @(_state->conf.btnet_discovery_mode),
+        @"btnetPortOffset": @(_state->conf.btnet_port_offset),
+        @"btnetPassword": [NSString stringWithUTF8String:_state->conf.btnet_password.c_str()],
+        @"btCentralServerUrl": [NSString stringWithUTF8String:_state->conf.bt_central_server_url.c_str()],
+        @"enableUpnp": @(_state->conf.enable_upnp),
+        @"btnetFriendAddresses": friends
     };
 }
 
@@ -1911,6 +1924,48 @@ namespace eka2l1::ios {
         // Re-apply live so the change takes effect without a restart.
         if (eka2l1::log::filterings && !_state->conf.log_filter.empty()) {
             eka2l1::log::filterings->parse_filter_string(_state->conf.log_filter);
+        }
+    }
+
+    // BT netplay settings. The bluetooth midman is constructed with the
+    // config on device boot, so changes here apply from the next app launch
+    // (which rebuilds the system).
+    NSNumber *btnetDiscoveryMode = snapshot[@"btnetDiscoveryMode"];
+    if (btnetDiscoveryMode) {
+        _state->conf.btnet_discovery_mode = btnetDiscoveryMode.unsignedIntValue;
+    }
+    NSNumber *btnetPortOffset = snapshot[@"btnetPortOffset"];
+    if (btnetPortOffset) {
+        _state->conf.btnet_port_offset = btnetPortOffset.unsignedIntValue;
+    }
+    NSString *btnetPassword = snapshot[@"btnetPassword"];
+    if ([btnetPassword isKindOfClass:NSString.class]) {
+        _state->conf.btnet_password = btnetPassword.UTF8String;
+    }
+    NSString *btCentralServerUrl = snapshot[@"btCentralServerUrl"];
+    if ([btCentralServerUrl isKindOfClass:NSString.class] && (btCentralServerUrl.length > 0)) {
+        _state->conf.bt_central_server_url = btCentralServerUrl.UTF8String;
+    }
+    NSNumber *enableUpnp = snapshot[@"enableUpnp"];
+    if (enableUpnp) {
+        _state->conf.enable_upnp = enableUpnp.boolValue;
+    }
+    NSArray *friendAddresses = snapshot[@"btnetFriendAddresses"];
+    if ([friendAddresses isKindOfClass:NSArray.class]) {
+        _state->conf.friend_addresses.clear();
+        for (NSDictionary *entry in friendAddresses) {
+            if (![entry isKindOfClass:NSDictionary.class]) {
+                continue;
+            }
+            NSString *addr = entry[@"addr"];
+            NSNumber *port = entry[@"port"];
+            if (![addr isKindOfClass:NSString.class] || (addr.length == 0) || !port) {
+                continue;
+            }
+            eka2l1::config::friend_address address;
+            address.addr_ = addr.UTF8String;
+            address.port_ = port.unsignedIntValue;
+            _state->conf.friend_addresses.push_back(address);
         }
     }
 

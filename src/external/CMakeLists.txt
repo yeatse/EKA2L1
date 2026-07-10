@@ -327,11 +327,7 @@ option (UPNPC_BUILD_TESTS "Build test executables" FALSE)
 option (UPNPC_BUILD_SAMPLE "Build sample executables" FALSE)
 option (UPNPC_NO_INSTALL "Disable installation" TRUE)
 
-if (NOT EKA2L1_IOS)
-    # miniupnp's CMake is not yet validated for iOS. Networking is optional;
-    # upnp.cpp ships an EKA2L1_PLATFORM(IOS) no-op until task 0.5 revisits.
-    add_subdirectory(miniupnp/miniupnpc)
-endif()
+add_subdirectory(miniupnp/miniupnpc)
 
 # libtess2
 

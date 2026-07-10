@@ -1,5 +1,12 @@
 import SwiftUI
 
+// A direct-IP netplay peer (config.yml internet-bluetooth-friends entry).
+struct BTNetFriend: Identifiable, Hashable {
+    let id = UUID()
+    var addr: String
+    var port: Int
+}
+
 struct SettingsView: View {
     @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
     @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
@@ -15,6 +22,18 @@ struct SettingsView: View {
     @State private var useJIT = false
     @State private var availableLanguages: [EKA2L1LanguageItem] = []
     @State private var systemLanguageCode = -1
+
+    // BT netplay. Mirrors the Android BTNetplaySettingsFragment surface; the
+    // bluetooth midman reads these at device boot, so edits apply from the
+    // next app launch.
+    @State private var btDiscoveryMode = 0
+    @State private var btPortOffset = 15000
+    @State private var btPassword = ""
+    @State private var btServerUrl = ""
+    @State private var btUpnp = true
+    @State private var btFriends: [BTNetFriend] = []
+    @State private var newFriendAddress = ""
+    @State private var newFriendPort = ""
     @State private var storageBytes: UInt64 = 0
     @State private var clearDataMessage: String?
     @State private var showingClearDataConfirmation = false
@@ -78,6 +97,63 @@ struct SettingsView: View {
                     EKA2L1Bridge.shared.testVibration()
                 }
             }
+            Section {
+                Picker("settings.netplay.discoveryMode", selection: $btDiscoveryMode) {
+                    Text("settings.netplay.mode.off").tag(0)
+                    Text("settings.netplay.mode.directIp").tag(1)
+                    Text("settings.netplay.mode.lan").tag(2)
+                    Text("settings.netplay.mode.server").tag(3)
+                }
+                if btDiscoveryMode != 0 {
+                    LabeledContent("settings.netplay.portOffset") {
+                        TextField("15000", value: $btPortOffset, format: .number.grouping(.never))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 100)
+                    }
+                    TextField("settings.netplay.password", text: $btPassword)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Toggle("settings.netplay.upnp", isOn: $btUpnp)
+                }
+                if btDiscoveryMode == 3 {
+                    TextField("settings.netplay.serverUrl", text: $btServerUrl)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                }
+                if btDiscoveryMode == 1 {
+                    ForEach(btFriends) { friendEntry in
+                        Text("\(friendEntry.addr) : \(String(friendEntry.port))")
+                            .font(.callout.monospacedDigit())
+                    }
+                    .onDelete { offsets in
+                        btFriends.remove(atOffsets: offsets)
+                        save()
+                    }
+                    HStack {
+                        TextField("settings.netplay.friendAddress", text: $newFriendAddress)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        TextField("settings.netplay.friendPort", text: $newFriendPort)
+                            .keyboardType(.numberPad)
+                            .frame(maxWidth: 70)
+                        Button {
+                            addFriendAddress()
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(newFriendAddress.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            } header: {
+                Text("settings.netplay")
+            } footer: {
+                if btDiscoveryMode != 0 {
+                    Text("settings.netplay.hint")
+                }
+            }
             Section("settings.peripherals") {
                 if peripheralManager.peripherals.isEmpty {
                     Text("controllerMapping.noController")
@@ -132,6 +208,11 @@ struct SettingsView: View {
         .onChange(of: nearestNeighborFiltering) { _ in save() }
         .onChange(of: hideSystemApps) { _ in save() }
         .onChange(of: deviceDisplayName) { _ in save() }
+        .onChange(of: btDiscoveryMode) { _ in save() }
+        .onChange(of: btPortOffset) { _ in save() }
+        .onChange(of: btPassword) { _ in save() }
+        .onChange(of: btServerUrl) { _ in save() }
+        .onChange(of: btUpnp) { _ in save() }
         .onChange(of: systemLanguageCode) { newCode in
             // -1 = load() hasn't found a booted device yet; don't write it back.
             if newCode >= 0, newCode != EKA2L1Bridge.shared.currentLanguageCode() {
@@ -198,6 +279,28 @@ struct SettingsView: View {
         }
         availableLanguages = EKA2L1Bridge.shared.availableLanguages()
         systemLanguageCode = EKA2L1Bridge.shared.currentLanguageCode()
+        if let value = snapshot["btnetDiscoveryMode"] as? NSNumber {
+            btDiscoveryMode = value.intValue
+        }
+        if let value = snapshot["btnetPortOffset"] as? NSNumber {
+            btPortOffset = value.intValue
+        }
+        if let value = snapshot["btnetPassword"] as? String {
+            btPassword = value
+        }
+        if let value = snapshot["btCentralServerUrl"] as? String {
+            btServerUrl = value
+        }
+        if let value = snapshot["enableUpnp"] as? NSNumber {
+            btUpnp = value.boolValue
+        }
+        if let entries = snapshot["btnetFriendAddresses"] as? [[String: Any]] {
+            btFriends = entries.compactMap { entry in
+                guard let addr = entry["addr"] as? String,
+                      let port = entry["port"] as? NSNumber else { return nil }
+                return BTNetFriend(addr: addr, port: port.intValue)
+            }
+        }
     }
 
     private func save() {
@@ -207,9 +310,26 @@ struct SettingsView: View {
             "nearestNeighborFiltering": nearestNeighborFiltering,
             "hideSystemApps": hideSystemApps,
             "jitEnabled": useJIT && EKA2L1Bridge.shared.jitCompiledIn,
-            "deviceDisplayName": deviceDisplayName
+            "deviceDisplayName": deviceDisplayName,
+            "btnetDiscoveryMode": btDiscoveryMode,
+            "btnetPortOffset": max(btPortOffset, 0),
+            "btnetPassword": btPassword,
+            "btCentralServerUrl": btServerUrl,
+            "enableUpnp": btUpnp,
+            "btnetFriendAddresses": btFriends.map { ["addr": $0.addr, "port": $0.port] }
         ]
         _ = EKA2L1Bridge.shared.applyConfigSnapshot(snapshot)
+    }
+
+    private func addFriendAddress() {
+        let addr = newFriendAddress.trimmingCharacters(in: .whitespaces)
+        guard !addr.isEmpty else { return }
+        // 35689 is the default direct-connect port the Qt frontend seeds too.
+        let port = Int(newFriendPort.trimmingCharacters(in: .whitespaces)) ?? 35689
+        btFriends.append(BTNetFriend(addr: addr, port: port))
+        newFriendAddress = ""
+        newFriendPort = ""
+        save()
     }
 
     private func refreshStorageUsage() {

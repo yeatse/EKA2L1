@@ -124,11 +124,7 @@ endif()
 target_include_directories(common PUBLIC include)
 target_link_libraries(common PUBLIC fmt miniz spdlog)
 target_link_libraries(common PRIVATE pugixml re2::re2)
-if (NOT EKA2L1_IOS)
-    # miniupnp is not built on iOS yet (task 0.5); upnp.cpp falls back to a
-    # no-op implementation when EKA2L1_PLATFORM(IOS) is true.
-    target_link_libraries(common PRIVATE miniupnpc::miniupnpc)
-endif ()
+target_link_libraries(common PRIVATE miniupnpc::miniupnpc)
 
 if (UNIX OR APPLE)
     set_property(TARGET common PROPERTY POSITION_INDEPENDENT_CODE ON)

@@ -7,18 +7,6 @@
 #include <common/log.h>
 #include <common/platform.h>
 
-#if EKA2L1_PLATFORM(IOS)
-
-// Stage-0 iOS build does not ship miniupnpc. The UPnP port-forwarding helpers
-// are only used by optional networking features and are safe to no-op here;
-// the real backend can be reinstated once miniupnp is wired up for iOS.
-namespace UPnP {
-void TryPortmapping(std::uint16_t /*port*/, bool /*is_udp*/) {}
-void StopPortmapping(std::uint16_t /*port*/, bool /*is_udp*/) {}
-}
-
-#else
-
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -183,5 +171,3 @@ void UPnP::StopPortmapping(std::uint16_t port, bool is_udp)
   s_thread = std::thread(&UnmapPortThread, port, is_udp);
   s_thread.join();
 }
-
-#endif // !EKA2L1_PLATFORM(IOS)
