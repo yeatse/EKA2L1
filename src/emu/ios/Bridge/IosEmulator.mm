@@ -10,6 +10,7 @@
 #import <MetalANGLE/MGLLayer.h>
 #endif
 
+#include <array>
 #include <atomic>
 #include <algorithm>
 #include <chrono>
@@ -683,6 +684,12 @@ namespace eka2l1::ios {
     // surface (the EAGL layer is then just a container). See context_angle.mm.
     MGLLayer *_angleLayer;
 #endif
+    // Host pointer identity (UITouch address) → guest pointer number. The guest
+    // event's ptr_num is a uint8_t indexed pointer slot on Symbian^3 (advanced
+    // pointers), so raw UITouch identities must be mapped to small stable
+    // indices with down/up pairing — mirrors Qt's map_mouse_id_to_touch_index.
+    std::array<uintptr_t, 8> _touchSlots;
+    std::mutex _touchSlotsLock;
 }
 
 + (BOOL)unzipArchiveAtPath:(NSString *)zipPath
@@ -1650,14 +1657,49 @@ namespace eka2l1::ios {
     evt.mouse_.pos_x_ = static_cast<int>(x);
     evt.mouse_.pos_y_ = static_cast<int>(y);
     evt.mouse_.raw_screen_pos_ = false;
-    // Single-touch in stage 2; the UITouch pointer hash maps to a mouse_id
-    // so window_server can still tell separate gestures apart later.
-    evt.mouse_.mouse_id = static_cast<std::uint32_t>(pointerId & 0xFFFFFFFFu);
     switch (phase) {
         case EKA2L1PointerPhaseBegan:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_press; break;
         case EKA2L1PointerPhaseMoved:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_repeat; break;
         case EKA2L1PointerPhaseEnded:     evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
         case EKA2L1PointerPhaseCancelled: evt.mouse_.action_ = eka2l1::drivers::mouse_action_release; break;
+    }
+
+    // The guest reads ptr_num as a small pointer-slot index (uint8_t, 0-based;
+    // Symbian^3 advanced pointers track per-slot down/up state). Map the
+    // host UITouch identity to the lowest free slot on press and free it on
+    // release so every guest slot sees strictly paired down/drag/up.
+    {
+        std::lock_guard<std::mutex> lk(_touchSlotsLock);
+        std::size_t slot = _touchSlots.size();
+        for (std::size_t i = 0; i < _touchSlots.size(); i++) {
+            if (_touchSlots[i] == pointerId) {
+                slot = i;
+                break;
+            }
+        }
+
+        if (slot == _touchSlots.size()) {
+            // Unknown pointer: a release with no tracked down has nothing to
+            // pair with in the guest — drop it. Press (or a move that lost its
+            // press) claims the lowest free slot.
+            if (evt.mouse_.action_ == eka2l1::drivers::mouse_action_release) {
+                return;
+            }
+            for (std::size_t i = 0; i < _touchSlots.size(); i++) {
+                if (_touchSlots[i] == 0) {
+                    slot = i;
+                    _touchSlots[i] = pointerId;
+                    break;
+                }
+            }
+            if (slot == _touchSlots.size()) {
+                return; // more concurrent touches than guest slots
+            }
+        } else if (evt.mouse_.action_ == eka2l1::drivers::mouse_action_release) {
+            _touchSlots[slot] = 0;
+        }
+
+        evt.mouse_.mouse_id = static_cast<std::uint32_t>(slot);
     }
     _state->winserv->queue_input_from_driver(evt);
 }

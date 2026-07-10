@@ -16,9 +16,15 @@
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
 # (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
-# ImageMagick (`magick`) on PATH. It does NOT build — install the app first
-# (e.g. `EKA2L1_IOS_CONFIGURATION=Release scripts/build_ios.sh simulator` then
-# `xcrun simctl install booted <app>`), or pass --install <app.app>.
+# ImageMagick (`magick`) on PATH. It does NOT build.
+#
+# Regression MUST run against a Release build. Note `build_ios.sh` defaults to
+# Debug (artifacts land in Debug-iphonesimulator) — build Release explicitly
+# and install that app, or pass it via --install:
+#
+#   EKA2L1_IOS_CONFIGURATION=Release scripts/build_ios.sh simulator
+#   scripts/ios_regression_test.sh --install \
+#       build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
 #
 # Usage:
 #   scripts/ios_regression_test.sh                 # run both suites

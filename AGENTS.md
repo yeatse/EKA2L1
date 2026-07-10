@@ -75,12 +75,13 @@ xcrun devicectl device info files --device $UDID --domain-type appDataContainer 
 ## Verification
 
 - For iOS changes, verify at least the affected app path plus a known-good control app when feasible.
-- Run the regression script before concluding any emulator-affecting change:
+- Run the regression script before concluding any emulator-affecting change. Regression MUST run against a **Release** build (`build_ios.sh` defaults to Debug, which lands in `Debug-iphonesimulator` — do not regression-test that artifact, and double-check you are not installing a stale app from the other configuration):
 
   ```sh
-  # Build + install the simulator app first, then:
-  scripts/ios_regression_test.sh                 # Final Battle + Calculator
+  # Build + install the Release simulator app first:
+  EKA2L1_IOS_CONFIGURATION=Release scripts/build_ios.sh simulator
   scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
+  scripts/ios_regression_test.sh                 # re-run without reinstalling
   ```
 
   It drives the booted simulator through Final Battle (must reach in-game with no `E32USER-CBase 46` stray-signal panic) and Calculator (default render, number input, left soft key opens the Options menu, right soft key closes it), asserts no guest crash, and saves per-state screenshots under `/tmp/eka2l1-regression`. A non-zero exit means a regression — investigate before landing. Requires a booted simulator with a device (e.g. 5320/rm-409) mounted and both apps installed, plus `xcodebuildmcp`, `jq`, ImageMagick (`magick`).
