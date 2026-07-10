@@ -135,12 +135,13 @@ if (ANDROID)
         src/sensor/backend/android/sensor_android.cpp
         src/sensor/backend/android/sensor_android.h)
 elseif (EKA2L1_IOS)
-    # iOS uses the null sensor/camera/vibration backends already included in
-    # the unconditional source block. Input/window handling will be provided
-    # by the iOS frontend introduced in task 0.6 (no SDL2, no shared
-    # emu_window.cpp). The graphics context is intentionally left to the
-    # nullptr fallback in src/graphics/context.cpp until task 2 lands a real
-    # CAEAGLLayer-backed implementation.
+    # iOS sensor backend rides on CoreMotion (accelerometer, parity with the
+    # Android backend). Camera keeps the null backend from the unconditional
+    # source block. Input/window handling is provided by the iOS frontend
+    # (no SDL2, no shared emu_window.cpp).
+    target_sources(drivers PRIVATE
+        src/sensor/backend/ios/sensor_ios.h
+        src/sensor/backend/ios/sensor_ios.mm)
 else()
     target_sources(drivers PRIVATE
         include/drivers/input/backend/emu_controller_sdl2.h
@@ -237,7 +238,8 @@ if (EKA2L1_IOS)
         "-framework AVFoundation"
         "-framework AudioToolbox"
         "-framework CoreAudio"
-        "-framework CoreHaptics")
+        "-framework CoreHaptics"
+        "-framework CoreMotion")
 else()
     target_link_libraries(drivers PRIVATE cubeb glad)
 endif()

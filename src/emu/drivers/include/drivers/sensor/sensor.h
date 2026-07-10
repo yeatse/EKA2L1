@@ -205,6 +205,8 @@ namespace eka2l1::drivers {
 
     class sensor_driver {
     public:
+        virtual ~sensor_driver() = default;
+
         virtual std::vector<sensor_info> queries_active_sensor(const sensor_info &search_info) = 0;
         virtual std::unique_ptr<sensor> new_sensor_controller(const std::uint32_t id) = 0;
 

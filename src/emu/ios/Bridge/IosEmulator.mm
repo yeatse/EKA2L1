@@ -46,6 +46,7 @@
 #include <drivers/input/common.h>
 #include <drivers/itc.h>
 #include <drivers/hwrm/vibration.h>
+#include <drivers/sensor/sensor.h>
 #include <services/window/screen.h>
 #include <kernel/kernel.h>
 #include <kernel/process.h>
@@ -335,6 +336,7 @@ namespace eka2l1::ios {
         std::unique_ptr<drivers::emu_window_ios> window;
         drivers::graphics_driver_ptr graphics_driver;
         std::unique_ptr<drivers::audio_driver> audio_driver;
+        std::unique_ptr<drivers::sensor_driver> sensor_driver;
 
         config::state conf;
         window_server *winserv = nullptr;
@@ -968,6 +970,14 @@ namespace eka2l1::ios {
             "iOS audio: cubeb_audio_driver instance is null; services will fall back to silence");
     }
 
+    // CoreMotion-backed accelerometer for the guest Sensor Framework, same
+    // wiring as the Qt/Android frontends. Bound to each booted system in
+    // bootDeviceAtIndex: alongside the audio driver.
+    _state->sensor_driver = eka2l1::drivers::sensor_driver::instantiate();
+    if (!_state->sensor_driver) {
+        LOG_WARN(eka2l1::FRONTEND_CMDLINE, "Failed to create sensor driver");
+    }
+
     auto comp = eka2l1::ios::make_system_components(_state.get());
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     _state->window = std::make_unique<eka2l1::drivers::emu_window_ios>();
@@ -1059,6 +1069,11 @@ namespace eka2l1::ios {
     // Wait out any in-flight rescan/boot before tearing the whole state down.
     // Released just before _state.reset() — the mutex lives inside _state.
     std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex);
+    // Quiesce sensor callbacks (pause doubles as an in-flight barrier) before
+    // the kernel they complete into goes away below.
+    if (_state->sensor_driver) {
+        _state->sensor_driver->pause();
+    }
     _state->running = false;
     // Wake the os_thread if it's parked in the scheduler's idle wait, otherwise
     // the join below blocks until the next guest timer happens to fire.
@@ -1079,6 +1094,7 @@ namespace eka2l1::ios {
     _state->graphics_driver.reset();
     _state->symsys.reset();
     _state->audio_driver.reset();
+    _state->sensor_driver.reset();
     _state->window.reset();
     _state->settings.reset();
     session_lock.unlock();
@@ -1202,6 +1218,20 @@ namespace eka2l1::ios {
     // reset below doesn't race a loop in flight.
     std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
     auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+    // Quiesce the sensor pump before the old system goes away: its data
+    // callbacks complete guest IPC and must not land in a dying kernel.
+    // pause() doubles as a barrier for a callback already in flight. Only
+    // resume below if this pause flipped the state — a lifecycle pause
+    // (backgrounded app) must stay paused.
+    const bool sensor_paused_for_reboot = _state->sensor_driver && _state->sensor_driver->pause();
+    struct sensor_resume_guard {
+        eka2l1::drivers::sensor_driver *drv_;
+        ~sensor_resume_guard() {
+            if (drv_) {
+                drv_->resume();
+            }
+        }
+    } sensor_resume{ sensor_paused_for_reboot ? _state->sensor_driver.get() : nullptr };
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
     _state->rendered_frame_count.store(0, std::memory_order_relaxed);
@@ -1242,6 +1272,9 @@ namespace eka2l1::ios {
     }
     if (_state->audio_driver) {
         sys->set_audio_driver(_state->audio_driver.get());
+    }
+    if (_state->sensor_driver) {
+        sys->set_sensor_driver(_state->sensor_driver.get());
     }
     sys->initialize_user_parties();
     eka2l1::ios::install_required_rom_patches(_state.get());
@@ -1657,6 +1690,11 @@ namespace eka2l1::ios {
     // Break the idle wait so a parked loop returns and the os_thread settles on
     // its paused sleep promptly instead of after the next guest timer.
     break_core_idling(_state.get());
+    // Stop CoreMotion updates in the background (battery + no point feeding a
+    // paused guest); mirrors the Android frontend's lifecycle handling.
+    if (_state->sensor_driver) {
+        _state->sensor_driver->pause();
+    }
     // 3.7: drop the AVAudioSession activation while we're in the background
     // so the system can route audio to whatever's actually frontmost. The
     // session reactivates on resume below; the AURemoteIO units themselves
@@ -1675,6 +1713,9 @@ namespace eka2l1::ios {
 - (void)resume {
     if (!_state) return;
     _state->paused = false;
+    if (_state->sensor_driver) {
+        _state->sensor_driver->resume();
+    }
     NSError *err = nil;
     [[AVAudioSession sharedInstance] setActive:YES error:&err];
     if (err) {
