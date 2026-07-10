@@ -13,6 +13,8 @@ struct SettingsView: View {
     @State private var hideSystemApps = true
     @State private var deviceDisplayName = "EKA2L1"
     @State private var useJIT = false
+    @State private var availableLanguages: [EKA2L1LanguageItem] = []
+    @State private var systemLanguageCode = -1
     @State private var storageBytes: UInt64 = 0
     @State private var clearDataMessage: String?
     @State private var showingClearDataConfirmation = false
@@ -29,6 +31,13 @@ struct SettingsView: View {
         Form {
             Section("settings.device") {
                 TextField("settings.displayName", text: $deviceDisplayName)
+                if !availableLanguages.isEmpty {
+                    Picker("settings.systemLanguage", selection: $systemLanguageCode) {
+                        ForEach(availableLanguages) { language in
+                            Text(language.name).tag(language.code)
+                        }
+                    }
+                }
             }
             // Only sideload/simulator builds carry the dynarmic JIT; App Store /
             // TestFlight builds compile without it and never show this section.
@@ -123,6 +132,12 @@ struct SettingsView: View {
         .onChange(of: nearestNeighborFiltering) { _ in save() }
         .onChange(of: hideSystemApps) { _ in save() }
         .onChange(of: deviceDisplayName) { _ in save() }
+        .onChange(of: systemLanguageCode) { newCode in
+            // -1 = load() hasn't found a booted device yet; don't write it back.
+            if newCode >= 0, newCode != EKA2L1Bridge.shared.currentLanguageCode() {
+                EKA2L1Bridge.shared.setSystemLanguage(code: newCode)
+            }
+        }
         .confirmationDialog("settings.clearData.title",
                             isPresented: $showingClearDataConfirmation,
                             titleVisibility: .visible) {
@@ -181,6 +196,8 @@ struct SettingsView: View {
         if let value = snapshot["jitEnabled"] as? NSNumber {
             useJIT = value.boolValue
         }
+        availableLanguages = EKA2L1Bridge.shared.availableLanguages()
+        systemLanguageCode = EKA2L1Bridge.shared.currentLanguageCode()
     }
 
     private func save() {

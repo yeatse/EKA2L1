@@ -31,6 +31,7 @@
 #include <common/buffer.h>
 #include <common/cvt.h>
 #include <common/fileutils.h>
+#include <common/language.h>
 #include <common/log.h>
 #include <common/path.h>
 #include <common/pystr.h>
@@ -67,7 +68,9 @@
 #include <system/installation/rpkg.h>
 #include <system/software.h>
 #include <utils/apacmd.h>
+#include <utils/locale.h>
 #include <utils/panic.h>
+#include <utils/system.h>
 #include <vfs/vfs.h>
 
 #include <lunasvg.h>
@@ -80,6 +83,9 @@
 @end
 
 @implementation EKA2L1NGageInstallReport
+@end
+
+@implementation EKA2L1LanguageEntry
 @end
 
 namespace eka2l1::ios {
@@ -1255,6 +1261,19 @@ namespace eka2l1::ios {
         return NO;
     }
     _state->conf.device = static_cast<int>(index);
+
+    // Mirror the Android frontend's device-switch behavior: when the
+    // configured system language isn't shipped by this device's ROM (or was
+    // never set), fall back to the device's default language. Services boot
+    // below (setup_outsider) reads conf.language, so fix it up first.
+    {
+        std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+        const auto &device_langs = dvc->get_devices()[index].languages;
+        if (std::find(device_langs.begin(), device_langs.end(), _state->conf.language) == device_langs.end()) {
+            _state->conf.language = dvc->get_devices()[index].default_language_code;
+        }
+    }
+
     _state->conf.serialize();
 
     sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
@@ -1897,6 +1916,71 @@ namespace eka2l1::ios {
 
     _state->conf.serialize();
     return YES;
+}
+
+- (NSArray<EKA2L1LanguageEntry *> *)availableLanguages {
+    NSMutableArray<EKA2L1LanguageEntry *> *out = [NSMutableArray array];
+    if (!_state || !_state->symsys) {
+        return out;
+    }
+    auto *dvc = _state->symsys->get_device_manager();
+    if (!dvc) {
+        return out;
+    }
+    std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+    auto &devices = dvc->get_devices();
+    const int device_index = _state->conf.device;
+    if ((device_index < 0) || (device_index >= static_cast<int>(devices.size()))) {
+        return out;
+    }
+    for (const int code: devices[device_index].languages) {
+        EKA2L1LanguageEntry *entry = [[EKA2L1LanguageEntry alloc] init];
+        entry.code = code;
+        entry.name = [NSString stringWithUTF8String:eka2l1::common::get_language_name_by_code(code).c_str()];
+        [out addObject:entry];
+    }
+    return out;
+}
+
+- (NSInteger)currentLanguageCode {
+    return _state ? _state->conf.language : -1;
+}
+
+- (void)setSystemLanguageCode:(NSInteger)code {
+    if (!_state) {
+        return;
+    }
+
+    _state->conf.language = static_cast<int>(code);
+    _state->conf.serialize();
+
+    if (!_state->symsys || !_state->mounted) {
+        // Not booted yet — setup_outsider applies conf.language on boot.
+        return;
+    }
+
+    // Mirror the Android frontend's set_language_current: flip the kernel's
+    // current language (drives .rXX resource selection on next app launch)
+    // and rewrite the live locale property so running guests see the change.
+    _state->symsys->set_system_language(static_cast<language>(code));
+
+    eka2l1::kernel_system *kern = _state->symsys->get_kernel_system();
+    if (!kern) {
+        return;
+    }
+
+    eka2l1::property_ptr lang_prop = kern->get_prop(eka2l1::epoc::SYS_CATEGORY, eka2l1::epoc::LOCALE_LANG_KEY);
+    if (!lang_prop) {
+        return;
+    }
+
+    auto locale_lang = lang_prop->get_pkg<eka2l1::epoc::locale_language>();
+    if (!locale_lang) {
+        return;
+    }
+
+    locale_lang->language = static_cast<eka2l1::epoc::language>(code);
+    lang_prop->set<eka2l1::epoc::locale_language>(locale_lang.value());
 }
 
 - (BOOL)jitCompiledIn {

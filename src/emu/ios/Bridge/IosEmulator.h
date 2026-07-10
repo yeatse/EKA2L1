@@ -35,6 +35,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *gameName;
 @end
 
+// A guest system language the current device's ROM ships. `code` is the
+// Symbian TLanguage value stored in config.yml.
+@interface EKA2L1LanguageEntry : NSObject
+@property(nonatomic, assign) NSInteger code;
+@property(nonatomic, copy) NSString *name;
+@end
+
 // Mirrors eka2l1::device_installation_error 1:1, plus an iOS-only `NeedRpkg`
 // case the bridge raises when a ROM dump requires an additional RPKG file but
 // none was supplied. Frontend maps these to the Android-sourced strings.
@@ -173,6 +180,19 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
+
+// System language -----------------------------------------------------------
+// Languages shipped by the currently-selected device's ROM. Empty until a
+// device is installed. Mirrors the Android frontend's language picker source.
+- (NSArray<EKA2L1LanguageEntry *> *)availableLanguages;
+
+// The configured guest system language code, or -1 when unset.
+- (NSInteger)currentLanguageCode;
+
+// Set the guest system language: persists to config.yml, updates the kernel's
+// current language and the live locale property so running guests observe the
+// locale change. Apps pick up their translated resources on next launch.
+- (void)setSystemLanguageCode:(NSInteger)code;
 
 // JIT (dynarmic) support. `jitCompiledIn` is YES when this build carries the
 // dynarmic backend (EKA2L1_IOS_DYNARMIC: simulator, or a sideload device

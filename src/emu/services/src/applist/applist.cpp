@@ -665,11 +665,16 @@ namespace eka2l1 {
     }
 
     void applist_server::app_language(service::ipc_context &ctx) {
-        LOG_TRACE(SERVICE_APPLIST, "AppList::AppLanguage stubbed to returns ELangEnglish");
+        // AVKON asks apparc for the application language to pick which .rXX
+        // translation to load, so this must follow the configured system
+        // language — a hardcoded English here overrides the locale for every
+        // app UI even when the ROM ships the requested translation.
+        language app_lang = kern->get_current_language();
+        if ((static_cast<int>(app_lang) < static_cast<int>(language::en)) || (app_lang == language::any)) {
+            app_lang = language::en;
+        }
 
-        language default_lang = language::en;
-
-        ctx.write_data_to_descriptor_argument<language>(1, default_lang);
+        ctx.write_data_to_descriptor_argument<language>(1, app_lang);
         ctx.complete(0);
     }
 

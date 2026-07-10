@@ -101,6 +101,7 @@
     "settings.storageUsed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Storage used" } } } },
     "settings.support" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Support" } } } },
     "settings.system" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "System" } } } },
+    "settings.systemLanguage" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "System language" } } } },
     "settings.testVibration" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Test vibration" } } } },
     "settings.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Settings" } } } },
     "settings.virtualKeypad" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Virtual keypad" } } } }

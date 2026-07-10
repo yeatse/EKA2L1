@@ -39,6 +39,14 @@ struct EKA2L1NGageInstallItem {
     var succeeded: Bool { result == 0 }
 }
 
+// A guest system language shipped by the current device's ROM.
+struct EKA2L1LanguageItem: Identifiable, Hashable {
+    let code: Int
+    let name: String
+
+    var id: Int { code }
+}
+
 struct CpuSmokeReport {
     enum Backend {
         case dyncom
@@ -79,6 +87,20 @@ final class EKA2L1Bridge {
 
     func currentDeviceIndex() -> Int {
         emulator.currentDeviceIndex()
+    }
+
+    func availableLanguages() -> [EKA2L1LanguageItem] {
+        emulator.availableLanguages().map {
+            EKA2L1LanguageItem(code: Int($0.code), name: $0.name)
+        }
+    }
+
+    func currentLanguageCode() -> Int {
+        emulator.currentLanguageCode()
+    }
+
+    func setSystemLanguage(code: Int) {
+        emulator.setSystemLanguageCode(code)
     }
 
     // Heavy operations (ROM dump / system rebuild) — exposed as nonisolated so
