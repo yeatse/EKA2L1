@@ -122,6 +122,24 @@ more-buffer lambda → `std::lock_guard(epoc_stream->lock_)` 锁**已析构的 m
 后两处跨平台生效（桌面 cubeb 后端同一回调形状）。未加 try/catch：锁死 mutex 是 UB，抛异常只是这次
 恰好的死法，捕获只会把崩溃变成静默损坏；顺序正确后回调根本无机会碰到半死对象。
 
+### R8. EGL surface 悬垂窗口指针（`EKA2L1-2026-07-10-172719.ips`，同为退出游戏后切设备）
+
+```
+崩溃线程（switchDevice 全局队列）：SIGSEGV @0xfffffffe…（野地址）
+  default_data_free_func<unique_ptr<egl_surface>>   ← 容器清理销毁 surface
+  （bootDeviceAtIndex → ~system_impl → dispatcher 拆除 → egl_controller::shutdown）
+```
+
+**根因**：`egl_surface` 以 `canvas_observer` 身份注册进背靠窗口并保存裸指针 `backed_window_`；
+`~canvas_base` **从不通知也不清空 `observers_`**。游戏退出时其窗口随 wsclient 一起销毁，而 guest 没调
+`eglDestroySurface` 的 surface 残留在 `egl_controller::dsurfaces_`；切设备拆 dispatcher 时
+`~egl_surface → backed_window_->remove_canvas_observer(this)` 解引用已释放窗口 → 野地址 SIGSEGV。
+运行期同样可触发（窗口先于 surface 销毁后，下一次 `make_current` 清理 dead_pending surface）。
+
+**修复**：观察者双向解绑——`canvas_observer` 新增 `on_window_destroyed()`，`~canvas_base` 逐个弹出
+observer 并通知；`egl_surface` 实现为置空 `backed_window_`（egl.cpp 所有运行期使用点本就判空）。
+`services/window/classes/winuser.{h,cpp}`、`dispatch/libraries/egl/def.{h,cpp}`，跨平台生效。
+
 ### 附带：sensor 空驱动空指针（iOS 必崩点）
 
 iOS 前端未接 sensor driver，guest 一查询传感器通道（`query_channels` / `open_channel`）即解引用 null。
