@@ -358,6 +358,16 @@ namespace eka2l1::ios {
         // a loop in flight, so those paths grab this between ticks.
         std::mutex loop_mutex;
 
+        // Serialises bridge entry points that walk symsys internals from
+        // arbitrary threads (app rescan spins up the applist worker pool)
+        // against the paths that rebuild or destroy symsys (boot / install /
+        // shutdown). loop_mutex only covers the os_thread tick, not these.
+        // Recursive because launch -> reboot nests two writer sections.
+        // Main-thread readers must try_lock only: while a boot holds this
+        // lock the graphics thread dispatch_syncs onto the main queue, so a
+        // blocked main thread would deadlock the boot.
+        std::recursive_mutex session_mutex;
+
         std::mutex layer_mutex;
         std::condition_variable layer_cv;
         bool layer_dirty = false;
@@ -690,6 +700,9 @@ namespace eka2l1::ios {
     // indices with down/up pairing — mirrors Qt's map_mouse_id_to_touch_index.
     std::array<uintptr_t, 8> _touchSlots;
     std::mutex _touchSlotsLock;
+    // Last successful rescanApps result, returned as-is when a system rebuild
+    // holds session_mutex (rescanApps must not block the main thread).
+    NSArray<EKA2L1AppEntry *> *_lastAppList;
 }
 
 + (BOOL)unzipArchiveAtPath:(NSString *)zipPath
@@ -1043,6 +1056,9 @@ namespace eka2l1::ios {
     if (!_state) {
         return;
     }
+    // Wait out any in-flight rescan/boot before tearing the whole state down.
+    // Released just before _state.reset() — the mutex lives inside _state.
+    std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex);
     _state->running = false;
     // Wake the os_thread if it's parked in the scheduler's idle wait, otherwise
     // the join below blocks until the next guest timer happens to fire.
@@ -1065,6 +1081,7 @@ namespace eka2l1::ios {
     _state->audio_driver.reset();
     _state->window.reset();
     _state->settings.reset();
+    session_lock.unlock();
     _state.reset();
 }
 
@@ -1118,6 +1135,7 @@ namespace eka2l1::ios {
     // (a device may already be booted) and let it keep ticking. On success the
     // frontend boots the new device, which rebuilds the system and remounts.
     const bool was_mounted = _state->mounted;
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
     auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
 
     auto *sys = _state->symsys.get();
@@ -1178,8 +1196,11 @@ namespace eka2l1::ios {
 
     // Rebuild the system so device_manager reloads devices.yml fresh and the
     // kernel comes up clean for the selected device. device_manager only
-    // reads devices.yml on construction. Stop + drain the os_thread first so
-    // the symsys reset below doesn't race a loop in flight.
+    // reads devices.yml on construction. Take the session lock so an app
+    // rescan (worker pool inside the old symsys) finishes before the rebuild
+    // frees the state under it, then stop + drain the os_thread so the symsys
+    // reset below doesn't race a loop in flight.
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
     auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
     _state->winserv = nullptr;
     _state->screen_redraw_handles.clear();
@@ -1259,6 +1280,18 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return out;
     }
+    // The rescan fans registry/icon loading out to the applist worker pool,
+    // which pokes fbs/io state — it must never overlap a system rebuild.
+    // try_lock only: this is called from the main thread, and blocking main
+    // while a boot is in flight deadlocks (boot -> graphics thread ->
+    // dispatch_sync(main)). Hand back the previous list instead.
+    std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex, std::try_to_lock);
+    if (!session_lock.owns_lock()) {
+        return _lastAppList ?: out;
+    }
+    if (!_state->symsys) {
+        return _lastAppList ?: out;
+    }
     auto *alserv = eka2l1::ios::get_applist_server(_state->symsys->get_kernel_system());
     if (!alserv) {
         return out;
@@ -1281,6 +1314,7 @@ namespace eka2l1::ios {
         entry.system = (reg.land_drive == drive_z);
         [out addObject:entry];
     }
+    _lastAppList = out;
     return out;
 }
 
@@ -1311,6 +1345,10 @@ namespace eka2l1::ios {
     if (!_state || !_state->symsys) {
         return NO;
     }
+    // Runs on the control queue (never main), so a blocking lock is safe. This
+    // keeps a main-thread rescan's applist worker pool from overlapping both
+    // the reboot below and launch_app's registration lookups.
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
     if (!eka2l1::ios::wait_for_graphics_driver(_state.get(), std::chrono::seconds(5))) {
         LOG_ERROR(eka2l1::DRIVER_GRAPHICS, "iOS graphics driver was not ready before app launch");
         return NO;
@@ -1419,6 +1457,15 @@ namespace eka2l1::ios {
     _state->running_thread_id = 0;
     // The killed app leaves the session dirty; rebuild before the next launch.
     _state->needs_reboot_before_launch = true;
+
+    // Runs on the main thread, so only try the session lock (see rescanApps).
+    // Losing it means a system rebuild is in flight: the old session — and the
+    // guest process with it — is being torn down anyway, and the reboot flag
+    // set above already forces a clean rebuild before the next launch.
+    std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex, std::try_to_lock);
+    if (!session_lock.owns_lock()) {
+        return;
+    }
 
     // Stop and drain the OS loop before killing the guest process. Otherwise
     // the loop thread can still be executing this process in HLE/active
