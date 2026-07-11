@@ -484,7 +484,15 @@ using eka2l1::drivers::camera::instance_ios;
 }
 
 - (void)stopViewfinder {
-    dispatch_sync(_sessionQueue, ^{
+    // Must not block the caller: stop_viewfinder_feed()/release() run inside an
+    // ECam HLE dispatch while the emulator kernel lock is held. AVCaptureSession
+    // -stopRunning is a blocking call that internally spins a run-loop condition
+    // and can wait on the main thread; if we block here the kernel lock is held
+    // across it, stalling the UI/input and timing threads (which both need the
+    // lock) and tripping the iOS watchdog. Frame delivery is already gated by the
+    // owner's callbacks, which the caller clears before invoking this, so tearing
+    // the session down asynchronously delivers no stray frames.
+    dispatch_async(_sessionQueue, ^{
         if (!self->_viewfinderActive) {
             return;
         }
@@ -564,7 +572,12 @@ using eka2l1::drivers::camera::instance_ios;
 }
 
 - (void)shutdown {
-    dispatch_sync(_sessionQueue, ^{
+    // Asynchronous for the same reason as -stopViewfinder: the owning
+    // instance_ios is torn down from an ECam HLE dispatch holding the kernel
+    // lock, and a blocking -stopRunning here would deadlock the UI/input and
+    // timing threads. The block retains self, so the session is stopped and
+    // released after this returns.
+    dispatch_async(_sessionQueue, ^{
         if (self->_session.running) {
             [self->_session stopRunning];
         }
