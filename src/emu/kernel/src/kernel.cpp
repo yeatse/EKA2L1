@@ -160,6 +160,11 @@ namespace eka2l1 {
         OBJECT_CONTAINER_CLEANUP(chunks_);
         OBJECT_CONTAINER_CLEANUP(libraries_);
         OBJECT_CONTAINER_CLEANUP(codesegs_);
+
+        // The codedump collector outlives the reboot but its intrusive lists
+        // point into the codesegs / attached infos destroyed just above.
+        // Forget them, or the first clean after reboot walks freed memory.
+        codedump_collector_.wipe();
         OBJECT_CONTAINER_CLEANUP(message_queues_)
         OBJECT_CONTAINER_CLEANUP(logical_channels_);
         OBJECT_CONTAINER_CLEANUP(logical_devices_);

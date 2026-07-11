@@ -54,6 +54,13 @@ namespace eka2l1::drivers {
         bool create_unit();
         bool start_unit();
         bool stop_unit();
+
+        // Must be called from the MOST-DERIVED destructor: the render
+        // callback invokes the virtual should_idle(), so the unit has to be
+        // stopped (AudioOutputUnitStop is synchronous with in-flight
+        // renders) while the vtable still points at the derived class.
+        // Idempotent; the base destructor calls it again as a safety net.
+        void dispose_unit();
     };
 
     struct audiounit_ios_output_stream final : public audio_output_stream,

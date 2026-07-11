@@ -93,14 +93,20 @@ namespace eka2l1::drivers {
     }
 
     audiounit_ios_stream_base::~audiounit_ios_stream_base() {
-        if (unit_) {
-            if (running_.load()) {
-                AudioOutputUnitStop(unit_);
-            }
-            AudioUnitUninitialize(unit_);
-            AudioComponentInstanceDispose(unit_);
-            unit_ = nullptr;
+        dispose_unit();
+    }
+
+    void audiounit_ios_stream_base::dispose_unit() {
+        if (!unit_) {
+            return;
         }
+        if (running_.load()) {
+            AudioOutputUnitStop(unit_);
+            running_.store(false);
+        }
+        AudioUnitUninitialize(unit_);
+        AudioComponentInstanceDispose(unit_);
+        unit_ = nullptr;
     }
 
     std::size_t audiounit_ios_stream_base::call_callback(std::int16_t *buffer, const long frames) {
@@ -240,7 +246,9 @@ namespace eka2l1::drivers {
         , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/false) {
     }
 
-    audiounit_ios_output_stream::~audiounit_ios_output_stream() = default;
+    audiounit_ios_output_stream::~audiounit_ios_output_stream() {
+        dispose_unit();
+    }
 
     bool audiounit_ios_output_stream::should_idle() {
         return pausing_.load() || (driver_ && driver_->suspending());
@@ -295,7 +303,9 @@ namespace eka2l1::drivers {
         , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/true) {
     }
 
-    audiounit_ios_input_stream::~audiounit_ios_input_stream() = default;
+    audiounit_ios_input_stream::~audiounit_ios_input_stream() {
+        dispose_unit();
+    }
 
     bool audiounit_ios_input_stream::should_idle() {
         return driver_ && driver_->suspending();
