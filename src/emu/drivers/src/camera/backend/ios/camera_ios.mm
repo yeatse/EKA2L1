@@ -799,8 +799,12 @@ namespace eka2l1::drivers::camera {
         , active_capture_img_callback_(nullptr)
         , active_frame_viewfinder_callback_(nullptr)
         , wants_new_frame_callback_(nullptr)
+        , stub_optical_zoom_(0)
         , stub_exposure_(EXPOSURE_MODE_AUTO)
         , stub_digital_zoom_(1)
+        , stub_contrast_(0)
+        , stub_brightness_(0)
+        , stub_white_balance_(0)
         , flash_mode_(FLASH_MODE_OFF) {
     }
 
@@ -817,6 +821,10 @@ namespace eka2l1::drivers::camera {
 
     bool instance_ios::set_parameter(const parameter_key key, const std::uint32_t value) {
         switch (key) {
+        case PARAMETER_KEY_OPTICAL_ZOOM:
+            stub_optical_zoom_ = value;
+            return true;
+
         case PARAMETER_KEY_FLASH:
             flash_mode_ = value;
             return true;
@@ -829,6 +837,18 @@ namespace eka2l1::drivers::camera {
             stub_digital_zoom_ = value;
             return true;
 
+        case PARAMETER_KEY_CONTRAST:
+            stub_contrast_ = value;
+            return true;
+
+        case PARAMETER_KEY_BRIGHTNESS:
+            stub_brightness_ = value;
+            return true;
+
+        case PARAMETER_KEY_WHITE_BALANCE:
+            stub_white_balance_ = value;
+            return true;
+
         default:
             LOG_WARN(DRIVER_CAM, "Unsupported parameter key {} to set value", static_cast<int>(key));
             break;
@@ -839,6 +859,10 @@ namespace eka2l1::drivers::camera {
 
     bool instance_ios::get_parameter(const parameter_key key, std::uint32_t &value) {
         switch (key) {
+        case PARAMETER_KEY_OPTICAL_ZOOM:
+            value = stub_optical_zoom_;
+            break;
+
         case PARAMETER_KEY_FLASH:
             value = flash_mode_;
             break;
@@ -849,6 +873,18 @@ namespace eka2l1::drivers::camera {
 
         case PARAMETER_KEY_DIGITAL_ZOOM:
             value = stub_digital_zoom_;
+            break;
+
+        case PARAMETER_KEY_CONTRAST:
+            value = stub_contrast_;
+            break;
+
+        case PARAMETER_KEY_BRIGHTNESS:
+            value = stub_brightness_;
+            break;
+
+        case PARAMETER_KEY_WHITE_BALANCE:
+            value = stub_white_balance_;
             break;
 
         default:

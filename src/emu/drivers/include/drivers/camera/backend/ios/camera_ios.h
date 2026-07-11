@@ -60,8 +60,12 @@ namespace eka2l1::drivers::camera {
 
         std::mutex callback_lock_;
 
+        std::uint32_t stub_optical_zoom_;
         std::uint32_t stub_exposure_;
         std::uint32_t stub_digital_zoom_;
+        std::uint32_t stub_contrast_;
+        std::uint32_t stub_brightness_;
+        std::uint32_t stub_white_balance_;
         std::uint32_t flash_mode_;
 
         void stop_viewfinder_feed_impl(const bool log_if_inactive);
