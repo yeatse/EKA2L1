@@ -22,6 +22,7 @@
 #include <common/linked.h>
 #include <drivers/sensor/sensor.h>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -90,6 +91,11 @@ namespace eka2l1::drivers {
         std::mutex list_lock_;
         bool paused_;
 
+        // CCW angle from the iPhone's natural orientation to the emulated
+        // device's natural orientation (see sensor_driver::set_motion_rotation).
+        // Written by the frontend's present path, read on the CoreMotion queue.
+        std::atomic<int> motion_rotation_deg_;
+
         void track_active_listener(common::double_linked_queue_element *link);
         void untrack_active_listener(common::double_linked_queue_element *link);
 
@@ -115,6 +121,7 @@ namespace eka2l1::drivers {
 
         bool pause() override;
         bool resume() override;
+        void set_motion_rotation(const int degrees) override;
 
         bool accelerometer_available() const;
     };

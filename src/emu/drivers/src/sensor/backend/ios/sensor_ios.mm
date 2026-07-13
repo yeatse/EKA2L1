@@ -289,7 +289,8 @@ namespace eka2l1::drivers {
 
     sensor_driver_ios::sensor_driver_ios()
         : pump_(std::make_unique<core_motion_pump>())
-        , paused_(false) {
+        , paused_(false)
+        , motion_rotation_deg_(0) {
         pump_->manager_ = [[CMMotionManager alloc] init];
         pump_->queue_ = [[NSOperationQueue alloc] init];
         pump_->queue_.maxConcurrentOperationCount = 1;
@@ -389,7 +390,39 @@ namespace eka2l1::drivers {
         refresh_pump_locked();
     }
 
-    void sensor_driver_ios::dispatch_sample(const double x_ms2, const double y_ms2, const double z_ms2) {
+    void sensor_driver_ios::set_motion_rotation(const int degrees) {
+        motion_rotation_deg_.store(((degrees % 360) + 360) % 360, std::memory_order_relaxed);
+    }
+
+    void sensor_driver_ios::dispatch_sample(const double x_raw_ms2, const double y_raw_ms2, const double z_ms2) {
+        // CoreMotion reports in the iPhone's fixed frame, but the guest reads
+        // the emulated device's frame — the two coincide only when the player
+        // holds the iPhone the way the Symbian phone would be held for the
+        // current guest screen mode. Rotate X/Y into the emulated frame
+        // (components of a vector in a frame rotated CCW by θ pick up R(-θ)).
+        double x_ms2 = x_raw_ms2;
+        double y_ms2 = y_raw_ms2;
+
+        switch (motion_rotation_deg_.load(std::memory_order_relaxed)) {
+        case 90:
+            x_ms2 = y_raw_ms2;
+            y_ms2 = -x_raw_ms2;
+            break;
+
+        case 180:
+            x_ms2 = -x_raw_ms2;
+            y_ms2 = -y_raw_ms2;
+            break;
+
+        case 270:
+            x_ms2 = -y_raw_ms2;
+            y_ms2 = x_raw_ms2;
+            break;
+
+        default:
+            break;
+        }
+
         // Collect completed batches under the list lock, but invoke the guest
         // callbacks outside it: they take the kernel lock, and SVC handlers
         // holding the kernel lock take list_lock_ through listen/cancel — the

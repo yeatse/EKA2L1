@@ -190,6 +190,12 @@ final class EKA2L1Bridge {
         emulator.setDisplayAnchorTopPixels(pixels)
     }
 
+    // Report the emulator screen's interface orientation so accelerometer
+    // samples can follow the displayed guest (see IosEmulator.h).
+    func setHostInterfaceRotation(degrees: Int) {
+        emulator.setHostInterfaceRotationDegrees(degrees)
+    }
+
     func submitRawKey(_ scanCode: UInt32, pressed: Bool) {
         emulator.submitRawKey(scanCode, pressed: pressed)
     }

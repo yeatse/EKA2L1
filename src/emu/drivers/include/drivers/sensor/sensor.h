@@ -222,6 +222,20 @@ namespace eka2l1::drivers {
          */
         virtual bool resume() = 0;
 
+        /**
+         * Rotate motion-sensor samples to follow the displayed guest.
+         *
+         * Motion hardware reports in the host device's natural frame, but the
+         * guest expects the frame of the emulated device as the player sees it
+         * on screen. `degrees` is the counterclockwise angle from the host
+         * device's natural orientation to the emulated device's natural
+         * orientation: guest screen-mode rotation plus host interface-
+         * orientation rotation. Backends that source host-frame samples apply
+         * it to the X/Y axes; the default keeps samples in the host frame.
+         */
+        virtual void set_motion_rotation(const int degrees) {
+        }
+
         static std::unique_ptr<sensor_driver> instantiate();
     };
 }

@@ -178,6 +178,14 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 // overlays the bottom of the screen.
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop;
 
+// Current interface orientation as a CCW rotation from the device's natural
+// portrait orientation: portrait 0, landscapeLeft 90, portraitUpsideDown 180,
+// landscapeRight 270. Combined with the guest screen mode's rotation to keep
+// accelerometer samples aligned with the on-screen guest — CoreMotion reports
+// in the physical device frame and knows nothing about UIKit rotation. Push
+// it whenever the emulator screen (re)lays out.
+- (void)setHostInterfaceRotationDegrees:(NSInteger)degrees;
+
 - (NSDictionary<NSString *, id> *)currentConfigSnapshot;
 - (BOOL)applyConfigSnapshot:(NSDictionary<NSString *, id> *)snapshot;
 

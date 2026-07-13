@@ -187,7 +187,29 @@ private final class EKA2L1RenderView: UIView {
         EKA2L1Bridge.shared.attach(layer: eaglLayer, pixelSize: pixels, scale: scale)
         EKA2L1Bridge.shared.setDisplayAnchorTop(
             pixels: anchorsDisplayTop ? Int(safeAreaInsets.top * scale) : -1)
+        pushInterfaceRotation()
         surfaceReady = true
+    }
+
+    // CoreMotion reports accelerometer samples in the physical device frame;
+    // the bridge needs the interface orientation to rotate them into the frame
+    // of the emulated device as displayed. Expressed as the content's CCW
+    // rotation from the device's natural portrait orientation — landscapeLeft
+    // (device turned clockwise, home indicator left) is 90, landscapeRight is
+    // 270. Layout runs on every rotation, so pushing here keeps it current.
+    private func pushInterfaceRotation() {
+        switch window?.windowScene?.interfaceOrientation {
+        case .landscapeLeft:
+            EKA2L1Bridge.shared.setHostInterfaceRotation(degrees: 90)
+        case .portraitUpsideDown:
+            EKA2L1Bridge.shared.setHostInterfaceRotation(degrees: 180)
+        case .landscapeRight:
+            EKA2L1Bridge.shared.setHostInterfaceRotation(degrees: 270)
+        case .portrait:
+            EKA2L1Bridge.shared.setHostInterfaceRotation(degrees: 0)
+        default:
+            break
+        }
     }
 
     /// Backing-store scale for the GL surface. On a real device this is the

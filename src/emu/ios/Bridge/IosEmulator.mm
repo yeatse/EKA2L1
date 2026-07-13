@@ -406,6 +406,12 @@ namespace eka2l1::ios {
         // so the keys cover letterbox instead of gameplay.
         std::atomic<int> display_anchor_top_px{-1};
 
+        // CCW rotation of on-screen content relative to the iPhone's natural
+        // (portrait) orientation: 0 portrait, 90 landscapeLeft, 180 upside
+        // down, 270 landscapeRight. Combined with the guest screen mode's
+        // rotation on every present to orient accelerometer samples.
+        std::atomic<int> host_interface_rotation_deg{0};
+
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
         // cleared once the process exits (so closeRunningApp no-ops afterwards).
@@ -569,6 +575,17 @@ namespace eka2l1::ios {
         const int rotation = scr->ui_rotation % 360;
 
         auto &mode = scr->current_mode();
+
+        // Keep accelerometer samples aligned with what the player sees: the
+        // emulated device's natural orientation sits mode.rotation CCW from
+        // the guest picture, and the picture sits host_interface_rotation_deg
+        // CCW from the iPhone's natural orientation. Refreshing here tracks
+        // both guest screen-mode switches and host rotations (a host rotation
+        // re-attaches the surface, which re-presents even a static screen).
+        if (state->sensor_driver) {
+            state->sensor_driver->set_motion_rotation(mode.rotation
+                + state->host_interface_rotation_deg.load(std::memory_order_relaxed));
+        }
         eka2l1::rect src;
         src.size = mode.size;
 
@@ -1823,6 +1840,13 @@ namespace eka2l1::ios {
         return;
     }
     _state->display_anchor_top_px.store(static_cast<int>(anchorTop), std::memory_order_relaxed);
+}
+
+- (void)setHostInterfaceRotationDegrees:(NSInteger)degrees {
+    if (!_state) {
+        return;
+    }
+    _state->host_interface_rotation_deg.store(static_cast<int>(degrees), std::memory_order_relaxed);
 }
 
 - (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed {
