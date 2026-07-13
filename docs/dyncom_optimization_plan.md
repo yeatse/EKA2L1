@@ -282,11 +282,28 @@ reads flags constantly, so deferring would make the ~2% read path *more*
 expensive while saving ~0 on the already-cheap writes — a net regression. Not
 worth the large, invasive, correctness-sensitive change.
 
-**Conclusion:** the interpreter-internal wins are exhausted. The remaining
-dispatch-share lever is **instruction fusion** (needs Phase 4 stream self-A/B),
-and the only structural multiplier (JIT) is off-limits on iOS. The landed wins —
-ASID instruction cache, simulator render-scale cap, ReadCode-via-TLB, inlined
-AddWithCarry, block-L1, and the inline memory fast-path — stand.
+### Asphalt 6 VFP single MAC + Release trace — landed (2026-07-13)
+
+Nassau 比赛 ETTrace 显示 guest thread 的 VFP single 路径约占 17%，其中
+multiply-accumulate 约 7.8%；即使日志过滤为 warn，每条 VFP trace 仍会进入
+`log_filterings::is_passed`（约 3% self）。现在默认 FPSCR、标量、正规有限输入/
+输出的 `VMLA/VMLS/VNMLA/VNMLS.f32` 直接走 packed host fast path，其 guard/
+round/sticky 顺序逐位复刻 VFPv3 的非 fused MAC；NaN、denormal、特殊舍入和非正规
+结果继续回落 softfloat。Release 同时在编译期移除 VFP trace，Debug 保留；可用
+`-DEKA2L1_DYNCOM_VFP_TRACE=ON` 恢复 Release 诊断。
+
+验证扩展了 `dyncom_difftest`：5 万组随机正规输入 × 4 种 MAC 共 20 万次
+soft/host A/B 连结果位与 FPSCR 都零差异，另有连续 VMLA microbenchmark（本机约
+1.45x）。Asphalt
+Release 完整比赛回归 9/9；整机仍在 22–27 FPS 波动，对照 26–27 FPS，说明约
+80% self 的模拟器软件 GLES 继续掩盖这部分 guest CPU 收益，不能把场景 FPS
+噪声当成净提升。
+
+**Conclusion:** the remaining general dispatch/ALU wins are exhausted. The only
+structural multiplier (JIT) is off-limits on iOS. The landed wins — ASID
+instruction cache, simulator render-scale cap, ReadCode-via-TLB, inlined
+AddWithCarry, block-L1, inline memory fast-path, VFP MAC fast-path, and Release
+VFP trace removal — stand.
 
 - **Design: self-A/B (no external dependency).** For an optimization that should
   be behaviour-preserving, the reference is the *same* dyncom with the

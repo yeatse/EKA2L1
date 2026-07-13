@@ -101,6 +101,15 @@ option(EKA2L1_CPU_DYNCOM_ONLY "Build the CPU module with the dyncom interpreter 
 # default OFF -> zero overhead in normal builds.
 option(EKA2L1_DYNCOM_PROFILE "Profile guest instruction/pair frequencies in the dyncom interpreter" OFF)
 
+# VFP's instruction-level trace sites sit directly on dyncom's hottest path.
+# Keep them available to Debug builds, but compile them out of Release unless a
+# diagnostic build explicitly asks for them.
+option(EKA2L1_DYNCOM_VFP_TRACE "Keep dyncom VFP trace logging in Release builds" OFF)
+if (NOT EKA2L1_DYNCOM_VFP_TRACE)
+    target_compile_definitions(cpu PRIVATE
+            $<$<CONFIG:Release>:EKA2L1_DYNCOM_DISABLE_VFP_TRACE=1>)
+endif()
+
 if (ARCHITECTURE_ARM32)
     target_sources(cpu PRIVATE ${SOURCE_12L1R})
     target_link_libraries(cpu PRIVATE Catch2)
@@ -142,6 +151,9 @@ target_link_libraries(cpu
 # see scripts/cpu_difftest.sh and docs/dyncom_optimization_plan.md.
 option(EKA2L1_BUILD_DYNCOM_DIFFTEST "Build the dyncom interpreter differential test harness" OFF)
 if (EKA2L1_BUILD_DYNCOM_DIFFTEST)
+    # The test-only VFP selector lets one process compare host-fast and
+    # reference-softfloat execution without changing production state.
+    target_compile_definitions(cpu PUBLIC EKA2L1_DYNCOM_DIFFTEST=1)
     add_executable(dyncom_difftest src/dyncom/tests/dyncom_difftest.cpp)
     target_link_libraries(dyncom_difftest PRIVATE cpu common)
 endif()

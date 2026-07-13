@@ -66,7 +66,7 @@ static struct vfp_double vfp_double_default_qnan = {
 };
 
 static void vfp_double_dump(const char *str, struct vfp_double *d) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: {}: sign={} exponent={} significand={:016x}", str, d->sign != 0,
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: {}: sign={} exponent={} significand={:016x}", str, d->sign != 0,
         d->exponent, d->significand);
 }
 
@@ -168,7 +168,7 @@ std::uint32_t vfp_double_normaliseround(ARMul_State *state, int dd, struct vfp_d
     } else if ((rmode == FPSCR_ROUND_PLUSINF) ^ (vd->sign != 0))
         incr = (1ULL << (VFP_DOUBLE_LOW_BITS + 1)) - 1;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: rounding increment = 0x{:08x}", incr);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: rounding increment = 0x{:08x}", incr);
 
     /*
      * Is our rounding going to overflow?
@@ -223,7 +223,7 @@ pack:
     vfp_double_dump("pack: final", vd);
     {
         std::int64_t d = vfp_double_pack(vd);
-        LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: {}: d(d{})={:016x} exceptions={:08x}", func, dd, d,
+        VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: {}: d(d{})={:016x} exceptions={:08x}", func, dd, d,
             exceptions);
         vfp_put_double(state, d, dd);
     }
@@ -277,25 +277,25 @@ static std::uint32_t vfp_propagate_nan(struct vfp_double *vdd, struct vfp_double
  * Extended operations
  */
 static std::uint32_t vfp_double_fabs(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vfp_put_double(state, vfp_double_packed_abs(vfp_get_double(state, dm)), dd);
     return 0;
 }
 
 static std::uint32_t vfp_double_fcpy(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vfp_put_double(state, vfp_get_double(state, dm), dd);
     return 0;
 }
 
 static std::uint32_t vfp_double_fneg(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vfp_put_double(state, vfp_double_packed_negate(vfp_get_double(state, dm)), dd);
     return 0;
 }
 
 static std::uint32_t vfp_double_fsqrt(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vfp_double vdm, vdd, *vdp;
     int ret, tm;
     std::uint32_t exceptions = 0;
@@ -392,7 +392,7 @@ static std::uint32_t vfp_compare(ARMul_State *state, int dd, int signal_on_qnan,
     std::int64_t d;
     std::uint32_t ret = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}, state=0x{}, fpscr=0x{:x}", __FUNCTION__, fmt::ptr(state), fpscr);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}, state=0x{}, fpscr=0x{:x}", __FUNCTION__, fmt::ptr(state), fpscr);
     if (vfp_double_packed_exponent(m) == 2047 && vfp_double_packed_mantissa(m)) {
         ret |= FPSCR_CFLAG | FPSCR_VFLAG;
         if (signal_on_qnan || !(vfp_double_packed_mantissa(m) & (1ULL << (VFP_DOUBLE_MANTISSA_BITS - 1))))
@@ -446,28 +446,28 @@ static std::uint32_t vfp_compare(ARMul_State *state, int dd, int signal_on_qnan,
             ret |= FPSCR_CFLAG;
         }
     }
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}, state=0x{}, ret=0x{:x}", __FUNCTION__, fmt::ptr(state), ret);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}, state=0x{}, ret=0x{:x}", __FUNCTION__, fmt::ptr(state), ret);
 
     return ret;
 }
 
 static std::uint32_t vfp_double_fcmp(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_compare(state, dd, 0, vfp_get_double(state, dm), fpscr);
 }
 
 static std::uint32_t vfp_double_fcmpe(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_compare(state, dd, 1, vfp_get_double(state, dm), fpscr);
 }
 
 static std::uint32_t vfp_double_fcmpz(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_compare(state, dd, 0, 0, fpscr);
 }
 
 static std::uint32_t vfp_double_fcmpez(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_compare(state, dd, 1, 0, fpscr);
 }
 
@@ -477,7 +477,7 @@ static std::uint32_t vfp_double_fcvts(ARMul_State *state, int sd, int unused, in
     int tm;
     std::uint32_t exceptions = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdm, vfp_get_double(state, dm), fpscr);
 
     tm = vfp_double_type(&vdm);
@@ -518,7 +518,7 @@ static std::uint32_t vfp_double_fuito(ARMul_State *state, int dd, int unused, in
     struct vfp_double vdm;
     std::uint32_t m = vfp_get_float(state, dm);
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vdm.sign = 0;
     vdm.exponent = 1023 + 63 - 1;
     vdm.significand = (std::uint64_t)m;
@@ -530,7 +530,7 @@ static std::uint32_t vfp_double_fsito(ARMul_State *state, int dd, int unused, in
     struct vfp_double vdm;
     std::uint32_t m = vfp_get_float(state, dm);
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vdm.sign = (m & 0x80000000) >> 16;
     vdm.exponent = 1023 + 63 - 1;
     vdm.significand = vdm.sign ? (~m + 1) : m;
@@ -544,7 +544,7 @@ static std::uint32_t vfp_double_ftoui(ARMul_State *state, int sd, int unused, in
     int rmode = fpscr & FPSCR_RMODE_MASK;
     int tm;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdm, vfp_get_double(state, dm), fpscr);
 
     /*
@@ -613,7 +613,7 @@ static std::uint32_t vfp_double_ftoui(ARMul_State *state, int sd, int unused, in
         }
     }
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: ftoui: d(s{})={:08x} exceptions={:08x}", sd, d, exceptions);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: ftoui: d(s{})={:08x} exceptions={:08x}", sd, d, exceptions);
 
     vfp_put_float(state, d, sd);
 
@@ -621,7 +621,7 @@ static std::uint32_t vfp_double_ftoui(ARMul_State *state, int sd, int unused, in
 }
 
 static std::uint32_t vfp_double_ftouiz(ARMul_State *state, int sd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_ftoui(state, sd, unused, dm,
         (fpscr & ~FPSCR_RMODE_MASK) | FPSCR_ROUND_TOZERO);
 }
@@ -632,7 +632,7 @@ static std::uint32_t vfp_double_ftosi(ARMul_State *state, int sd, int unused, in
     int rmode = fpscr & FPSCR_RMODE_MASK;
     int tm;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdm, vfp_get_double(state, dm), fpscr);
     vfp_double_dump("VDM", &vdm);
 
@@ -696,7 +696,7 @@ static std::uint32_t vfp_double_ftosi(ARMul_State *state, int sd, int unused, in
         }
     }
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: ftosi: d(s{})={:08x} exceptions={:08x}", sd, d, exceptions);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: ftosi: d(s{})={:08x} exceptions={:08x}", sd, d, exceptions);
 
     vfp_put_float(state, (std::int32_t)d, sd);
 
@@ -704,7 +704,7 @@ static std::uint32_t vfp_double_ftosi(ARMul_State *state, int sd, int unused, in
 }
 
 static std::uint32_t vfp_double_ftosiz(ARMul_State *state, int dd, int unused, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_ftosi(state, dd, unused, dm,
         (fpscr & ~FPSCR_RMODE_MASK) | FPSCR_ROUND_TOZERO);
 }
@@ -851,7 +851,7 @@ std::uint32_t vfp_double_multiply(struct vfp_double *vdd, struct vfp_double *vdn
      */
     if (vdn->exponent < vdm->exponent) {
         std::swap(vdm, vdn);
-        LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: swapping M <-> N");
+        VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: swapping M <-> N");
     }
 
     vdd->sign = vdn->sign ^ vdm->sign;
@@ -933,7 +933,7 @@ static std::uint32_t vfp_double_multiply_accumulate(ARMul_State *state, int dd, 
  * sd = sd + (sn * sm)
  */
 static std::uint32_t vfp_double_fmac(ARMul_State *state, int dd, int dn, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_multiply_accumulate(state, dd, dn, dm, fpscr, 0, "fmac");
 }
 
@@ -941,7 +941,7 @@ static std::uint32_t vfp_double_fmac(ARMul_State *state, int dd, int dn, int dm,
  * sd = sd - (sn * sm)
  */
 static std::uint32_t vfp_double_fnmac(ARMul_State *state, int dd, int dn, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_multiply_accumulate(state, dd, dn, dm, fpscr, NEG_MULTIPLY, "fnmac");
 }
 
@@ -949,7 +949,7 @@ static std::uint32_t vfp_double_fnmac(ARMul_State *state, int dd, int dn, int dm
  * sd = -sd + (sn * sm)
  */
 static std::uint32_t vfp_double_fmsc(ARMul_State *state, int dd, int dn, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_multiply_accumulate(state, dd, dn, dm, fpscr, NEG_SUBTRACT, "fmsc");
 }
 
@@ -957,7 +957,7 @@ static std::uint32_t vfp_double_fmsc(ARMul_State *state, int dd, int dn, int dm,
  * sd = -sd - (sn * sm)
  */
 static std::uint32_t vfp_double_fnmsc(ARMul_State *state, int dd, int dn, int dm, std::uint32_t fpscr) {
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     return vfp_double_multiply_accumulate(state, dd, dn, dm, fpscr, NEG_SUBTRACT | NEG_MULTIPLY,
         "fnmsc");
 }
@@ -969,7 +969,7 @@ static std::uint32_t vfp_double_fmul(ARMul_State *state, int dd, int dn, int dm,
     struct vfp_double vdd, vdn, vdm;
     std::uint32_t exceptions = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdn, vfp_get_double(state, dn), fpscr);
     if (vdn.exponent == 0 && vdn.significand)
         vfp_double_normalise_denormal(&vdn);
@@ -989,7 +989,7 @@ static std::uint32_t vfp_double_fnmul(ARMul_State *state, int dd, int dn, int dm
     struct vfp_double vdd, vdn, vdm;
     std::uint32_t exceptions = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdn, vfp_get_double(state, dn), fpscr);
     if (vdn.exponent == 0 && vdn.significand)
         vfp_double_normalise_denormal(&vdn);
@@ -1011,7 +1011,7 @@ static std::uint32_t vfp_double_fadd(ARMul_State *state, int dd, int dn, int dm,
     struct vfp_double vdd, vdn, vdm;
     std::uint32_t exceptions = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdn, vfp_get_double(state, dn), fpscr);
     if (vdn.exponent == 0 && vdn.significand)
         vfp_double_normalise_denormal(&vdn);
@@ -1032,7 +1032,7 @@ static std::uint32_t vfp_double_fsub(ARMul_State *state, int dd, int dn, int dm,
     struct vfp_double vdd, vdn, vdm;
     std::uint32_t exceptions = 0;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdn, vfp_get_double(state, dn), fpscr);
     if (vdn.exponent == 0 && vdn.significand)
         vfp_double_normalise_denormal(&vdn);
@@ -1059,7 +1059,7 @@ static std::uint32_t vfp_double_fdiv(ARMul_State *state, int dd, int dn, int dm,
     std::uint32_t exceptions = 0;
     int tm, tn;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     exceptions |= vfp_double_unpack(&vdn, vfp_get_double(state, dn), fpscr);
     exceptions |= vfp_double_unpack(&vdm, vfp_get_double(state, dm), fpscr);
 
@@ -1194,7 +1194,7 @@ std::uint32_t vfp_double_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
     unsigned int vecitr, veclen, vecstride;
     struct op *fop;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "In {}", __FUNCTION__);
     vecstride = (1 + ((fpscr & FPSCR_STRIDE_MASK) == FPSCR_STRIDE_MASK));
 
     fop = (op == FOP_EXT) ? &fops_ext[FEXT_TO_IDX(inst)] : &fops[FOP_TO_IDX(op)];
@@ -1225,11 +1225,11 @@ std::uint32_t vfp_double_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
     else
         veclen = fpscr & FPSCR_LENGTH_MASK;
 
-    LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: vecstride={} veclen={}", vecstride,
+    VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: vecstride={} veclen={}", vecstride,
         (veclen >> FPSCR_LENGTH_BIT) + 1);
 
     if (!fop->fn) {
-        LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: could not find double op {}", FEXT_TO_IDX(inst));
+        VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: could not find double op {}", FEXT_TO_IDX(inst));
         goto invalid;
     }
 
@@ -1272,14 +1272,14 @@ std::uint32_t vfp_double_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
 
         type = (fop->flags & OP_SD) ? 's' : 'd';
         if (op == FOP_EXT)
-            LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{} ({}{}) = op[{}] (d{})", vecitr >> FPSCR_LENGTH_BIT,
+            VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{} ({}{}) = op[{}] (d{})", vecitr >> FPSCR_LENGTH_BIT,
                 type, dest, dn, dm);
         else
-            LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{} ({}{}) = (d{}) op[{}] (d{})",
+            VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{} ({}{}) = (d{}) op[{}] (d{})",
                 vecitr >> FPSCR_LENGTH_BIT, type, dest, dn, FOP_TO_IDX(op), dm);
 
         except = fop->fn(state, dest, dn, dm, fpscr);
-        LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{}: exceptions={:08x}", vecitr >> FPSCR_LENGTH_BIT, except);
+        VFP_LOG_TRACE(eka2l1::CPU_DYNCOM, "VFP: itr{}: exceptions={:08x}", vecitr >> FPSCR_LENGTH_BIT, except);
 
         exceptions |= except & ~VFP_NAN_FLAG;
 

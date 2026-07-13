@@ -58,8 +58,8 @@
 #   EKA2L1_REG_A6_ROM        Asphalt 6 device firmware code (default rm-707)
 #   EKA2L1_REG_A6_INTRO_TIMEOUT
 #                            budget to observe a Gameloft movie frame (default 20)
-#   EKA2L1_REG_A6_MOVIE_WAIT seconds after launch before the two intro movies
-#                            should have completed (default 75)
+#   EKA2L1_REG_A6_MOVIE_WAIT earliest seconds after launch at which the stable
+#                            interactive title is accepted (default 75)
 #   EKA2L1_REG_A6_TIMEOUT    Asphalt 6 boot and menu-transition budget
 #                            seconds, each phase (default 240)
 
@@ -82,8 +82,16 @@ A6_ROM="${EKA2L1_REG_A6_ROM:-rm-707}"
 A6_INTRO_TIMEOUT="${EKA2L1_REG_A6_INTRO_TIMEOUT:-20}"
 A6_MOVIE_WAIT="${EKA2L1_REG_A6_MOVIE_WAIT:-75}"
 A6_TIMEOUT="${EKA2L1_REG_A6_TIMEOUT:-240}"
-A6_DIFF_MIN="${EKA2L1_REG_A6_DIFF_MIN:-80000}"
 A6_INTRO_STDEV_MAX="${EKA2L1_REG_A6_INTRO_STDEV_MAX:-0.24}"
+# Normalized RMSE for a real Asphalt page transition. The main-menu showroom
+# animation stays well below this even though ImageMagick's HDRI `AE` metric
+# reports a large value, which previously made every later assertion pass.
+A6_RMSE_MIN="${EKA2L1_REG_A6_RMSE_MIN:-0.10}"
+# The interactive title fills and brightens the guest band. The preceding
+# Gameloft/Asphalt movies remain sparse, so do not accept them merely because
+# the fixed minimum movie time elapsed.
+A6_TITLE_STDEV_MIN="${EKA2L1_REG_A6_TITLE_STDEV_MIN:-0.13}"
+A6_TITLE_MEAN_MIN="${EKA2L1_REG_A6_TITLE_MEAN_MIN:-0.65}"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
 # clock / FPS-counter noise between captures).
@@ -220,6 +228,19 @@ screen_diff_px() {
 }
 screens_differ() { [ "$(screen_diff_px "$1" "$2")" -ge "$SCREEN_DIFF_MIN" ]; }
 
+# Normalized root-mean-square difference (0..1). Unlike AE in HDRI builds this
+# is comparable across machines and does not turn small animated regions into
+# a false full-page transition.
+screen_rmse() {
+    magick compare -metric RMSE "$1" "$2" null: 2>&1 \
+        | sed -n 's/.*(\([^)]*\)).*/\1/p' | head -1
+}
+
+a6_screens_differ() {
+    local d; d="$(screen_rmse "$1" "$2")"
+    awk -v d="${d:-0}" -v m="$A6_RMSE_MIN" 'BEGIN{exit !(d>=m)}'
+}
+
 is_blank() {
     local sd; sd="$(magick "$1" -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null)"
     awk -v s="${sd:-0}" -v m="$BLANK_STDEV_MAX" 'BEGIN{exit !(s<m)}'
@@ -236,6 +257,22 @@ guest_band_stdev() {
     band=$((w * 2 / 3)); y=$(((h - band) / 2))
     magick "$1" -crop "${w}x${band}+0+${y}" +repage -colorspace Gray \
         -format "%[fx:standard_deviation]" info: 2>/dev/null
+}
+
+guest_band_mean() {
+    local dims w h band y
+    dims="$(magick identify -format '%w %h' "$1" 2>/dev/null)" || return 1
+    w="${dims%% *}"; h="${dims##* }"
+    band=$((w * 2 / 3)); y=$(((h - band) / 2))
+    magick "$1" -crop "${w}x${band}+0+${y}" +repage -colorspace Gray \
+        -format "%[fx:mean]" info: 2>/dev/null
+}
+
+a6_is_title() {
+    local sd mean
+    sd="$(guest_band_stdev "$1")"; mean="$(guest_band_mean "$1")"
+    awk -v s="${sd:-0}" -v m="${mean:-0}" -v slo="$A6_TITLE_STDEV_MIN" \
+        -v mlo="$A6_TITLE_MEAN_MIN" 'BEGIN{exit !(s>=slo && m>=mlo)}'
 }
 
 # crash check over log lines added since a recorded baseline
@@ -454,23 +491,25 @@ test_asphalt6() {
         return
     fi
 
-    # Let both bundled movies finish so the next capture is the stable "Touch
-    # to continue" title rather than a promotional-video frame.
+    # Let both bundled movies reach their earliest expected finish, then wait
+    # for the filled, bright interactive title. On slower dyncom runs 75 wall
+    # seconds can still be the Asphalt-logo movie; treating its later change as
+    # "main menu reached" was the source of the old false positive.
     local remaining=$((launch_started+A6_MOVIE_WAIT-SECONDS))
     [ "$remaining" -gt 0 ] && wait_s "$remaining"
     local s_splash=""; s_splash="$(shot a6_1_splash)"
     deadline=$((SECONDS+A6_TIMEOUT))
     while [ $SECONDS -lt $deadline ]; do
-        is_blank "$s_splash" || break
+        a6_is_title "$s_splash" && break
         wait_s 6
         s_splash="$(shot a6_1_splash)"
     done
-    if is_blank "$s_splash"; then
-        check FAIL "Asphalt6: title rendered after intro movies"
+    if ! a6_is_title "$s_splash"; then
+        check FAIL "Asphalt6: stable interactive title rendered after intro movies"
         assert_no_crash "$base" "Asphalt6"
         return
     fi
-    check PASS "Asphalt6: title rendered after intro movies"
+    check PASS "Asphalt6: stable interactive title rendered after intro movies"
 
     screen_size || { check FAIL "Asphalt6: read screen geometry"; return; }
     local cx cy
@@ -479,28 +518,32 @@ test_asphalt6() {
     # Use a physical down/up event on the stable "Touch to continue" title.
     touch_xy "$cx" "$cy"
 
-    local s_menu="" diff=0
+    local s_menu=""
     deadline=$((SECONDS+A6_TIMEOUT))
     while [ $SECONDS -lt $deadline ]; do
         wait_s 8
         s_menu="$(shot a6_2_menu)"
         is_blank "$s_menu" && continue
-        diff="$(screen_diff_px "$s_splash" "$s_menu")"
-        [ "$diff" -ge "$A6_DIFF_MIN" ] && break
+        a6_screens_differ "$s_splash" "$s_menu" && break
         touch_xy "$cx" "$cy"
     done
-    if [ "$diff" -lt "$A6_DIFF_MIN" ]; then
+    if ! a6_screens_differ "$s_splash" "$s_menu"; then
         check FAIL "Asphalt6: reached main menu"
         assert_no_crash "$base" "Asphalt6"
         return
     fi
+    # Capture a settled menu reference. It is also the negative reference for
+    # the final in-game assertion, so returning to or remaining on the showroom
+    # can no longer pass as a race.
+    wait_s 6
+    s_menu="$(shot a6_2_menu)"
     check PASS "Asphalt6: reached main menu"
 
     # Main menu: Free Race is the second item in the right-hand list.
     touch_xy "$(pt "$SCR_W" 0.85)" "$(pt "$SCR_H" 0.42)"
     wait_s 10
     local s_track; s_track="$(shot a6_3_track)"
-    if [ "$(screen_diff_px "$s_menu" "$s_track")" -ge "$A6_DIFF_MIN" ]; then
+    if a6_screens_differ "$s_menu" "$s_track"; then
         check PASS "Asphalt6: Free Race opens track select"
     else
         check FAIL "Asphalt6: Free Race opens track select"
@@ -510,7 +553,7 @@ test_asphalt6() {
     double_touch_xy "$(pt "$SCR_W" 0.48)" "$(pt "$SCR_H" 0.53)"
     wait_s 12
     local s_mode; s_mode="$(shot a6_4_mode)"
-    if [ "$(screen_diff_px "$s_track" "$s_mode")" -ge "$A6_DIFF_MIN" ]; then
+    if a6_screens_differ "$s_track" "$s_mode"; then
         check PASS "Asphalt6: Nassau opens race-mode select"
     else
         check FAIL "Asphalt6: Nassau opens race-mode select"
@@ -519,7 +562,7 @@ test_asphalt6() {
     double_touch_xy "$(pt "$SCR_W" 0.30)" "$(pt "$SCR_H" 0.46)"
     wait_s 15
     local s_car; s_car="$(shot a6_5_car)"
-    if [ "$(screen_diff_px "$s_mode" "$s_car")" -ge "$A6_DIFF_MIN" ]; then
+    if a6_screens_differ "$s_mode" "$s_car"; then
         check PASS "Asphalt6: Normal Race opens car select"
     else
         check FAIL "Asphalt6: Normal Race opens car select"
@@ -538,7 +581,8 @@ test_asphalt6() {
     wait_s 25
     local s_race; s_race="$(shot a6_7_race)"
 
-    if ! is_blank "$s_race" && [ "$(screen_diff_px "$s_preview" "$s_race")" -ge "$A6_DIFF_MIN" ]; then
+    if ! is_blank "$s_race" && a6_screens_differ "$s_preview" "$s_race" \
+        && a6_screens_differ "$s_menu" "$s_race"; then
         check PASS "Asphalt6: Nassau race renders in-game"
     else
         check FAIL "Asphalt6: Nassau race renders in-game"

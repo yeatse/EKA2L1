@@ -185,7 +185,7 @@ scripts/ios_regression_test.sh --install \
 scripts/ios_regression_test.sh asphalt6
 ```
 
-脚本要求 booted simulator 已安装 rm-707 与 Asphalt 6，并依赖 `xcodebuildmcp`、`jq`、ImageMagick 和 xcodebuildmcp bundled `axe`。它先检查 `mediaclientvideo_v100.dll` 已 staged，并在标题出现前用 guest display band 的像素方差断言捕获到真实 Gameloft 电影帧；随后让两段电影完整播完再继续菜单/比赛流程。它会保存以下状态到 `/tmp/eka2l1-regression/`：
+脚本要求 booted simulator 已安装 rm-707 与 Asphalt 6，并依赖 `xcodebuildmcp`、`jq`、ImageMagick 和 xcodebuildmcp bundled `axe`。它先检查 `mediaclientvideo_v100.dll` 已 staged，并在标题出现前用 guest display band 的像素方差断言捕获到真实 Gameloft 电影帧。两段电影在 dyncom 下可能超过固定的 75 秒，因此脚本还要求 guest band 同时达到交互标题的亮度/方差阈值，才发送 `Touch to continue`。后续页面改用归一化 RMSE 判断整页切换；最终比赛必须同时远离赛前预览和已确认的主菜单，避免 showroom 车辆动画造成假阳性。它会保存以下状态到 `/tmp/eka2l1-regression/`：
 
 - 早期 Gameloft 电影帧
 - 两段电影结束后的 Asphalt 标题
