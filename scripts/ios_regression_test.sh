@@ -20,12 +20,16 @@
 #                               tap and the episode-carousel swipe still
 #                               respond. Guards the raw-touch pointer path
 #                               (UITouch -> guest pointer-slot mapping).
+#   Asphalt 6    (0x2003B2CC) : Symbian^3/Belle compatibility suite (opt-in,
+#                               not part of `all`): boots X7, reaches the main
+#                               menu, selects Free Race / Nassau / Normal Race,
+#                               chooses the Mini, and asserts a rendered race.
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
 # (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
-# ImageMagick (`magick`) on PATH. The angrybirds suite additionally needs the
-# X7 (rm-707) device installed with Angry Birds v2.00 on it, and the `axe` HID
-# tool (bundled inside xcodebuildmcp; auto-located). It does NOT build.
+# ImageMagick (`magick`) on PATH. The angrybirds and asphalt6 suites additionally
+# need the X7 (rm-707), their respective game installed, and the `axe` HID tool
+# (bundled inside xcodebuildmcp; auto-located). It does NOT build.
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
 # Debug (artifacts land in Debug-iphonesimulator) — build Release explicitly
@@ -40,6 +44,7 @@
 #   scripts/ios_regression_test.sh fbattle         # FBattle only
 #   scripts/ios_regression_test.sh calculator      # Calculator only
 #   scripts/ios_regression_test.sh angrybirds      # X7 touch suite only
+#   scripts/ios_regression_test.sh asphalt6        # X7 Asphalt 6 race suite
 #   scripts/ios_regression_test.sh --install <path-to-EKA2L1.app> [suite]
 #
 # Env overrides:
@@ -49,6 +54,9 @@
 #   EKA2L1_REG_AB_ROM        Angry Birds device firmware code (default rm-707)
 #   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
 #                            seconds, each phase (default 180)
+#   EKA2L1_REG_A6_ROM        Asphalt 6 device firmware code (default rm-707)
+#   EKA2L1_REG_A6_TIMEOUT    Asphalt 6 boot and menu-transition budget
+#                            seconds, each phase (default 240)
 
 set -uo pipefail
 
@@ -58,12 +66,16 @@ INGAME_WAIT="${EKA2L1_REG_INGAME_WAIT:-90}"
 FBATTLE_UID="0xA0003C62"
 CALC_UID="0x10005902"
 AB_UID="0x20030E51"
+A6_UID="0x2003B2CC"
 AB_ROM="${EKA2L1_REG_AB_ROM:-rm-707}"
 AB_TIMEOUT="${EKA2L1_REG_AB_TIMEOUT:-180}"
 # Full-screen transitions (splash -> menu -> episode select) repaint most of the
 # guest band; idle animations (clouds, sun rays, LOADING pulse) don't come
 # close. Used instead of SCREEN_DIFF_MIN for the Angry Birds assertions.
 AB_DIFF_MIN="${EKA2L1_REG_AB_DIFF_MIN:-150000}"
+A6_ROM="${EKA2L1_REG_A6_ROM:-rm-707}"
+A6_TIMEOUT="${EKA2L1_REG_A6_TIMEOUT:-240}"
+A6_DIFF_MIN="${EKA2L1_REG_A6_DIFF_MIN:-80000}"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
 # clock / FPS-counter noise between captures).
@@ -188,6 +200,8 @@ screen_size() {
 }
 
 tap_xy()   { "$AXE" tap -x "$1" -y "$2" --udid "$SIM" >/dev/null 2>&1; }
+touch_xy() { "$AXE" touch -x "$1" -y "$2" --down --up --delay 0.08 --udid "$SIM" >/dev/null 2>&1; }
+double_touch_xy() { touch_xy "$1" "$2" && touch_xy "$1" "$2"; }
 swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --udid "$SIM" >/dev/null 2>&1; }
 pt() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", a*b}'; }
 
@@ -374,6 +388,110 @@ test_angrybirds() {
     assert_no_crash "$base" "AngryBirds"
 }
 
+test_asphalt6() {
+    echo "== Asphalt 6 ($A6_UID on $A6_ROM) =="
+    if ! find_axe; then
+        check FAIL "Asphalt6: axe HID tool located"
+        return
+    fi
+
+    launch_uid "$A6_UID" "$A6_ROM" fullscreen
+    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
+    local base; base="$(log_baseline)"
+
+    # Asphalt performs a long native-resource initialization before presenting
+    # the Gameloft splash. Ignore the brief SwiftUI/app-list frame at launch.
+    wait_s 12
+    local s_splash="" deadline=$((SECONDS+A6_TIMEOUT))
+    while [ $SECONDS -lt $deadline ]; do
+        s_splash="$(shot a6_1_splash)"
+        is_blank "$s_splash" || break
+        wait_s 6
+    done
+    if is_blank "$s_splash"; then
+        check FAIL "Asphalt6: splash rendered"
+        assert_no_crash "$base" "Asphalt6"
+        return
+    fi
+    check PASS "Asphalt6: splash rendered"
+
+    screen_size || { check FAIL "Asphalt6: read screen geometry"; return; }
+    local cx cy
+    cx="$(pt "$SCR_W" 0.50)"; cy="$(pt "$SCR_H" 0.50)"
+
+    # The first non-blank frame can precede "Touch to continue". Give the
+    # intro enough time to settle, then use a physical down/up event.
+    wait_s 35
+    touch_xy "$cx" "$cy"
+
+    local s_menu="" diff=0
+    deadline=$((SECONDS+A6_TIMEOUT))
+    while [ $SECONDS -lt $deadline ]; do
+        wait_s 8
+        s_menu="$(shot a6_2_menu)"
+        is_blank "$s_menu" && continue
+        diff="$(screen_diff_px "$s_splash" "$s_menu")"
+        [ "$diff" -ge "$A6_DIFF_MIN" ] && break
+        touch_xy "$cx" "$cy"
+    done
+    if [ "$diff" -lt "$A6_DIFF_MIN" ]; then
+        check FAIL "Asphalt6: reached main menu"
+        assert_no_crash "$base" "Asphalt6"
+        return
+    fi
+    check PASS "Asphalt6: reached main menu"
+
+    # Main menu: Free Race is the second item in the right-hand list.
+    touch_xy "$(pt "$SCR_W" 0.85)" "$(pt "$SCR_H" 0.42)"
+    wait_s 10
+    local s_track; s_track="$(shot a6_3_track)"
+    if [ "$(screen_diff_px "$s_menu" "$s_track")" -ge "$A6_DIFF_MIN" ]; then
+        check PASS "Asphalt6: Free Race opens track select"
+    else
+        check FAIL "Asphalt6: Free Race opens track select"
+    fi
+
+    # Selected carousel cards use a two-tap confirmation gesture.
+    double_touch_xy "$(pt "$SCR_W" 0.48)" "$(pt "$SCR_H" 0.53)"
+    wait_s 12
+    local s_mode; s_mode="$(shot a6_4_mode)"
+    if [ "$(screen_diff_px "$s_track" "$s_mode")" -ge "$A6_DIFF_MIN" ]; then
+        check PASS "Asphalt6: Nassau opens race-mode select"
+    else
+        check FAIL "Asphalt6: Nassau opens race-mode select"
+    fi
+
+    double_touch_xy "$(pt "$SCR_W" 0.30)" "$(pt "$SCR_H" 0.46)"
+    wait_s 15
+    local s_car; s_car="$(shot a6_5_car)"
+    if [ "$(screen_diff_px "$s_mode" "$s_car")" -ge "$A6_DIFF_MIN" ]; then
+        check PASS "Asphalt6: Normal Race opens car select"
+    else
+        check FAIL "Asphalt6: Normal Race opens car select"
+    fi
+
+    # RACE and the following two confirmation arrows share the bottom-right
+    # location. Each uses the same selected-control double-tap behavior.
+    local next_x next_y
+    next_x="$(pt "$SCR_W" 0.91)"; next_y="$(pt "$SCR_H" 0.60)"
+    double_touch_xy "$next_x" "$next_y"
+    wait_s 25
+    local s_preview; s_preview="$(shot a6_6_preview)"
+    double_touch_xy "$next_x" "$next_y"
+    wait_s 10
+    double_touch_xy "$(pt "$SCR_W" 0.93)" "$next_y"
+    wait_s 25
+    local s_race; s_race="$(shot a6_7_race)"
+
+    if ! is_blank "$s_race" && [ "$(screen_diff_px "$s_preview" "$s_race")" -ge "$A6_DIFF_MIN" ]; then
+        check PASS "Asphalt6: Nassau race renders in-game"
+    else
+        check FAIL "Asphalt6: Nassau race renders in-game"
+    fi
+
+    assert_no_crash "$base" "Asphalt6"
+}
+
 # ---- main ------------------------------------------------------------------
 
 need xcodebuildmcp; need jq; need magick; need xcrun
@@ -392,8 +510,9 @@ case "$SUITE" in
     fbattle)    test_fbattle ;;
     calculator|calc) test_calculator ;;
     angrybirds|ab) test_angrybirds ;;
+    asphalt6|asphalt|a6) test_asphalt6 ;;
     all|"")     test_fbattle; test_calculator ;;
-    *) die "unknown suite: $SUITE (use fbattle|calculator|angrybirds|all)" ;;
+    *) die "unknown suite: $SUITE (use fbattle|calculator|angrybirds|asphalt6|all)" ;;
 esac
 
 echo
