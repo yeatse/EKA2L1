@@ -172,11 +172,8 @@ namespace eka2l1::drivers {
         if (internal_decode_running_out()) {
             if (!more_requested) {
                 const std::lock_guard<std::mutex> guard(callback_lock_);
-                if (more_buffer_callback_) {
-                    more_buffer_callback_(more_buffer_userdata_);
-                }
-                
-                more_requested = true;
+                more_requested = !more_buffer_callback_
+                    || more_buffer_callback_(more_buffer_userdata_);
             }
         }
 
@@ -334,15 +331,22 @@ namespace eka2l1::drivers {
         }
 
         if (bytes_to_copy + read_bytes_ >= request.second) {
+            bool notification_delivered = true;
             {
                 const std::lock_guard<std::mutex> guard(callback_lock_);
                 if (more_buffer_callback_) {
-                    more_buffer_callback_(more_buffer_userdata_);
+                    notification_delivered = more_buffer_callback_(more_buffer_userdata_);
                 }
             }
 
-            read_bytes_ = 0;
-            read_queue_.pop();
+            if (notification_delivered) {
+                read_bytes_ = 0;
+                read_queue_.pop();
+            } else {
+                // The data is already in the guest buffer. Retain the request
+                // at its completed size so only the notification is retried.
+                read_bytes_ += bytes_to_copy;
+            }
         } else {
             read_bytes_ += bytes_to_copy;
         }

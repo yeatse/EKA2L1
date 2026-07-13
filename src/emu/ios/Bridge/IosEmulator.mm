@@ -888,7 +888,7 @@ namespace eka2l1::ios {
                 continue;
             }
             NSString *name = relative.lastPathComponent;
-            if (![name hasSuffix:@".map"] && ![name hasSuffix:@"_general.dll"]) {
+            if (![name hasSuffix:@".map"] && ![name hasSuffix:@".dll"]) {
                 continue;
             }
             NSString *src = [patchSource stringByAppendingPathComponent:relative];

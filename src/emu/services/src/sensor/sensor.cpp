@@ -27,6 +27,14 @@
 #include <atomic>
 
 namespace eka2l1 {
+    // CoreMotion/Android callbacks can outlive a queued guest request. The
+    // callback owns this state, not the service session; session_ is only read
+    // or cleared while the kernel lock is held.
+    struct sensor_client_session_callback_state {
+        kernel_system *kern_;
+        sensor_client_session *session_;
+    };
+
     sensor_server::sensor_server(eka2l1::system *sys)
         : service::typical_server(sys, "!SensorServer") {
     }
@@ -38,7 +46,19 @@ namespace eka2l1 {
 
     sensor_client_session::sensor_client_session(service::typical_server *serv, const kernel::uid ss_id,
         epoc::version client_version)
-        : service::typical_session(serv, ss_id, client_version) {
+        : service::typical_session(serv, ss_id, client_version)
+        , callback_state_(std::make_shared<sensor_client_session_callback_state>(
+              sensor_client_session_callback_state{ serv->get_kernel_object_owner(), this })) {
+    }
+
+    sensor_client_session::~sensor_client_session() {
+        // Service sessions are destroyed under the kernel lock. Invalidate the
+        // indirection before controllers release any queued backend callbacks.
+        callback_state_->session_ = nullptr;
+
+        for (auto &channel : channels_) {
+            channel.second->cancel_data_listening();
+        }
     }
 
     void sensor_client_session::fetch(service::ipc_context *ctx) {
@@ -185,6 +205,13 @@ namespace eka2l1 {
         auto find_result = channels_.find(channel_id);
         
         if (find_result != channels_.end()) {
+            auto data_msg = channel_data_msgs_.find(channel_id);
+            if (data_msg != channel_data_msgs_.end()) {
+                data_msg->second->complete(epoc::error_cancel);
+                channel_data_msgs_.erase(data_msg);
+            }
+            ask_recv_time_.erase(channel_id);
+
             channels_.erase(find_result);
             ctx->complete(epoc::error_none);
 
@@ -245,6 +272,7 @@ namespace eka2l1 {
             ite->second->complete(epoc::error_cancel);
             channel_data_msgs_.erase(ite);
         }
+        ask_recv_time_.erase(channel_id);
 
         ctx->complete(epoc::error_none);
     }
@@ -264,51 +292,96 @@ namespace eka2l1 {
             return;
         }
 
+        // Both output descriptors are mandatory in the Sensor Framework IPC
+        // contract. Reject bad guest pointers now instead of arming a host
+        // callback which cannot safely report its result later.
+        if (!ctx->get_descriptor_argument_ptr(1) || !ctx->get_descriptor_argument_ptr(2)
+            || (ctx->get_argument_max_data_size(2) < sizeof(data_count_ret_val))) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
+        }
+
         channel_data_msgs_[channel_id] = ctx->move_to_new();
         ask_recv_time_[channel_id] = common::get_current_utc_time_in_microseconds_since_epoch();
 
-        channel->receive_data([this, channel_id](std::vector<std::uint8_t> &data, std::size_t packet_sent) {
-            complete_channel_data_request(channel_id, data, packet_sent);
+        const std::shared_ptr<sensor_client_session_callback_state> callback_state = callback_state_;
+        channel->receive_data([callback_state, channel_id](std::vector<std::uint8_t> &data, std::size_t packet_sent) {
+            kernel_system *kern = callback_state->kern_;
+            kern->lock();
+
+            // Taking the kernel lock before touching the session or IPC message
+            // serialises this completion with StopListening, CloseChannel and
+            // client/session teardown on the guest/HLE thread.
+            if (!kern->is_wiping() && callback_state->session_) {
+                callback_state->session_->complete_channel_data_request_locked(kern, channel_id, data, packet_sent);
+            }
+
+            kern->unlock();
         });
     }
 
-    void sensor_client_session::complete_channel_data_request(const std::uint32_t channel_id, std::vector<std::uint8_t> &data, std::size_t packet_sent) {
+    void sensor_client_session::complete_channel_data_request_locked(kernel_system *kern,
+        const std::uint32_t channel_id, std::vector<std::uint8_t> &data, std::size_t packet_sent) {
         auto channel_msg_ite = channel_data_msgs_.find(channel_id);
         if (channel_msg_ite == channel_data_msgs_.end()) {
-            LOG_ERROR(SERVICE_SENSOR, "Channel data receive message is not available!");
             return;
         }
 
         std::unique_ptr<service::ipc_context> context = std::move(channel_msg_ite->second);
+        channel_data_msgs_.erase(channel_msg_ite);
+
         drivers::sensor *controller = get_sensor_channel(channel_id);
 
         if (!controller) {
-            LOG_ERROR(SERVICE_SENSOR, "Channel controller is not available!");
+            ask_recv_time_.erase(channel_id);
             return;
         }
 
-        channel_data_msgs_.erase(channel_msg_ite);
+        // The IPC message retains a raw requester pointer. Validate it while
+        // holding the kernel lock before dereferencing any guest descriptor.
+        if (!context || !context->msg || !kern->is_thread_alive(context->msg->own_thr)) {
+            ask_recv_time_.erase(channel_id);
+            return;
+        }
+
+        if (!context->get_descriptor_argument_ptr(1) || !context->get_descriptor_argument_ptr(2)) {
+            ask_recv_time_.erase(channel_id);
+            context->complete(epoc::error_bad_descriptor);
+            return;
+        }
 
         data_count_ret_val ret_val;
         ret_val.item_count_ = packet_sent;
         ret_val.lost_count_ = 0;
 
         const std::size_t max_write_bytes = context->get_argument_max_data_size(1);
+        const std::size_t count_write_bytes = context->get_argument_max_data_size(2);
+        if (count_write_bytes < sizeof(ret_val)) {
+            ask_recv_time_.erase(channel_id);
+            context->complete(epoc::error_overflow);
+            return;
+        }
+
         const std::size_t max_item_fill = max_write_bytes / controller->data_packet_size();
 
         if (max_item_fill < packet_sent) {
             ret_val.lost_count_ = packet_sent - max_item_fill;
         }
 
-        kernel_system *kern = context->msg->own_thr->get_kernel_object_owner();
-        kern->lock();
+        const bool count_written = context->write_data_to_descriptor_argument(2, ret_val);
+        const bool data_written = context->write_data_to_descriptor_argument(1, data.data(), common::min<std::uint32_t>(
+            static_cast<std::uint32_t>(max_write_bytes), static_cast<std::uint32_t>(data.size())));
 
-        context->write_data_to_descriptor_argument(2, ret_val);
-        context->write_data_to_descriptor_argument(1, data.data(), common::min<std::uint32_t>(
-                static_cast<std::uint32_t>(max_write_bytes), static_cast<std::uint32_t>(data.size())));
+        if (!count_written || !data_written) {
+            ask_recv_time_.erase(channel_id);
+            context->complete(epoc::error_bad_descriptor);
+            return;
+        }
 
         const std::uint64_t now = common::get_current_utc_time_in_microseconds_since_epoch();
-        const std::uint64_t passed = (now - ask_recv_time_[channel_id]);
+        const auto ask_time = ask_recv_time_.find(channel_id);
+        const std::uint64_t passed = (ask_time != ask_recv_time_.end()) ? (now - ask_time->second) : 0;
+        ask_recv_time_.erase(channel_id);
 
         static constexpr std::uint64_t TIME_GET_BACK_REQUEST = 60;
 
@@ -320,7 +393,6 @@ namespace eka2l1 {
         }
 
         context->complete(epoc::error_none);
-        kern->unlock();
     }
 
     static void copy_driver_sensor_property_to_client(drivers::sensor_property_data &source, sensor_property &dest) {

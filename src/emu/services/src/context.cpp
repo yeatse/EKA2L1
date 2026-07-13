@@ -25,6 +25,7 @@
 
 #include <services/context.h>
 #include <utils/des.h>
+#include <utils/err.h>
 #include <utils/sec.h>
 
 #include <config/config.h>
@@ -198,6 +199,13 @@ namespace eka2l1 {
                 if (!is_eka1 && ((int)arg_type & (int)ipc_arg_type::flag_16b)) {
                     eka2l1::epoc::desc16 *des = ptr<epoc::desc16>(msg->args.args[idx]).get(own_pr);
 
+                    if (!des) {
+                        if (err_code) {
+                            *err_code = epoc::error_bad_descriptor;
+                        }
+                        return false;
+                    }
+
                     // We can't handle odd length
                     assert(len % 2 == 0);
 
@@ -214,6 +222,13 @@ namespace eka2l1 {
                     des->assign(own_pr, data, write_size * 2);
                 } else {
                     eka2l1::epoc::des8 *des = ptr<epoc::des8>(msg->args.args[idx]).get(own_pr);
+
+                    if (!des) {
+                        if (err_code) {
+                            *err_code = epoc::error_bad_descriptor;
+                        }
+                        return false;
+                    }
 
                     std::uint32_t write_size = len;
                     const std::uint32_t des_to_write_size = des->get_max_length(own_pr);
@@ -271,6 +286,10 @@ namespace eka2l1 {
             kernel::process *own_pr = msg->own_thr->owning_process();
             epoc::des8 *descriptor = ptr<epoc::des8>(msg->args.args[idx]).get(own_pr);
 
+            if (!descriptor) {
+                return 0;
+            }
+
             if (!is_eka1 && (static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::flag_16b))) {
                 return descriptor->get_max_length(own_pr) * 2;
             }
@@ -297,6 +316,10 @@ namespace eka2l1 {
             kernel::process *own_pr = msg->own_thr->owning_process();
             epoc::des8 *descriptor = ptr<epoc::des8>(msg->args.args[idx]).get(own_pr);
 
+            if (!descriptor) {
+                return 0;
+            }
+
             if (!is_eka1 && (static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::flag_16b))) {
                 return descriptor->get_length() * 2;
             }
@@ -310,6 +333,10 @@ namespace eka2l1 {
             if (sys->get_kernel_system()->is_eka1() || ((int)arg_type & (int)ipc_arg_type::flag_des)) {
                 kernel::process *own_pr = msg->own_thr->owning_process();
                 eka2l1::epoc::des8 *des = ptr<epoc::des8>(msg->args.args[idx]).get(own_pr);
+
+                if (!des) {
+                    return false;
+                }
 
                 des->set_length(own_pr, len);
                 return true;

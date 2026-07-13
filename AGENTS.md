@@ -47,6 +47,18 @@ This repository is an iOS-focused fork of upstream EKA2L1. Agent work should pre
 - Reset noisy runtime logging before final verification unless the task is specifically about diagnostics.
 - Debugging should start from symptoms and logs, then narrow toward root cause. Avoid landing fixes that only mask one title.
 
+### Symbian source-guided diagnosis
+
+- For unclear IPC, ABI, descriptor-slot, panic, or service behavior, verify the contract from Symbian source before guessing. Search the local SDK/includes and OSS tree under `~/Developer/symbian` first; if the component is absent, use `gh search code` against `SymbianSource` repositories.
+- Search by opcode/export/class/panic name, then read both client request construction and server completion/cancel paths. Treat argument types, slot numbers, ownership, and synchronous-vs-asynchronous cancellation in the original source as the compatibility target.
+- Separate a bad guest request from a host lifetime race: validate guest pointers defensively, but also prove that stop/close/session teardown cannot race a queued host callback. Prefer fixing the general service/driver contract over title-specific behavior.
+
+### TestFlight crash symbolication
+
+- Record the app build, crash image load address, and EKA2L1 UUID from `.ips`/`.crash`. Map the build to a commit with `gh run list --workflow "iOS TestFlight"`, then download that run's `EKA2L1-testflight-dSYM-<sha>` artifact.
+- Run `dwarfdump --uuid EKA2L1.app.dSYM` and require an exact UUID match before trusting symbols. Use `xcrun atos -arch arm64 -o <dSYM DWARF binary> -l <image load address> <addresses...>` when frames are not already symbolicated.
+- Compare all reports from the same build before editing code; watchdogs often reveal a shared lock cycle, while random-looking main-thread crashes can be secondary heap corruption. Keep exported crash files and downloaded symbols out of commits.
+
 ### Physical device (devicectl)
 
 The simulator runs on the build host, so it can hide device-only bugs (e.g. resources staged from `__FILE__`-relative paths). Verify device-facing fixes on real hardware. Known device: iPhone Air, UDID `77611A2B-2A02-51FA-BAFC-2104F1D8011A`.

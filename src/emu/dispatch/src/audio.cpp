@@ -378,19 +378,22 @@ namespace eka2l1::dispatch {
     // use-after-free (observed crashing in notify_info::complete on the CoreAudio render
     // thread). Validate the requester against the kernel's live thread list under the kernel
     // lock and drop the stale notification instead of dereferencing a dangling pointer.
-    static void complete_audio_notify_if_alive(kernel_system *kern, epoc::notify_info &info) {
-        if (kern == nullptr) {
-            return;
-        }
-
-        kern->lock();
-
+    static void complete_audio_notify_if_alive_locked(kernel_system *kern, epoc::notify_info &info) {
         if (!info.empty() && kern->is_thread_alive(info.requester)) {
             info.complete(epoc::error_none);
         } else {
             // Requester is gone; drop the stale notification without signalling it.
             info.sts = 0;
         }
+    }
+
+    static void complete_audio_notify_if_alive(kernel_system *kern, epoc::notify_info &info) {
+        if (kern == nullptr) {
+            return;
+        }
+
+        kern->lock();
+        complete_audio_notify_if_alive_locked(kern, info);
 
         kern->unlock();
     }
@@ -621,9 +624,17 @@ namespace eka2l1::dispatch {
         stream_org_new->ll_stream_->register_callback(
             drivers::dsp_stream_notification_more_buffer, [kern](void *userdata) {
                 dsp_epoc_stream *epoc_stream = reinterpret_cast<dsp_epoc_stream *>(userdata);
-                const std::lock_guard<std::mutex> guard(epoc_stream->lock_);
+                if (!kern->try_lock()) {
+                    return false;
+                }
 
-                complete_audio_notify_if_alive(kern, epoc_stream->copied_info_);
+                {
+                    const std::lock_guard<std::mutex> guard(epoc_stream->lock_);
+                    complete_audio_notify_if_alive_locked(kern, epoc_stream->copied_info_);
+                }
+
+                kern->unlock();
+                return true;
             },
             stream_new.get());
 

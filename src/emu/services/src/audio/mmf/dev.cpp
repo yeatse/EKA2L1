@@ -241,18 +241,22 @@ namespace eka2l1 {
             stream_->register_callback(
                 drivers::dsp_stream_notification_more_buffer, [this](void *userdata) {
                     kernel_system *kern = server<mmf_dev_server>()->get_kernel_object_owner();
-                    kern->lock();
+                    if (!kern->try_lock()) {
+                        return false;
+                    }
 
-                    // Lock the access to this variable
-                    const std::lock_guard<std::mutex> guard(dev_access_lock_);
-
-                    if (last_buffer_) {
-                        complete_play(epoc::error_underflow);
-                    } else {
-                        do_report_buffer_to_be_filled();
+                    {
+                        // Keep the established kernel -> session lock order.
+                        const std::lock_guard<std::mutex> guard(dev_access_lock_);
+                        if (last_buffer_) {
+                            complete_play(epoc::error_underflow);
+                        } else {
+                            do_report_buffer_to_be_filled();
+                        }
                     }
 
                     kern->unlock();
+                    return true;
                 },
                 nullptr);
 
@@ -266,18 +270,22 @@ namespace eka2l1 {
             stream_->register_callback(
                 drivers::dsp_stream_notification_more_buffer, [this](void *userdata) {
                     kernel_system *kern = server<mmf_dev_server>()->get_kernel_object_owner();
-                    kern->lock();
+                    if (!kern->try_lock()) {
+                        return false;
+                    }
 
-                    // Lock the access to this variable
-                    const std::lock_guard<std::mutex> guard(dev_access_lock_);
-
-                    if (last_buffer_) {
-                        complete_record(epoc::error_underflow);
-                    } else {
-                        do_report_buffer_to_be_emptied();
+                    {
+                        // Keep the established kernel -> session lock order.
+                        const std::lock_guard<std::mutex> guard(dev_access_lock_);
+                        if (last_buffer_) {
+                            complete_record(epoc::error_underflow);
+                        } else {
+                            do_report_buffer_to_be_emptied();
+                        }
                     }
 
                     kern->unlock();
+                    return true;
                 },
                 nullptr);
 

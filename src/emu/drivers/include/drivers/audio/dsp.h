@@ -45,7 +45,9 @@ namespace eka2l1::drivers {
         dsp_stream_notification_done = 1
     };
 
-    using dsp_stream_notification_callback = std::function<void(void *)>;
+    // Return false when the notification cannot be delivered yet. Streaming
+    // backends will retry buffer notifications on a later audio callback.
+    using dsp_stream_notification_callback = std::function<bool(void *)>;
     using dsp_stream_userdata = void *;
 
     struct dsp_stream {

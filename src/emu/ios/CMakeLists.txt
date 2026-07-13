@@ -113,7 +113,7 @@ set_source_files_properties(${EKA2L1_IOS_DEFAULT_SOUNDFONT} PROPERTIES
 # alongside each other, matching the layout load_patch_libraries expects.
 file(GLOB EKA2L1_IOS_PATCH_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*.map"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*_general.dll")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*.dll")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_PATCH_FILES})
 set_source_files_properties(${EKA2L1_IOS_PATCH_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "patch")

@@ -21,8 +21,9 @@
 #                               respond. Guards the raw-touch pointer path
 #                               (UITouch -> guest pointer-slot mapping).
 #   Asphalt 6    (0x2003B2CC) : Symbian^3/Belle compatibility suite (opt-in,
-#                               not part of `all`): boots X7, reaches the main
-#                               menu, selects Free Race / Nassau / Normal Race,
+#                               not part of `all`): boots X7, asserts the early
+#                               Gameloft movie renders, reaches the main menu,
+#                               selects Free Race / Nassau / Normal Race,
 #                               chooses the Mini, and asserts a rendered race.
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
@@ -55,6 +56,10 @@
 #   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
 #                            seconds, each phase (default 180)
 #   EKA2L1_REG_A6_ROM        Asphalt 6 device firmware code (default rm-707)
+#   EKA2L1_REG_A6_INTRO_TIMEOUT
+#                            budget to observe a Gameloft movie frame (default 20)
+#   EKA2L1_REG_A6_MOVIE_WAIT seconds after launch before the two intro movies
+#                            should have completed (default 75)
 #   EKA2L1_REG_A6_TIMEOUT    Asphalt 6 boot and menu-transition budget
 #                            seconds, each phase (default 240)
 
@@ -74,8 +79,11 @@ AB_TIMEOUT="${EKA2L1_REG_AB_TIMEOUT:-180}"
 # close. Used instead of SCREEN_DIFF_MIN for the Angry Birds assertions.
 AB_DIFF_MIN="${EKA2L1_REG_AB_DIFF_MIN:-150000}"
 A6_ROM="${EKA2L1_REG_A6_ROM:-rm-707}"
+A6_INTRO_TIMEOUT="${EKA2L1_REG_A6_INTRO_TIMEOUT:-20}"
+A6_MOVIE_WAIT="${EKA2L1_REG_A6_MOVIE_WAIT:-75}"
 A6_TIMEOUT="${EKA2L1_REG_A6_TIMEOUT:-240}"
 A6_DIFF_MIN="${EKA2L1_REG_A6_DIFF_MIN:-80000}"
+A6_INTRO_STDEV_MAX="${EKA2L1_REG_A6_INTRO_STDEV_MAX:-0.24}"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
 # clock / FPS-counter noise between captures).
@@ -215,6 +223,19 @@ screens_differ() { [ "$(screen_diff_px "$1" "$2")" -ge "$SCREEN_DIFF_MIN" ]; }
 is_blank() {
     local sd; sd="$(magick "$1" -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null)"
     awk -v s="${sd:-0}" -v m="$BLANK_STDEV_MAX" 'BEGIN{exit !(s<m)}'
+}
+
+# Standard deviation of the centred 3:2 guest display band. Asphalt's early
+# logo/movie frames are sparse on black (moderate variance), while the failure
+# mode is flat black and the later interactive title fills nearly the whole
+# band. This lets the suite prove that it saw the movie, not merely the title.
+guest_band_stdev() {
+    local dims w h band y
+    dims="$(magick identify -format '%w %h' "$1" 2>/dev/null)" || return 1
+    w="${dims%% *}"; h="${dims##* }"
+    band=$((w * 2 / 3)); y=$(((h - band) / 2))
+    magick "$1" -crop "${w}x${band}+0+${y}" +repage -colorspace Gray \
+        -format "%[fx:standard_deviation]" info: 2>/dev/null
 }
 
 # crash check over log lines added since a recorded baseline
@@ -395,33 +416,67 @@ test_asphalt6() {
         return
     fi
 
+    local launch_started=$SECONDS
     launch_uid "$A6_UID" "$A6_ROM" fullscreen
     LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
     local base; base="$(log_baseline)"
 
-    # Asphalt performs a long native-resource initialization before presenting
-    # the Gameloft splash. Ignore the brief SwiftUI/app-list frame at launch.
-    wait_s 12
-    local s_splash="" deadline=$((SECONDS+A6_TIMEOUT))
+    # The Symbian^3 video client must be patched into EKA2L1's FFmpeg-backed
+    # player. Without the versioned v100 DLL, both intro movies consume their
+    # normal time but render black before the title appears.
+    local patch_dll="$(dirname "$LOG")/patch/mediaclientvideo_v100.dll"
+    if [ -f "$patch_dll" ]; then
+        check PASS "Asphalt6: Symbian^3 video patch staged"
+    else
+        check FAIL "Asphalt6: Symbian^3 video patch staged"
+    fi
+
+    # Ignore the brief SwiftUI/app-list frame at launch. Require a moderately
+    # sparse non-black frame in the centred guest band before the interactive
+    # title is eligible to appear; this is the animated Gameloft/movie content.
+    wait_s 2
+    local s_intro="" intro_sd=0 deadline=$((SECONDS+A6_INTRO_TIMEOUT))
     while [ $SECONDS -lt $deadline ]; do
-        s_splash="$(shot a6_1_splash)"
-        is_blank "$s_splash" || break
-        wait_s 6
+        s_intro="$(shot a6_0_gameloft_intro)"
+        intro_sd="$(guest_band_stdev "$s_intro")"
+        if awk -v s="${intro_sd:-0}" -v lo="$BLANK_STDEV_MAX" -v hi="$A6_INTRO_STDEV_MAX" \
+            'BEGIN{exit !(s>=lo && s<=hi)}'; then
+            break
+        fi
+        wait_s 1
     done
-    if is_blank "$s_splash"; then
-        check FAIL "Asphalt6: splash rendered"
+    if awk -v s="${intro_sd:-0}" -v lo="$BLANK_STDEV_MAX" -v hi="$A6_INTRO_STDEV_MAX" \
+        'BEGIN{exit !(s>=lo && s<=hi)}'; then
+        check PASS "Asphalt6: early Gameloft movie rendered"
+    else
+        check FAIL "Asphalt6: early Gameloft movie rendered"
         assert_no_crash "$base" "Asphalt6"
         return
     fi
-    check PASS "Asphalt6: splash rendered"
+
+    # Let both bundled movies finish so the next capture is the stable "Touch
+    # to continue" title rather than a promotional-video frame.
+    local remaining=$((launch_started+A6_MOVIE_WAIT-SECONDS))
+    [ "$remaining" -gt 0 ] && wait_s "$remaining"
+    local s_splash=""; s_splash="$(shot a6_1_splash)"
+    deadline=$((SECONDS+A6_TIMEOUT))
+    while [ $SECONDS -lt $deadline ]; do
+        is_blank "$s_splash" || break
+        wait_s 6
+        s_splash="$(shot a6_1_splash)"
+    done
+    if is_blank "$s_splash"; then
+        check FAIL "Asphalt6: title rendered after intro movies"
+        assert_no_crash "$base" "Asphalt6"
+        return
+    fi
+    check PASS "Asphalt6: title rendered after intro movies"
 
     screen_size || { check FAIL "Asphalt6: read screen geometry"; return; }
     local cx cy
     cx="$(pt "$SCR_W" 0.50)"; cy="$(pt "$SCR_H" 0.50)"
 
-    # The first non-blank frame can precede "Touch to continue". Give the
-    # intro enough time to settle, then use a physical down/up event.
-    wait_s 35
+    # Use a physical down/up event on the stable "Touch to continue" title.
     touch_xy "$cx" "$cy"
 
     local s_menu="" diff=0

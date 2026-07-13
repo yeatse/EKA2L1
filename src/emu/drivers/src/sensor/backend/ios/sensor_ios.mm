@@ -263,14 +263,21 @@ namespace eka2l1::drivers {
     }
 
     bool sensor_ios::cancel_data_listening() {
-        if (!listening_) {
-            return false;
+        const bool was_listening = listening_;
+
+        if (was_listening) {
+            listening_ = false;
+            driver_->untrack_active_listener(&listening_link_);
         }
 
-        listening_ = false;
-        driver_->untrack_active_listener(&listening_link_);
+        // A request that has not yet been moved into dispatch_sample's local
+        // ready list must not retain the service callback after cancellation.
+        const std::lock_guard<std::mutex> guard(lock_);
+        data_callback_ = nullptr;
+        events_translated_.clear();
+        packets_buffered_ = 0;
 
-        return true;
+        return was_listening;
     }
 
     std::vector<sensor_property_data> sensor_ios::get_all_properties(const sensor_property *prop_value) {

@@ -4,7 +4,7 @@
 
 Asphalt 6（UID `0x2003B2CC`）在 X7 / rm-707 上的黑屏与卡死不是单一游戏缺陷，而是 Symbian^3/Belle 路径连续命中了 SCDV、Belle executive、ROM DLL 加载、MMF/ALF、Window Server、Accessory 和 Loader 等多处通用仿真缺口。
 
-修复后可稳定完成：启动 → 主菜单触控 → Free Race → Nassau → Normal Race → Mini 选车 → 正式比赛。车辆、赛道和 HUD 正常渲染，调查时实测约 17–27 FPS、车速 199 km/h；没有加入 Asphalt UID、文件名或资源路径特判。
+修复后可稳定完成：Gameloft 动画 → Asphalt 6 宣传片 → 标题画面 → 主菜单触控 → Free Race → Nassau → Normal Race → Mini 选车 → 正式比赛。车辆、赛道和 HUD 正常渲染，调查时实测约 17–27 FPS、车速 199 km/h；没有加入 Asphalt UID、文件名或资源路径特判。
 
 ## 复现条件
 
@@ -23,7 +23,7 @@ Asphalt 6（UID `0x2003B2CC`）在 X7 / rm-707 上的黑屏与卡死不是单一
   }' --output json
   ```
 
-首次加载资源较慢，启动后应等待至少 30–60 秒再判断画面。
+正常情况下启动约 2–3 秒后即出现 Gameloft 动画；两段片头合计约 64 秒，不跳过时约 75 秒后进入标题画面。若这段时间始终纯黑、随后直接跳到标题，属于视频补丁未生效，不是正常加载。
 
 ## 根因链
 
@@ -38,10 +38,60 @@ Asphalt 6（UID `0x2003B2CC`）在 X7 / rm-707 上的黑屏与卡死不是单一
 | Window Server | screen device 请求挂起 | 缺 `GetCurrentScreenModeAttributes` 和 extension query | 返回 ABI 正确的 60-byte `TSizeMode`，无扩展时完成 `0` |
 | Accessory Server | Belle accessory client 挂起 | 只实现了旧 S60v3 opcode | 增加 modern connection subsession、状态查询/通知/取消 |
 | Loader | IVE policy server 等待 PDD load | `ELoadPhysicalDevice` 未处理 | 与现有 LDD HLE 策略一致：校验名称并完成成功 |
+| 早期开场 | 两段电影播放期间纯黑，随后直接进标题 | iOS bundle 只收集 `*_general.dll`，遗漏 X7 所需 `mediaclientvideo_v100.dll` | bundle/staging 接受全部版本化 patch DLL，由 loader 按 EPOC 版本选择 |
+| 真机音频回收 | 黑屏且 host 偶现卡死，最终被 iOS watchdog 杀死 | guest 持 kernel lock 停止 AudioUnit，render callback 同时阻塞等待同一 kernel lock | 实时音频通知改用 kernel `try_lock`，锁忙时保留请求并在后续 callback 重试 |
+| 真机重力感应 | CoreMotion worker 在 `desc_base::get_max_length()` 空指针崩溃 | 传感器异步完成先取 pending IPC、后拿 kernel lock，和 guest stop/close 释放 descriptor 竞态 | callback 先拿 kernel lock并校验 session/requester/descriptor；stop/close 同锁取消，详见 [`ios-sensor-async-ipc-crash.md`](./ios-sensor-async-ipc-crash.md) |
 
 最后一个阻塞是 MMF new-architecture Stop；补齐后游戏开始持续加载 `.bdae`、shader、车辆和赛道资源，并正常提交 GLES 帧。
 
 日志中针对不存在的 loose `.tga`、`.glsl.config` 和 fallback shader 路径仍会出现 `Trying to open a non-existent file`。游戏会继续从归档资源加载，这些不是启动失败或 guest crash。
+
+## 真机 watchdog 卡死
+
+TestFlight build `260737`（commit `16ee63770`）的三份 `.ips` 都是 `EXC_CRASH / SIGKILL`、`0x8BADF00D scene-update watchdog`，不是 guest panic。`EKA2L1-2026-07-13-114528.ips` 与 `...122638.ips` 在触摸事件时卡死，`...114848.ips` 在关闭运行中应用时卡死。
+
+符号表从 GitHub Actions TestFlight run `29219577085` 下载：
+
+```sh
+gh run download 29219577085 \
+  -n EKA2L1-testflight-dSYM-16ee63770c4c3d8e74e7f288a2850f54ee8106eb \
+  -D /tmp/eka2l1-as6-dsym
+
+dwarfdump --uuid /tmp/eka2l1-as6-dsym/EKA2L1.app.dSYM
+```
+
+dSYM UUID `FBB29AC8-FB7B-395E-AF89-0C17C9CF294D` 与三份 crash 的 EKA2L1 image 完全匹配。符号化后的共同锁序是：
+
+```text
+guest/SVC thread
+  kernel lock held
+  -> ~mmf_dev_server_session / eaudio_dsp_stream_destroy
+  -> audiounit_ios_output_stream::stop
+  -> AudioOutputUnitStop (同步等待 render callback 退出)
+
+AURemoteIO render thread
+  -> DSP more-buffer callback
+  -> kernel lock (等待 guest/SVC thread)
+
+iOS main thread
+  -> touch / closeRunningApp
+  -> kernel lock (同样等待，最终触发 scene watchdog)
+```
+
+修复为通用的实时线程通知语义：`dsp_stream_notification_callback` 返回通知是否已经投递；MMF 与 EAudio 的 CoreAudio callback 只尝试获取 kernel lock，失败即返回，底层保留 completed request / `more_requested` 状态并在下一次 callback 重试。这样 `AudioOutputUnitStop` 不再等待一个被 guest 自己持有的锁，同时通知不会丢失。没有绕过 watchdog、强制超时或 Asphalt 专用条件。
+
+同目录另有一份 TestFlight `260729` 的 `.crash`，是独立的 CoreMotion/Sensor Framework 异步 IPC 竞态：slot 1 数据 descriptor 读取后，guest stop/close 释放了 slot 2 counts descriptor，host 回调随后空指针写回。CI dSYM 匹配、完整时序与通用修复见 [`ios-sensor-async-ipc-crash.md`](./ios-sensor-async-ipc-crash.md)。
+
+## 早期 Gameloft / Asphalt 电影
+
+游戏资源本身完整：
+
+- `movie/logo_gameloft_480x320.mp4`：MPEG-4 + AAC，7.33 秒
+- `movie/a6_480x320.mp4`：MPEG-4 + AAC，56.04 秒
+
+黑屏版本的日志在启动即报 `Can't find suitable patch DLL for map mediaclientvideo.dll`。仓库已有通过 E32 校验的 `src/patch/mediaclientvideo/group/mediaclientvideo_v100.dll`（UID2 `0x10003B19`、UID3 `0xEE000009`、167 exports），但 iOS CMake bundle glob 和沙盒 staging 过滤器都只接受 `_general.dll`，所以 `.map` 存在而真正的 Symbian^3 实现缺席。
+
+修复后 iOS bundle 会携带所有 `group/*.dll`，沙盒 staging 同样接受所有 `.dll`；`lib_manager` 继续按 ROM EPOC 版本选择 `_v100`、`_v81a` 或 `_general`，没有改变 Android/Qt 加载策略。模拟器逐帧验证显示启动约 2–3 秒后开始 Gameloft 蓝色描边动画，完整显示 `GAMELOFT`，随后正常播放跑车宣传片。
 
 ## SCDV DLL 制作
 
@@ -135,9 +185,10 @@ scripts/ios_regression_test.sh --install \
 scripts/ios_regression_test.sh asphalt6
 ```
 
-脚本要求 booted simulator 已安装 rm-707 与 Asphalt 6，并依赖 `xcodebuildmcp`、`jq`、ImageMagick 和 xcodebuildmcp bundled `axe`。它会保存以下状态到 `/tmp/eka2l1-regression/`：
+脚本要求 booted simulator 已安装 rm-707 与 Asphalt 6，并依赖 `xcodebuildmcp`、`jq`、ImageMagick 和 xcodebuildmcp bundled `axe`。它先检查 `mediaclientvideo_v100.dll` 已 staged，并在标题出现前用 guest display band 的像素方差断言捕获到真实 Gameloft 电影帧；随后让两段电影完整播完再继续菜单/比赛流程。它会保存以下状态到 `/tmp/eka2l1-regression/`：
 
-- Gameloft/Asphalt splash
+- 早期 Gameloft 电影帧
+- 两段电影结束后的 Asphalt 标题
 - 主菜单
 - Nassau track select
 - race-mode select
@@ -149,9 +200,10 @@ scripts/ios_regression_test.sh asphalt6
 
 ## 最终验证
 
-- Asphalt 6：正式进入 Nassau Normal Race，车辆/赛道/HUD 正常
-- 标准 Release 回归：连续两轮 `PASS=8 FAIL=0`
+- Asphalt 6：Gameloft 动画与宣传片正常出帧，正式进入 Nassau Normal Race，车辆/赛道/HUD 正常；专用回归 `PASS=9 FAIL=0`
+- 标准 Release 回归：`PASS=8 FAIL=0`
 - Angry Birds X7 触屏/GLES 回归：`PASS=5 FAIL=0`
 - SCDV C++ 完整源码：macOS Symbian DLL 工具链编译成功
 - SCDV binary patch：E32 header/UID/export 校验成功
 - 最终日志：无 Asphalt guest panic、access violation 或 crash
+- iPhone Air 当前离线，新的音频锁序与 CoreMotion IPC 修复仍需在真机复跑；模拟器已覆盖启动、完整片头、比赛与应用切换路径
