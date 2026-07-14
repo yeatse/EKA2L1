@@ -43,7 +43,7 @@ namespace eka2l1::drivers {
         std::uint32_t id;
         framebuffer_ptr fb;
         texture_ptr tex;
-        std::unique_ptr<drawable> ds_tex;
+        texture_ptr ds_tex;
         int bpp;
 
         explicit bitmap(graphics_driver *driver, const eka2l1::vec2 &size, const int initial_bpp);

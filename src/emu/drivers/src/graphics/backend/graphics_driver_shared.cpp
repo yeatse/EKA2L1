@@ -141,27 +141,13 @@ namespace eka2l1::drivers {
         return texture;
     }
 
-    static std::unique_ptr<drawable> instantiate_bitmap_depth_stencil_texture(graphics_driver *driver, const eka2l1::vec2 &size) {
-#if EKA2L1_PLATFORM(IOS)
-        // iOS GLES rejects the depth24-stencil8 *texture* attachment used for bitmap
-        // FBOs (GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT). Dropping the attachment entirely
-        // is not an option: EGL window surfaces are bitmaps too, so GLES games lose all
-        // depth testing (e.g. Asphalt 6's showcase car gets painted over by later blended
-        // passes). Use a renderbuffer instead, which GLES accepts for packed depth-stencil.
-        auto ds_buf = make_renderbuffer(driver);
-        if (!ds_buf->create(driver, size, texture_format::depth24_stencil8)) {
-            return nullptr;
-        }
-
-        return ds_buf;
-#else
+    static texture_ptr instantiate_bitmap_depth_stencil_texture(graphics_driver *driver, const eka2l1::vec2 &size) {
         auto ds_tex = make_texture(driver);
         ds_tex->create(driver, 2, 0, eka2l1::vec3(size.x, size.y, 0),
             texture_format::depth24_stencil8, texture_format::depth_stencil, texture_data_type::uint_24_8,
             nullptr, 0);
 
         return ds_tex;
-#endif
     }
 
     bitmap::bitmap(graphics_driver *driver, const eka2l1::vec2 &size, const int initial_bpp)
