@@ -81,7 +81,7 @@ namespace eka2l1::dispatch {
             add_static_string(GLES_STATIC_STRING_KEY_EXTENSIONS, dispatch::get_es1_extensions(driver));
             add_static_string(GLES_STATIC_STRING_KEY_VERSION, GLES1_STATIC_STRING_VERSION);
             add_static_string(GLES_STATIC_STRING_KEY_VENDOR_ES2, GLES2_STATIC_STRING_VENDOR);
-            add_static_string(GLES_STATIC_STRING_KEY_RENDERER_ES2, GLES2_STATIC_STRING_VENDOR);
+            add_static_string(GLES_STATIC_STRING_KEY_RENDERER_ES2, GLES2_STATIC_STRING_RENDERER);
             add_static_string(GLES_STATIC_STRING_KEY_EXTENSIONS_ES2, dispatch::get_es2_extensions(driver));
             add_static_string(GLES_STATIC_STRING_KEY_VERSION_ES2, GLES2_STATIC_STRING_VERSION);
             add_static_string(GLES_STATIC_STRING_SHADER_LANGUAGE_VERSION_ES2, GLES2_STATIC_STRING_SHADER_LANGUAGE_VERSION);
