@@ -887,6 +887,17 @@ namespace eka2l1::drivers {
         if (vert_off == 0) {
             glDrawElements(prim_mode_to_gl_enum(prim_mode), count, data_format_to_gl_enum(val_type), reinterpret_cast<GLvoid *>(index_off_64));
         } else {
+#if EKA2L1_PLATFORM(IOS)
+            // ios_gl_loader's glDrawElementsBaseVertex stub drops the base vertex
+            // (GLES3.0 has no base-vertex draw). No caller passes a non-zero base
+            // today; surface it loudly if one ever does instead of silently
+            // rendering the wrong vertices.
+            static bool base_vertex_warned = false;
+            if (!base_vertex_warned) {
+                base_vertex_warned = true;
+                LOG_ERROR(DRIVER_GRAPHICS, "draw_indexed with non-zero base vertex ({}) is unsupported on iOS; geometry will use the wrong vertices", vert_off);
+            }
+#endif
             glDrawElementsBaseVertex(prim_mode_to_gl_enum(prim_mode), count, data_format_to_gl_enum(val_type), reinterpret_cast<GLvoid *>(index_off_64), vert_off);
         }
     }
