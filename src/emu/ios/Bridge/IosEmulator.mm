@@ -288,44 +288,41 @@ namespace eka2l1::ios {
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 
-    // A Symbian icon mask comes in two flavours that need opposite polarities:
-    //   * A real grayscale mask (gray2 / gray4 / gray16 / gray256) stores opacity
-    //     directly — white is opaque, black transparent. convert_to_rgba8888
-    //     writes that value straight into the alpha channel.
-    //   * A colour bitmap reused as a colour-key mask goes through
-    //     make_standard_mask, which sets alpha to 255 only where the pixel is
-    //     pure white; here white marks the (transparent) backdrop.
-    static bool mask_is_grayscale(std::uint32_t bpp, std::uint32_t color) {
-        switch (bpp) {
-        case 1:
-        case 2:
-            return true;                 // gray2 / gray4
-        case 4:
-        case 8:
-            return color == 0;           // gray16 / gray256 vs color16 / color256
-        default:
-            return false;                // color4k / color64k / color16m(a)
-        }
+    // A Symbian icon mask comes in two flavours that need opposite polarities,
+    // told apart by colour depth rather than the has-colour flag:
+    //   * A genuine alpha/soft mask is palettised grayscale (<= 8bpp): gray2 /
+    //     gray4 / gray16 / gray256, and — on S60v2 ROMs — the occasional
+    //     color256 that still holds gray-valued opacity. Its luminance is the
+    //     alpha directly: white is opaque, black transparent.
+    //   * A colour bitmap (>= 12bpp: color4k / color64k / color16m) reused as a
+    //     colour-key mask marks the transparent backdrop in white, so its
+    //     polarity is inverted.
+    // Keying off has-colour instead would misclassify S60v2's color256 masks as
+    // colour-key and invert them, cutting the icon out over its background.
+    static bool mask_is_soft(std::uint32_t bpp) {
+        return bpp <= 8;
     }
 
-    // Composite a Symbian icon mask (already converted to RGBA with
-    // make_standard_mask) onto the main icon's alpha channel. Grayscale masks map
-    // their value straight to alpha (white opaque); colour-key masks invert it so
-    // the white backdrop becomes transparent. Anti-aliased gray masks are honoured
-    // smoothly. Without this the icon's masked backdrop (often a magenta colour
-    // key) renders opaque.
+    // Composite a Symbian icon mask (converted with make_standard_mask) onto the
+    // main icon's alpha channel.
+    //   * A soft mask maps its gray value straight to alpha (white opaque). The
+    //     mask is gray-valued, so its red channel carries the luminance directly
+    //     and anti-aliased edges are preserved.
+    //   * A colour-key mask instead inverts the pure-white test that
+    //     make_standard_mask left in the alpha channel, so only the white
+    //     backdrop (e.g. a magenta colour key) becomes transparent.
+    // Without this the icon's masked backdrop renders opaque.
     static void apply_mask_alpha(std::vector<std::uint8_t> &main_rgba,
                                  const std::vector<std::uint8_t> &mask_rgba,
-                                 std::size_t w, std::size_t h, bool grayscale) {
+                                 std::size_t w, std::size_t h, bool soft) {
         const std::size_t count = w * h;
         if (main_rgba.size() < count * 4 || mask_rgba.size() < count * 4) {
             return;
         }
         for (std::size_t i = 0; i < count; ++i) {
-            const std::uint8_t mask_alpha = mask_rgba[i * 4 + 3];
-            main_rgba[i * 4 + 3] = grayscale
-                ? mask_alpha
-                : static_cast<std::uint8_t>(255 - mask_alpha);
+            main_rgba[i * 4 + 3] = soft
+                ? mask_rgba[i * 4 + 0]
+                : static_cast<std::uint8_t>(255 - mask_rgba[i * 4 + 3]);
         }
     }
 
@@ -360,7 +357,7 @@ namespace eka2l1::ios {
                 eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
                 if (eka2l1::epoc::convert_to_rgba8888(fbsserv, parser, 1, mask_dst, true)) {
                     apply_mask_alpha(rgba, mask_rgba, w, h,
-                        mask_is_grayscale(mask_hdr.bit_per_pixels, mask_hdr.color));
+                        mask_is_soft(mask_hdr.bit_per_pixels));
                 }
             }
         }
@@ -390,8 +387,7 @@ namespace eka2l1::ios {
                 eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
                 if (eka2l1::epoc::convert_to_rgba8888(fbsserv, mask_bitmap, mask_dst, true)) {
                     apply_mask_alpha(rgba, mask_rgba, w, h,
-                        mask_is_grayscale(mask_bitmap->header_.bit_per_pixels,
-                            mask_bitmap->header_.color));
+                        mask_is_soft(mask_bitmap->header_.bit_per_pixels));
                 }
             }
         }
