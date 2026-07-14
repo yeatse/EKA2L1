@@ -10,6 +10,8 @@
 #include <drivers/audio/backend/audiounit_ios/stream_audiounit_ios.h>
 #include <drivers/audio/backend/baeplat_impl.h>
 
+#include <algorithm>
+
 namespace {
 
 // AVAudioSession is a shared per-process singleton. Configure it on first
@@ -56,6 +58,38 @@ namespace eka2l1::drivers {
             return static_cast<std::uint32_t>(r);
         }
         return 48000;
+    }
+
+    void audiounit_ios_audio_driver::suspend() {
+        audio_driver::suspend();
+    }
+
+    void audiounit_ios_audio_driver::resume() {
+        if (!suspending()) {
+            return;
+        }
+
+        // Reactivating AVAudioSession does not guarantee that RemoteIO units
+        // interrupted by the deactivation begin rendering again. Keep the
+        // guest-visible stream state intact, but explicitly restart every
+        // live unit before the emulator threads leave their lifecycle pause.
+        std::lock_guard<std::mutex> guard(streams_mutex_);
+        for (audiounit_ios_stream_base *stream : streams_) {
+            if (stream) {
+                stream->restart_after_session_activation();
+            }
+        }
+        audio_driver::resume();
+    }
+
+    void audiounit_ios_audio_driver::register_stream(audiounit_ios_stream_base *stream) {
+        std::lock_guard<std::mutex> guard(streams_mutex_);
+        streams_.push_back(stream);
+    }
+
+    void audiounit_ios_audio_driver::unregister_stream(audiounit_ios_stream_base *stream) {
+        std::lock_guard<std::mutex> guard(streams_mutex_);
+        streams_.erase(std::remove(streams_.begin(), streams_.end(), stream), streams_.end());
     }
 
     std::unique_ptr<audio_output_stream> audiounit_ios_audio_driver::new_output_stream(

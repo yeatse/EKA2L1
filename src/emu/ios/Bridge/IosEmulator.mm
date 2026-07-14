@@ -1731,11 +1731,11 @@ namespace eka2l1::ios {
     if (_state->sensor_driver) {
         _state->sensor_driver->pause();
     }
-    // 3.7: drop the AVAudioSession activation while we're in the background
-    // so the system can route audio to whatever's actually frontmost. The
-    // session reactivates on resume below; the AURemoteIO units themselves
-    // are left untouched — the data callback simply stops being invoked
-    // until the session is active again.
+    if (_state->audio_driver) {
+        _state->audio_driver->suspend();
+    }
+    // Drop the AVAudioSession activation while we're in the background so
+    // the system can route audio to whatever is actually frontmost.
     NSError *err = nil;
     [[AVAudioSession sharedInstance] setActive:NO
         withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
@@ -1748,16 +1748,22 @@ namespace eka2l1::ios {
 
 - (void)resume {
     if (!_state) return;
-    _state->paused = false;
-    if (_state->sensor_driver) {
-        _state->sensor_driver->resume();
-    }
     NSError *err = nil;
-    [[AVAudioSession sharedInstance] setActive:YES error:&err];
+    const BOOL audio_session_active =
+        [[AVAudioSession sharedInstance] setActive:YES error:&err];
     if (err) {
         LOG_WARN(eka2l1::FRONTEND_CMDLINE, "iOS audio: setActive:YES failed: {}",
             err.localizedDescription.UTF8String ?: "unknown");
     }
+    if (audio_session_active && _state->audio_driver) {
+        _state->audio_driver->resume();
+    }
+    if (_state->sensor_driver) {
+        _state->sensor_driver->resume();
+    }
+    // Resume guest execution only after host devices have been restored, so
+    // guest stream start/stop calls cannot race the AudioUnit restart above.
+    _state->paused = false;
 }
 
 - (void)submitPointerEventAtX:(CGFloat)x

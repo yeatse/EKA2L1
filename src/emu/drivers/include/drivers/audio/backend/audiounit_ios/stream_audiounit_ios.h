@@ -23,8 +23,12 @@ using AudioUnit = struct OpaqueAudioComponentInstance *;
 #endif
 
 namespace eka2l1::drivers {
+    struct audiounit_ios_audio_driver;
+
     // Common bits used by output and input AURemoteIO streams.
     struct audiounit_ios_stream_base {
+        friend struct audiounit_ios_audio_driver;
+
     protected:
         AudioUnit unit_ = nullptr;
         data_callback callback_;
@@ -54,6 +58,7 @@ namespace eka2l1::drivers {
         bool create_unit();
         bool start_unit();
         bool stop_unit();
+        bool restart_after_session_activation();
 
         // Must be called from the MOST-DERIVED destructor: the render
         // callback invokes the virtual should_idle(), so the unit has to be
@@ -86,6 +91,7 @@ namespace eka2l1::drivers {
         bool should_idle() override;
 
     private:
+        audiounit_ios_audio_driver *ios_driver_;
         std::atomic<bool> pausing_{false};
         std::atomic<float> volume_{1.0f};
     };
@@ -105,5 +111,8 @@ namespace eka2l1::drivers {
 
     protected:
         bool should_idle() override;
+
+    private:
+        audiounit_ios_audio_driver *ios_driver_;
     };
 }

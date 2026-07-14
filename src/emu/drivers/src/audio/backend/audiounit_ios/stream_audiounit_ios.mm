@@ -7,6 +7,7 @@
 
 #include <common/log.h>
 #include <drivers/audio/audio.h>
+#include <drivers/audio/backend/audiounit_ios/audio_audiounit_ios.h>
 #include <drivers/audio/backend/audiounit_ios/stream_audiounit_ios.h>
 
 #include <algorithm>
@@ -228,6 +229,28 @@ namespace eka2l1::drivers {
         return true;
     }
 
+    bool audiounit_ios_stream_base::restart_after_session_activation() {
+        if (!unit_ || !running_.load()) {
+            return true;
+        }
+
+        // running_ is the guest-visible intent and deliberately remains true:
+        // this is only a host AudioUnit restart after AVAudioSession was
+        // deactivated, not a stop requested by the emulated application.
+        const OSStatus stop_result = AudioOutputUnitStop(unit_);
+        if (stop_result != noErr) {
+            LOG_WARN(DRIVER_AUD, "AudioOutputUnitStop before session resume failed: {}",
+                stop_result);
+        }
+        const OSStatus start_result = AudioOutputUnitStart(unit_);
+        if (start_result != noErr) {
+            LOG_ERROR(DRIVER_AUD, "AudioOutputUnitStart after session resume failed: {}",
+                start_result);
+            return false;
+        }
+        return true;
+    }
+
     // Implemented in the header via friend / accessor; placed here so the
     // input render callback can fetch the AudioUnit handle without exposing
     // ivars to TU-local helpers.
@@ -243,10 +266,13 @@ namespace eka2l1::drivers {
     audiounit_ios_output_stream::audiounit_ios_output_stream(audio_driver *driver,
         const std::uint32_t sample_rate, const std::uint8_t channels, data_callback callback)
         : audio_output_stream(driver, sample_rate, channels)
-        , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/false) {
+        , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/false)
+        , ios_driver_(static_cast<audiounit_ios_audio_driver *>(driver)) {
+        ios_driver_->register_stream(this);
     }
 
     audiounit_ios_output_stream::~audiounit_ios_output_stream() {
+        ios_driver_->unregister_stream(this);
         dispose_unit();
     }
 
@@ -300,10 +326,13 @@ namespace eka2l1::drivers {
     audiounit_ios_input_stream::audiounit_ios_input_stream(audio_driver *driver,
         const std::uint32_t sample_rate, const std::uint8_t channels, data_callback callback)
         : audio_input_stream(driver, sample_rate, channels)
-        , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/true) {
+        , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/true)
+        , ios_driver_(static_cast<audiounit_ios_audio_driver *>(driver)) {
+        ios_driver_->register_stream(this);
     }
 
     audiounit_ios_input_stream::~audiounit_ios_input_stream() {
+        ios_driver_->unregister_stream(this);
         dispose_unit();
     }
 
