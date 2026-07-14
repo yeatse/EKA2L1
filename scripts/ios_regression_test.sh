@@ -13,6 +13,11 @@
 #   Calculator   (0x10005902) : renders its default UI, accepts number input,
 #                               left soft key opens the Options menu, right soft
 #                               key closes it.
+#   N95 Calc     (0x10005902) : boots Calculator on the N95 (rm-320) and asserts
+#                               the HOST process survives boot and the UI
+#                               renders. Guards the patch-DLL inflate tail-word
+#                               overread that nondeterministically corrupted the
+#                               host heap on this device.
 #   Angry Birds  (0x20030E51) : Symbian^3 touch-guest suite (opt-in, not part
 #                               of `all`): boots the X7 (rm-707), taps the
 #                               loading screen once (used to wedge all input
@@ -28,7 +33,8 @@
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
 # (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
-# ImageMagick (`magick`) on PATH. The angrybirds and asphalt6 suites additionally
+# ImageMagick (`magick`) on PATH. The n95calc suite (part of `all`) additionally
+# needs the N95 (rm-320) mounted. The angrybirds and asphalt6 suites additionally
 # need the X7 (rm-707), their respective game installed, and the `axe` HID tool
 # (bundled inside xcodebuildmcp; auto-located). It does NOT build.
 #
@@ -41,9 +47,10 @@
 #       build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
 #
 # Usage:
-#   scripts/ios_regression_test.sh                 # fbattle + calculator
+#   scripts/ios_regression_test.sh                 # fbattle + calculator + n95calc
 #   scripts/ios_regression_test.sh fbattle         # FBattle only
 #   scripts/ios_regression_test.sh calculator      # Calculator only
+#   scripts/ios_regression_test.sh n95calc         # N95 boot/host-survival only
 #   scripts/ios_regression_test.sh angrybirds      # X7 touch suite only
 #   scripts/ios_regression_test.sh asphalt6        # X7 Asphalt 6 race suite
 #   scripts/ios_regression_test.sh --install <path-to-EKA2L1.app> [suite]
@@ -366,6 +373,40 @@ test_calculator() {
     assert_no_crash "$base" "Calculator"
 }
 
+# N95 (rm-320) Calculator boot. Guards the patch-DLL inflate tail-word overread:
+# the deflate bit reader used to load heap garbage past the end of the
+# compressed E32 image, nondeterministically corrupting decompressed patch-DLL
+# code and killing the whole host process during boot (random stacks in
+# font/bitmap paths; rm-320 was the reproducing device while rm-409 booted
+# fine). The assertion that matters here is host-process survival, which the
+# other suites never check because their failure mode was guest-side.
+test_n95calc() {
+    echo "== N95 Calculator ($CALC_UID on rm-320) =="
+    local crash_stamp="$OUTDIR/.n95_launch_stamp"
+    touch "$crash_stamp"
+
+    launch_uid "$CALC_UID" rm-320
+    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
+    wait_s 2
+    local base; base="$(log_baseline)"
+    wait_s 22
+
+    local host_crash
+    host_crash="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'EKA2L1*.ips' -newer "$crash_stamp" 2>/dev/null | head -1)"
+    if [ -z "$host_crash" ] && xcrun simctl spawn "$SIM" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE_ID"; then
+        check PASS "N95Calc: host process survives boot"
+    else
+        check FAIL "N95Calc: host process survives boot"
+        [ -n "$host_crash" ] && echo "      crash report: $host_crash"
+    fi
+
+    local s_boot; s_boot="$(shot n95calc_1_default)"
+    is_blank "$s_boot" && check FAIL "N95Calc: default UI rendered (non-blank)" \
+                       || check PASS "N95Calc: default UI rendered (non-blank)"
+
+    assert_no_crash "$base" "N95Calc"
+}
+
 test_angrybirds() {
     echo "== Angry Birds ($AB_UID on $AB_ROM) =="
     if ! find_axe; then
@@ -608,10 +649,11 @@ fi
 case "$SUITE" in
     fbattle)    test_fbattle ;;
     calculator|calc) test_calculator ;;
+    n95calc)    test_n95calc ;;
     angrybirds|ab) test_angrybirds ;;
     asphalt6|asphalt|a6) test_asphalt6 ;;
-    all|"")     test_fbattle; test_calculator ;;
-    *) die "unknown suite: $SUITE (use fbattle|calculator|angrybirds|asphalt6|all)" ;;
+    all|"")     test_fbattle; test_calculator; test_n95calc ;;
+    *) die "unknown suite: $SUITE (use fbattle|calculator|n95calc|angrybirds|asphalt6|all)" ;;
 esac
 
 echo
