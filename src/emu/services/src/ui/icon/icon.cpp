@@ -303,8 +303,8 @@ namespace eka2l1 {
             compute_icon_size(req_w, req_h, nw, nh, fw, fh);
 
             out_rgba.assign(static_cast<std::size_t>(fw) * fh * 4, 0);
-            const double sx = (doc->width() > 0) ? (static_cast<double>(fw) / doc->width()) : 1.0;
-            const double sy = (doc->height() > 0) ? (static_cast<double>(fh) / doc->height()) : 1.0;
+            const float sx = (doc->width() > 0) ? (static_cast<float>(fw) / doc->width()) : 1.0f;
+            const float sy = (doc->height() > 0) ? (static_cast<float>(fh) / doc->height()) : 1.0f;
             lunasvg::Bitmap luna_bmp(out_rgba.data(), fw, fh, fw * 4);
             doc->render(luna_bmp, lunasvg::Matrix{ sx, 0, 0, sy, 0, 0 });
             luna_bmp.convertToRGBA();

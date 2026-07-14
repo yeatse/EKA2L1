@@ -104,6 +104,13 @@ if (NOT ARCHITECTURE_ARM32 AND (NOT EKA2L1_IOS OR EKA2L1_IOS_DYNARMIC))
     add_subdirectory(dynarmic)
 endif()
 
+# lunasvg 3.5.0 (upstream submodule) bundles the plutovg rasterizer. Turn off
+# its example executables and skip scanning OS font directories: Symbian app
+# icons carry no text, so we never need system fonts, and the scan is pointless
+# work inside a mobile sandbox.
+set(LUNASVG_BUILD_EXAMPLES OFF CACHE BOOL "Disable lunasvg examples" FORCE)
+set(PLUTOVG_BUILD_EXAMPLES OFF CACHE BOOL "Disable plutovg examples" FORCE)
+set(LUNASVG_DISABLE_LOAD_SYSTEM_FONTS ON CACHE BOOL "Skip OS font directories" FORCE)
 add_subdirectory(lunasvg)
 
 option(YAML_CPP_BUILD_TESTS "Enable YAML cpp testing" OFF)

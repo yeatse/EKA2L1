@@ -288,6 +288,47 @@ namespace eka2l1::ios {
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 
+    // A Symbian icon mask comes in two flavours that need opposite polarities:
+    //   * A real grayscale mask (gray2 / gray4 / gray16 / gray256) stores opacity
+    //     directly — white is opaque, black transparent. convert_to_rgba8888
+    //     writes that value straight into the alpha channel.
+    //   * A colour bitmap reused as a colour-key mask goes through
+    //     make_standard_mask, which sets alpha to 255 only where the pixel is
+    //     pure white; here white marks the (transparent) backdrop.
+    static bool mask_is_grayscale(std::uint32_t bpp, std::uint32_t color) {
+        switch (bpp) {
+        case 1:
+        case 2:
+            return true;                 // gray2 / gray4
+        case 4:
+        case 8:
+            return color == 0;           // gray16 / gray256 vs color16 / color256
+        default:
+            return false;                // color4k / color64k / color16m(a)
+        }
+    }
+
+    // Composite a Symbian icon mask (already converted to RGBA with
+    // make_standard_mask) onto the main icon's alpha channel. Grayscale masks map
+    // their value straight to alpha (white opaque); colour-key masks invert it so
+    // the white backdrop becomes transparent. Anti-aliased gray masks are honoured
+    // smoothly. Without this the icon's masked backdrop (often a magenta colour
+    // key) renders opaque.
+    static void apply_mask_alpha(std::vector<std::uint8_t> &main_rgba,
+                                 const std::vector<std::uint8_t> &mask_rgba,
+                                 std::size_t w, std::size_t h, bool grayscale) {
+        const std::size_t count = w * h;
+        if (main_rgba.size() < count * 4 || mask_rgba.size() < count * 4) {
+            return;
+        }
+        for (std::size_t i = 0; i < count; ++i) {
+            const std::uint8_t mask_alpha = mask_rgba[i * 4 + 3];
+            main_rgba[i * 4 + 3] = grayscale
+                ? mask_alpha
+                : static_cast<std::uint8_t>(255 - mask_alpha);
+        }
+    }
+
     static NSData *decode_mbm_icon(eka2l1::apa_app_registry *reg,
                                    eka2l1::fbs_server *fbsserv,
                                    eka2l1::io_system *io,
@@ -308,6 +349,21 @@ namespace eka2l1::ios {
         if (!eka2l1::epoc::convert_to_rgba8888(fbsserv, parser, 0, dst)) {
             return nil;
         }
+
+        // Symbian app-icon MBMs store the icon at index 0 and its paired mask at
+        // index 1. Apply it when present and dimension-matched.
+        if (parser.sbm_headers.size() > 1) {
+            const auto &mask_hdr = parser.sbm_headers[1];
+            if (static_cast<std::size_t>(mask_hdr.size_pixels.x) == w
+                && static_cast<std::size_t>(mask_hdr.size_pixels.y) == h) {
+                std::vector<std::uint8_t> mask_rgba(w * h * 4);
+                eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
+                if (eka2l1::epoc::convert_to_rgba8888(fbsserv, parser, 1, mask_dst, true)) {
+                    apply_mask_alpha(rgba, mask_rgba, w, h,
+                        mask_is_grayscale(mask_hdr.bit_per_pixels, mask_hdr.color));
+                }
+            }
+        }
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 
@@ -325,6 +381,20 @@ namespace eka2l1::ios {
         std::vector<std::uint8_t> rgba(w * h * 4);
         eka2l1::common::wo_buf_stream dst(rgba.data(), rgba.size());
         if (!eka2l1::epoc::convert_to_rgba8888(fbsserv, bitmap, dst)) return nil;
+
+        // The applist server hands back the paired mask as the second bitmap.
+        if (auto *mask_bitmap = icon_pair->second) {
+            if (static_cast<std::size_t>(mask_bitmap->header_.size_pixels.x) == w
+                && static_cast<std::size_t>(mask_bitmap->header_.size_pixels.y) == h) {
+                std::vector<std::uint8_t> mask_rgba(w * h * 4);
+                eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
+                if (eka2l1::epoc::convert_to_rgba8888(fbsserv, mask_bitmap, mask_dst, true)) {
+                    apply_mask_alpha(rgba, mask_rgba, w, h,
+                        mask_is_grayscale(mask_bitmap->header_.bit_per_pixels,
+                            mask_bitmap->header_.color));
+                }
+            }
+        }
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 }
