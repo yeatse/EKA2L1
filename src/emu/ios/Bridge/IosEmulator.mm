@@ -1365,8 +1365,13 @@ namespace eka2l1::ios {
     if (!alserv) {
         return out;
     }
+    // applist_server binds its FBS/FS dependencies lazily from
+    // get_registerations().  EKA2 registry scans happened not to need FBS,
+    // but EKA1 AIF icon loading creates bitmaps during the scan and crashes if
+    // rescan_registries() is called before that lazy initialization.
+    auto &registrations = alserv->get_registerations();
     alserv->rescan_registries(_state->symsys->get_io_system());
-    for (auto &reg : alserv->get_registerations()) {
+    for (auto &reg : registrations) {
         if (reg.caps.is_hidden) {
             continue;
         }
