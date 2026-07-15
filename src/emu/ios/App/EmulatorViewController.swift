@@ -358,7 +358,6 @@ final class EmulatorViewController: UIViewController {
             }
         }
     }
-    var guestScreenMode: Int?
     // Forwarded to the render view; see EKA2L1RenderView.keypadHitRegion.
     var keypadHitRegion: CGRect = .null {
         didSet {
@@ -421,10 +420,7 @@ final class EmulatorViewController: UIViewController {
             EKA2L1Bridge.shared.setAppExitHandler { [weak self] fatalDetails in
                 self?.handleAppExited(fatalDetails: fatalDetails)
             }
-            EKA2L1Bridge.shared.launchApp(uid: uid) { [weak self] success in
-                guard success, let mode = self?.guestScreenMode else { return }
-                EKA2L1Bridge.shared.setGuestScreenMode(mode)
-            }
+            EKA2L1Bridge.shared.launchApp(uid: uid)
         }
     }
 

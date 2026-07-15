@@ -1923,32 +1923,8 @@ namespace eka2l1::ios {
     _state->display_anchor_top_px.store(static_cast<int>(anchorTop), std::memory_order_relaxed);
 }
 
-- (void)setGuestScreenMode:(NSInteger)mode {
-    if (!_state) {
-        return;
-    }
-    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
-        std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
-        if (!self->_state->winserv || !self->_state->graphics_driver) {
-            return;
-        }
-
-        eka2l1::epoc::screen *screen = self->_state->winserv->get_current_focus_screen();
-        if (!screen) {
-            return;
-        }
-
-        if (mode < 0 || mode >= screen->total_screen_mode()) {
-            return;
-        }
-
-        screen->ui_rotation = 0;
-        screen->set_screen_mode(self->_state->winserv, self->_state->graphics_driver.get(),
-            static_cast<int>(mode));
-    });
-}
-
-- (void)advanceGuestScreenModeWithCompletion:(void (^)(NSInteger mode))completion {
+- (void)advanceGuestScreenModeForAppUID:(uint32_t)uid
+                             completion:(void (^)(NSInteger mode))completion {
     if (!_state) {
         return;
     }
@@ -1963,6 +1939,17 @@ namespace eka2l1::ios {
                     screen->ui_rotation = 0;
                     screen->set_screen_mode(self->_state->winserv,
                         self->_state->graphics_driver.get(), static_cast<int>(selected_mode));
+
+                    if (self->_state->settings) {
+                        eka2l1::config::app_setting setting;
+                        if (eka2l1::config::app_setting *existing =
+                                self->_state->settings->get_setting(uid)) {
+                            setting = *existing;
+                        }
+                        screen->store_to_config(self->_state->graphics_driver.get(), setting);
+                        setting.screen_mode = static_cast<int>(selected_mode);
+                        self->_state->settings->add_or_replace_setting(uid, setting);
+                    }
                 }
             }
         }

@@ -1,24 +1,6 @@
 import SwiftUI
 import UIKit
 
-private enum GuestDisplaySettings {
-    private static let screenModeKey = "ios.guestScreenModeByApp"
-
-    private static func appKey(_ uid: UInt32) -> String {
-        String(format: "%08X", uid)
-    }
-
-    static func screenMode(for uid: UInt32) -> Int? {
-        UserDefaults.standard.dictionary(forKey: screenModeKey)?[appKey(uid)] as? Int
-    }
-
-    static func setScreenMode(_ mode: Int, for uid: UInt32) {
-        var settings = UserDefaults.standard.dictionary(forKey: screenModeKey) ?? [:]
-        settings[appKey(uid)] = mode
-        UserDefaults.standard.set(settings, forKey: screenModeKey)
-    }
-}
-
 // Fullscreen emulator screen: the render view fills the whole display (no
 // navigation bar / status bar) and the virtual keypad floats above it — the
 // keypad never resizes the game picture. Frontend actions that used to live in
@@ -39,7 +21,6 @@ struct EmulatorView: View {
     @State private var fpsDragStart: CGPoint?
     @State private var wasIdleTimerDisabled = false
     @State private var hostProxy = EmulatorHostProxy()
-    @State private var guestScreenMode: Int?
     // Whether the booted ROM is touch-driven (S60v5 / Symbian^3+); those use a
     // separate layout preference that defaults to the fullscreen layout.
     @State private var isTouchDevice = false
@@ -50,11 +31,6 @@ struct EmulatorView: View {
     // The -LaunchKeypadLayout testing argument seeds the layout only for the
     // first emulator screen of the process; later screens use the stored pick.
     @MainActor private static var launchLayoutApplied = false
-
-    init(uid: UInt32) {
-        self.uid = uid
-        _guestScreenMode = State(initialValue: GuestDisplaySettings.screenMode(for: uid))
-    }
 
     private var keypadLayout: KeypadLayout {
         KeypadLayout.resolve(isTouchDevice ? touchKeypadLayoutRaw : keypadLayoutRaw)
@@ -80,11 +56,7 @@ struct EmulatorView: View {
         KeypadMenuActions(
             layoutSelection: layoutSelection,
             rotateGuestScreen: {
-                EKA2L1Bridge.shared.advanceGuestScreenMode { mode in
-                    guard mode >= 0 else { return }
-                    guestScreenMode = mode
-                    GuestDisplaySettings.setScreenMode(mode, for: uid)
-                }
+                EKA2L1Bridge.shared.advanceGuestScreenMode(appUID: uid) { _ in }
             },
             saveScreenshot: { saveScreenshot() },
             exitGame: {
@@ -101,7 +73,6 @@ struct EmulatorView: View {
                     uid: uid,
                     host: hostProxy,
                     anchorsDisplayTop: keypadLayout.prefersTopAnchoredDisplay && showVirtualKeypad,
-                    guestScreenMode: guestScreenMode,
                     keypadHitRegion: keypadFrame,
                     onAppExit: { fatalDetails in
                         if let fatalDetails {
@@ -433,7 +404,6 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
     let host: EmulatorHostProxy
     let anchorsDisplayTop: Bool
-    let guestScreenMode: Int?
     // Screen-space region covered by the keypad overlay; the render view yields
     // touches there so the keys (drawn above it) receive them.
     let keypadHitRegion: CGRect
@@ -443,7 +413,6 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
         let controller = EmulatorViewController(uid: uid)
         controller.onAppExit = onAppExit
         controller.anchorsDisplayTop = anchorsDisplayTop
-        controller.guestScreenMode = guestScreenMode
         controller.keypadHitRegion = keypadHitRegion
         host.viewController = controller
         return controller
@@ -452,7 +421,6 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {
         uiViewController.onAppExit = onAppExit
         uiViewController.anchorsDisplayTop = anchorsDisplayTop
-        uiViewController.guestScreenMode = guestScreenMode
         uiViewController.keypadHitRegion = keypadHitRegion
         host.viewController = uiViewController
     }

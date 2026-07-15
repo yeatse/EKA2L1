@@ -291,7 +291,13 @@ namespace eka2l1::epoc {
         return next_to_focus;
     }
 
-    void screen::restore_from_config(drivers::graphics_driver *driver, const eka2l1::config::app_setting &setting) {
+    void screen::restore_from_config(drivers::graphics_driver *driver,
+        const eka2l1::config::app_setting &setting, window_server *winserv) {
+        if (setting.screen_mode >= 0 && setting.screen_mode < total_screen_mode()
+            && setting.screen_mode != crr_mode) {
+            set_screen_mode(winserv, driver, setting.screen_mode);
+        }
+
         refresh_rate = static_cast<std::uint8_t>(setting.fps);
         flags_ &= ~FLAG_SCREEN_UPSCALE_FACTOR_LOCK;
 
@@ -309,6 +315,7 @@ namespace eka2l1::epoc {
 
     void screen::store_to_config(drivers::graphics_driver *driver, eka2l1::config::app_setting &setting) {
         setting.fps = refresh_rate;
+        setting.screen_mode = crr_mode;
 
         if (flags_ & FLAG_SCREEN_UPSCALE_FACTOR_LOCK) {
             setting.screen_upscale_method = 1;
@@ -376,14 +383,15 @@ namespace eka2l1::epoc {
                 serv->send_focus_group_change_events(new_focus_screen);
                 new_focus_screen->fire_focus_change_callbacks(focus_change_target);
 
-                new_focus_screen->restore_from_config(serv->get_graphics_driver(), alternative_focus->saved_setting);
+                new_focus_screen->restore_from_config(serv->get_graphics_driver(),
+                    alternative_focus->saved_setting, serv);
             } else if (focus && is_me_currently_focus) {
                 focus->gain_focus();
 
                 serv->send_focus_group_change_events(this);
                 fire_focus_change_callbacks(focus_change_target);
 
-                restore_from_config(serv->get_graphics_driver(), focus->saved_setting);
+                restore_from_config(serv->get_graphics_driver(), focus->saved_setting, serv);
             }
         }
 

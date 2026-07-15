@@ -154,7 +154,8 @@ namespace eka2l1::epoc {
         void abort_all_dsas(const std::int32_t reason);
         void recalculate_visible_regions(bool dont_trigger_redraw = false);
 
-        void restore_from_config(drivers::graphics_driver *driver, const eka2l1::config::app_setting &setting);
+        void restore_from_config(drivers::graphics_driver *driver, const eka2l1::config::app_setting &setting,
+            window_server *winserv = nullptr);
         void store_to_config(drivers::graphics_driver *driver, eka2l1::config::app_setting &setting);
         void try_change_display_rescale(drivers::graphics_driver *driver, const float scale_factor);
 
