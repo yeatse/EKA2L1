@@ -297,19 +297,19 @@ namespace eka2l1::ios {
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 
-    // A Symbian icon mask comes in two flavours that need opposite polarities,
+    // Symbian icon masks use three format families with different polarities,
     // told apart by colour depth rather than the has-colour flag:
-    //   * A genuine alpha/soft mask is palettised grayscale (<= 8bpp): gray2 /
-    //     gray4 / gray16 / gray256, and — on S60v2 ROMs — the occasional
+    //   * A genuine alpha/soft mask is multi-level palettised grayscale (2-8
+    //     bpp): gray4 / gray16 / gray256, and — on S60v2 ROMs — the occasional
     //     color256 that still holds gray-valued opacity. Its luminance is the
     //     alpha directly: white is opaque, black transparent.
-    //   * A colour bitmap (>= 12bpp: color4k / color64k / color16m) reused as a
-    //     colour-key mask marks the transparent backdrop in white, so its
-    //     polarity is inverted.
+    //   * A binary gray2 mask (1bpp), or a colour bitmap (>= 12bpp) reused as a
+    //     colour-key mask, marks the transparent backdrop in white, so its
+    //     polarity is inverted. Legacy AIF icons commonly use this 1bpp form.
     // Keying off has-colour instead would misclassify S60v2's color256 masks as
     // colour-key and invert them, cutting the icon out over its background.
     static bool mask_is_soft(std::uint32_t bpp) {
-        return bpp <= 8;
+        return bpp > 1 && bpp <= 8;
     }
 
     // Composite a Symbian icon mask (converted with make_standard_mask) onto the
