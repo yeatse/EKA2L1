@@ -178,6 +178,11 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 // overlays the bottom of the screen.
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop;
 
+// Select or advance the guest's real Window Server screen mode. Both operations
+// run on the serialized emulator control queue; advance reports the new mode.
+- (void)setGuestScreenMode:(NSInteger)mode;
+- (void)advanceGuestScreenModeWithCompletion:(void (^)(NSInteger mode))completion;
+
 // Current interface orientation as a CCW rotation from the device's natural
 // portrait orientation: portrait 0, landscapeLeft 90, portraitUpsideDown 180,
 // landscapeRight 270. Combined with the guest screen mode's rotation to keep

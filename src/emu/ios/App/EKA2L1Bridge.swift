@@ -173,6 +173,14 @@ final class EKA2L1Bridge {
         emulator.resume()
     }
 
+    func setGuestScreenMode(_ mode: Int) {
+        emulator.setGuestScreenMode(mode)
+    }
+
+    func advanceGuestScreenMode(completion: @escaping @Sendable (Int) -> Void) {
+        emulator.advanceGuestScreenMode(completion: completion)
+    }
+
     func submitPointer(x: CGFloat, y: CGFloat, phase: EKA2L1PointerPhase, pointerId: UInt) {
         emulator.submitPointer(x: x, y: y, phase: phase, pointerId: pointerId)
     }

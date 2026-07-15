@@ -89,6 +89,15 @@
 @end
 
 namespace eka2l1::ios {
+    static dispatch_queue_t emulator_control_queue() {
+        static dispatch_queue_t queue;
+        static dispatch_once_t once;
+        dispatch_once(&once, ^{
+            queue = dispatch_queue_create("com.eka2l1.emulator.control", DISPATCH_QUEUE_SERIAL);
+        });
+        return queue;
+    }
+
     static EKA2L1InstallResult map_install_result(eka2l1::device_installation_error err) {
         switch (err) {
             case eka2l1::device_installation_none: return EKA2L1InstallResultSuccess;
@@ -1466,12 +1475,7 @@ namespace eka2l1::ios {
     // launch ran on the main thread the two would deadlock: main blocks on the
     // graphics thread, which blocks on a main queue that will never drain. Off
     // the main thread the main run loop stays free to service that bounce.
-    static dispatch_queue_t control_queue;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        control_queue = dispatch_queue_create("com.eka2l1.emulator.control", DISPATCH_QUEUE_SERIAL);
-    });
-    dispatch_async(control_queue, ^{
+    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
         BOOL ok = [self runLaunchAppWithUID:uid];
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1917,6 +1921,57 @@ namespace eka2l1::ios {
         return;
     }
     _state->display_anchor_top_px.store(static_cast<int>(anchorTop), std::memory_order_relaxed);
+}
+
+- (void)setGuestScreenMode:(NSInteger)mode {
+    if (!_state) {
+        return;
+    }
+    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
+        std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
+        if (!self->_state->winserv || !self->_state->graphics_driver) {
+            return;
+        }
+
+        eka2l1::epoc::screen *screen = self->_state->winserv->get_current_focus_screen();
+        if (!screen) {
+            return;
+        }
+
+        if (mode < 0 || mode >= screen->total_screen_mode()) {
+            return;
+        }
+
+        screen->ui_rotation = 0;
+        screen->set_screen_mode(self->_state->winserv, self->_state->graphics_driver.get(),
+            static_cast<int>(mode));
+    });
+}
+
+- (void)advanceGuestScreenModeWithCompletion:(void (^)(NSInteger mode))completion {
+    if (!_state) {
+        return;
+    }
+    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
+        NSInteger selected_mode = -1;
+        {
+            std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
+            if (self->_state->winserv && self->_state->graphics_driver) {
+                eka2l1::epoc::screen *screen = self->_state->winserv->get_current_focus_screen();
+                if (screen && screen->total_screen_mode() > 0) {
+                    selected_mode = (screen->crr_mode + 1) % screen->total_screen_mode();
+                    screen->ui_rotation = 0;
+                    screen->set_screen_mode(self->_state->winserv,
+                        self->_state->graphics_driver.get(), static_cast<int>(selected_mode));
+                }
+            }
+        }
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completion(selected_mode);
+            });
+        }
+    });
 }
 
 - (void)setHostInterfaceRotationDegrees:(NSInteger)degrees {

@@ -105,8 +105,8 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
 // actions that operate on the emulator session. Opacity is menu-internal.
 struct KeypadMenuActions {
     var layoutSelection: Binding<String>
+    var rotateGuestScreen: () -> Void
     var saveScreenshot: () -> Void
-    var restartGame: () -> Void
     var exitGame: () -> Void
 }
 
@@ -164,14 +164,14 @@ struct SystemMenuKey: View {
                 Label("emulator.menu.keypadOpacity", systemImage: "circle.lefthalf.filled")
             }
             Button {
+                actions.rotateGuestScreen()
+            } label: {
+                Label("emulator.menu.rotateGuestScreen", systemImage: "rotate.right")
+            }
+            Button {
                 actions.saveScreenshot()
             } label: {
                 Label("emulator.saveScreenshot", systemImage: "camera")
-            }
-            Button {
-                actions.restartGame()
-            } label: {
-                Label("emulator.restart", systemImage: "arrow.clockwise")
             }
             Button(role: .destructive) {
                 actions.exitGame()

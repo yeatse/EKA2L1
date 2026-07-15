@@ -519,6 +519,8 @@
 
 20. **Asphalt 6 主菜单 Mini 车身不可见（已解决）**：根因是 iOS 位图 FBO 无深度附件——`instantiate_bitmap_depth_stencil_texture` 的 iOS workaround 返回 `nullptr`，而 EGL window surface 同样以位图 FBO 作后备，深度测试恒通过，车身画出后被后续混合地板/光泽 pass 按画序覆盖。修复：iOS 改用 `depth24_stencil8` renderbuffer 做位图深度附件（当年只有*纹理*附件不完整），其它平台保持深度纹理路径。车漆恢复饱和蓝色且菜单 FPS 16→21。Release 标准回归 **8/8**、Asphalt **9/9**。详见 [`docs/asphalt6-menu-car-material-investigation.md`](./docs/asphalt6-menu-car-material-investigation.md)。
 
+21. **5320 天地道固定横屏画面条纹**：游戏直接按 320×240 写 framebuffer，但没有像 Jelly Chase 一样向 Window Server 切换横屏，guest 仍以 240×320/错误 stride 上传。iOS 游戏菜单新增按 UID 保存的“旋转 Guest 画面”按钮：每次点击循环设备在 `wsini.ini` 中定义的真实 screen mode（5320 为竖屏 0°、横屏 90°、横屏 270°），让 Window Server/HAL/DSA/输入坐标同步收到模式变化；退出重进恢复该游戏的 mode，键盘布局与 guest 方向保持解耦。同时移除游戏菜单的 Restart Game 入口及相关逻辑。验证：天地道条纹消失、mode 2 正向且重进保持；Jelly Chase 默认横屏路径不受影响；Release 标准回归连续有效轮次 **11/11**。
+
 ### 阶段 3 已知风险
 - ✅ **mmap / mprotect 行为差异（3.1）已解决**：根因是 Apple Silicon 16 KB host page 与 4 KB `mprotect` 粒度不匹配（确定性、真机同样适用），按 host page size 对齐后消除。
 - ✅ **cubeb iOS 后端历史包袱（3.7）已消除**：弃用 cubeb，改接原生 AURemoteIO / AVAudioSession（`audiounit_ios`），不再存在 cubeb 编译风险。
