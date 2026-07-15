@@ -1,89 +1,6 @@
 import SwiftUI
 import UIKit
 
-// SwiftUI's zero-distance DragGesture creates a gesture recognizer for every
-// virtual key. On iOS 26, rebuilding that large recognizer dependency graph
-// while a key's pressed state changes can leave UIKit comparing a stale
-// recognizer container (see docs/ios-swiftui-keypad-gesture-crash.md). The
-// keypad only needs raw down/move/up tracking, so keep it in UIKit's responder
-// path and out of the gesture-recognizer graph.
-fileprivate enum KeyTouchShape: Equatable {
-    case rectangle
-    case circle
-}
-
-private final class KeyTouchView: UIView {
-    var shape: KeyTouchShape = .rectangle
-    var onChanged: ((CGPoint) -> Void)?
-    var onEnded: (() -> Void)?
-
-    private weak var activeTouch: UITouch?
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isOpaque = false
-        layer.isOpaque = false
-        backgroundColor = .clear
-        isMultipleTouchEnabled = false
-        isAccessibilityElement = false
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        guard super.point(inside: point, with: event) else { return false }
-        guard shape == .circle else { return true }
-        let dx = point.x - bounds.midX
-        let dy = point.y - bounds.midY
-        let radius = min(bounds.width, bounds.height) / 2
-        return dx * dx + dy * dy <= radius * radius
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard activeTouch == nil, let touch = touches.first else { return }
-        activeTouch = touch
-        onChanged?(touch.location(in: self))
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let activeTouch, touches.contains(activeTouch) else { return }
-        onChanged?(activeTouch.location(in: self))
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        finishIfActive(touches)
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        finishIfActive(touches)
-    }
-
-    private func finishIfActive(_ touches: Set<UITouch>) {
-        guard let activeTouch, touches.contains(activeTouch) else { return }
-        self.activeTouch = nil
-        onEnded?()
-    }
-}
-
-private struct KeyTouchSurface: UIViewRepresentable {
-    let shape: KeyTouchShape
-    let onChanged: (CGPoint) -> Void
-    let onEnded: () -> Void
-
-    func makeUIView(context: Context) -> KeyTouchView {
-        KeyTouchView()
-    }
-
-    func updateUIView(_ view: KeyTouchView, context: Context) {
-        view.shape = shape
-        view.onChanged = onChanged
-        view.onEnded = onEnded
-    }
-}
-
 // Shared building blocks for the on-screen keypad layouts in VirtualKeypad.swift:
 // scan codes, the press/release key primitive, key-cap styling, the sliding
 // d-pad and the numeric pads.
@@ -119,27 +36,30 @@ struct HoldableRawKey<Label: View>: View {
     let scan: UInt32
     // Hit-test region for the key. Defaults to the full bounding rect; round
     // keys pass a precise shape so neighbouring keys don't overlap.
-    fileprivate var hitShape: KeyTouchShape = .rectangle
+    var hitShape: AnyShape = AnyShape(Rectangle())
     @ViewBuilder let label: (Bool) -> Label
 
     @State private var pressed = false
     @State private var sentDown = false
 
     var body: some View {
-        ZStack {
-            label(pressed)
-            KeyTouchSurface(
-                shape: hitShape,
-                onChanged: { _ in press() },
-                onEnded: release
+        label(pressed)
+            .contentShape(hitShape)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                EKA2L1Bridge.shared.tapRawKey(scan)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        press()
+                    }
+                    .onEnded { _ in
+                        release()
+                    }
             )
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction {
-            EKA2L1Bridge.shared.tapRawKey(scan)
-        }
-        .onDisappear(perform: release)
+            .onDisappear(perform: release)
     }
 
     private func press() {
@@ -341,17 +261,22 @@ struct SlidingDPad: View {
                     .animation(.easeOut(duration: 0.1), value: pressed)
             }
 
-            // Transparent touch surface for the ring. Sits above the sector
-            // fills but below OK, so touches starting on OK stay OK.
-            KeyTouchSurface(
-                shape: .circle,
-                onChanged: { point in
-                    updateActive(directionScan(at: point))
-                },
-                onEnded: { updateActive(nil) }
-            )
+            // Invisible layer owning the ring gesture; contentShape makes the
+            // clear circle hit-testable. Sits above the sector fills but below
+            // OK, so touches starting on OK stay OK.
+            Color.clear
+                .contentShape(Circle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            updateActive(directionScan(at: value.location))
+                        }
+                        .onEnded { _ in
+                            updateActive(nil)
+                        }
+                )
 
-            HoldableRawKey(scan: Scan.select, hitShape: .circle) { pressed in
+            HoldableRawKey(scan: Scan.select, hitShape: AnyShape(Circle())) { pressed in
                 Text("OK")
                     .font(.system(size: okSize * 0.28, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
