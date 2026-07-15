@@ -1,6 +1,6 @@
 # N95 Snakes 启动画面卡死 / E32USER-CBase 46 误信号
 
-> 来源：阶段 3 修复清单 #6（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
+> 来源：阶段 3 修复清单 #6（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
 >
 > **一句话结论**：Snakes (`0x2000730F`) 卡住是请求信号被误消耗和补发导致的调度失衡，修正请求等待与通知完成语义后，游戏可进入主菜单并能实际游玩。
 

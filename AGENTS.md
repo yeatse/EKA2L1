@@ -108,6 +108,7 @@ xcrun devicectl device info files --device $UDID --domain-type appDataContainer 
 
 ## Documentation
 
-- Update `IOS_PORTING_TASKS.md` for meaningful iOS fixes, verification results, and known follow-ups.
-- Keep documentation concise and outcome-focused. Avoid dumping low-level trace details unless they are necessary to reproduce or verify the issue.
-- For lengthy investigation write-ups of complex problems, split each into its own topic file under `docs/`, and leave only a reference link plus a one-line core conclusion in `IOS_PORTING_TASKS.md`.
+- `docs/IOS_PORTING_PLAN.md` and `docs/IOS_PORTING_TASKS.md` are archived planning history from the initial port; the port is largely done now, so don't add to them.
+- When you root-cause a non-trivial bug, write it up as its own file in `docs/`, in English. Cover the key reasoning: symptom, how you narrowed it down (including dead ends worth avoiding next time), and the conclusion/fix. Skip step-by-step reproduction commands. No fixed template — structure it however fits the problem.
+- Add an entry to `docs/README.md` (date, link, summary within ~100 words) for each new doc.
+- For a commit that fixes a genuinely tricky bug, briefly describe the symptom, root cause, and fix in the commit message — see `fedc6bc` for the expected length and tone. Routine fixes don't need this treatment.

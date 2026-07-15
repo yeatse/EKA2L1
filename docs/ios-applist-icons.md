@@ -1,6 +1,6 @@
 # AppList 图标（SVG / MIF 解码）
 
-> 来源：阶段 3.6（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已完成。
+> 来源：阶段 3.6（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已完成。
 >
 > **一句话结论**：`iconPNGDataForUID:sizePx:` 按 Android 同款顺序解 `.mif`(lunasvg) / `.mbm` / fallback `get_icon`，缩放成方形 PNG 给 SwiftUI 懒加载；附带修了空格 caption 触发的 `pystr` 空串崩溃。
 

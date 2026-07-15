@@ -1,6 +1,6 @@
 # 解锁 mount 链路：iOS 内核 chunk 写 0 SIGBUS
 
-> 来源：阶段 3.1（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
+> 来源：阶段 3.1（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
 >
 > **一句话结论**：mount 时内核 chunk 清零写触发 SIGBUS，根因是 Apple Silicon 用 16 KB host page、而 EKA2L1 按 4 KB 粒度调 `mprotect` 被 kernel 静默 `EINVAL` 拒绝；修法是把 `common::virtualmem` 的 protect 范围对齐到 host page size（详见 [iOS guest PC=0 死循环](./ios-guest-pc0-deadloop.md)）。
 

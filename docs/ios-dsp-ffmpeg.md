@@ -1,6 +1,6 @@
 # iOS DSP / FFmpeg 回接
 
-> 来源：阶段 3.7.1（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：🟡 simulator 路径回接，device 路径与真实解码验证待办。
+> 来源：阶段 3.7.1（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：🟡 simulator 路径回接，device 路径与真实解码验证待办。
 >
 > **一句话结论**：新增 `scripts/build_ios_ffmpeg.sh` 用 bundled FFmpeg source out-of-tree 构建 iOS static libs（不 dirty 子模块），CMake 在 `EKA2L1_HAVE_FFMPEG` 时编回 `dsp_ffmpeg` / `player_ffmpeg` / `video_player_ffmpeg`，否则保留 PCM16/PCM8 fallback。承接 [iOS 原生 AudioUnit 后端](./ios-audiounit-backend.md)。
 

@@ -1,6 +1,6 @@
 # app launch 后 guest "Main" 线程 PC=0 死循环
 
-> 来源：阶段 3.2.1（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决（host-page 对齐后自动解决）。
+> 来源：阶段 3.2.1（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决（host-page 对齐后自动解决）。
 >
 > **一句话结论**：root cause 是 Apple Silicon/iOS 用 16 KB host page、但 memory model 按 4 KB 粒度调 `mprotect`，`len=0x1000` 不是 host page 整数倍被 kernel 静默 `EINVAL` 拒绝，留在 `PROT_NONE` 的页被写/弹栈即 SIGBUS、dyncom 继续往下解码零字节就表现为 "PC=0 沿 page 扫描"；修法 `779061f27` 在 `virtualmem.cpp` 的 commit / change_protection 里把范围对齐到 `sysconf(_SC_PAGESIZE)`，仅 iOS/macOS arm64 生效。
 

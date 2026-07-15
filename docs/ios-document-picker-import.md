@@ -1,6 +1,6 @@
 # UIDocumentPicker 文件导入
 
-> 来源：阶段 3.5（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：🟡 主链路完成，少量 follow-up 待办。
+> 来源：阶段 3.5（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：🟡 主链路完成，少量 follow-up 待办。
 >
 > **一句话结论**：首页重设计为以设备为中心（无设备显示空态 CTA、有设备进 app 列表），新增 `ImportDeviceView` 走真实 ROM/RPKG 安装、`+` 走 `.fileImporter` 装 SIS；安全作用域 URL 必须先拷暂存。剩余 ZIP 解包 / Share extension 等推迟。
 

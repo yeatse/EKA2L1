@@ -1,5 +1,7 @@
 # EKA2L1 iOS 移植方案
 
+> **已归档（Frozen），不再更新。** 保留作为移植初期方案的历史记录；当前状态见 [`IOS_PORTING_TASKS.md`](./IOS_PORTING_TASKS.md) 与 [`README.md`](./README.md) 索引。
+>
 > 目标：让 EKA2L1（Symbian / N-Gage 模拟器）在 iOS / iPadOS 上跑起来。
 > 本文基于当前仓库 `master`/`ios` 分支的源码结构整理，给出可执行的落地路径，而非一次性 PR 清单。
 

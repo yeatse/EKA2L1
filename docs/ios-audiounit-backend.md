@@ -1,6 +1,6 @@
 # iOS 原生 AudioUnit 后端
 
-> 来源：阶段 3.7（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：🟡 后端接通，听感与 MIDI bank 等 follow-up 待办。
+> 来源：阶段 3.7（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：🟡 后端接通，听感与 MIDI bank 等 follow-up 待办。
 >
 > **一句话结论**：弃用 cubeb shim，iOS 直接接 AURemoteIO + AVAudioSession（`audiounit_ios` 后端），`make_audio_driver(cubeb,…)` 在 iOS 下返回该后端；services 拿到真 audio_driver、加载三个 audio patch DLL。FFmpeg 压缩格式回接见 [iOS DSP / FFmpeg 回接](./ios-dsp-ffmpeg.md)。
 

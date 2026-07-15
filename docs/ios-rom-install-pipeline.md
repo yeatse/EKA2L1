@@ -1,6 +1,6 @@
 # 真正的 ROM 安装流程（取代 symlink / hardlink graft）
 
-> 来源：阶段 3.4（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已完成。
+> 来源：阶段 3.4（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已完成。
 >
 > **一句话结论**：废弃早期 hardlink graft + 手写 `devices.yml` 的权宜方案，改走与 Android / macOS 完全一致的真实安装管线（`install_device` / `install_rom` / `install_rpkg`），并把设备选择持久化到 `conf.device` 下次自动 boot。
 

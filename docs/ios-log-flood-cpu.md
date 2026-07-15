@@ -1,6 +1,6 @@
 # iOS 前端从不应用日志过滤器 → 同步刷盘洪水把 CPU 打满
 
-> 来源：阶段 3 修复清单 #5（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决（N97/S60v5 点 Calculator 整屏黑 + CPU 100% 的**主因**）。
+> 来源：阶段 3 修复清单 #5（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决（N97/S60v5 点 Calculator 整屏黑 + CPU 100% 的**主因**）。
 >
 > **一句话结论**：iOS 前端从不调 `parse_filter_string`、且非 `BUILD_FOR_USER` 构建默认 `*:trace`，叠加 spdlog `flush_on(debug)`，每次上下文切换 + 每条 dyncom VFP 子操作都被同步刷盘（N97 启动 6s 打 ~43 万行）；修法是在 `IosEmulator` 镜像 `BUILD_FOR_USER` 降级逻辑应用 normal-use preset + 追加 `CPU*:warn`。**注意：此修复只消除日志洪水导致的 100% CPU，N97 Calculator 自身仍黑屏**（剩余阻塞见 [S60v5 AVKON FEP/Pti](./s60v5-avkon-fep-pti.md)）。
 

@@ -19,6 +19,9 @@
 - MacOS X:
     * XCode 12.4 or higher.
 
+- iOS:
+    * XCode 26 or higher.
+
 - Linux:
     * clang/g++: Clang 10.0/GCC 10.1 or higher is recommended. Note that Clang is not tested or built on the CI, but it should compile fine if compliation with GCC goes OK. If not, please open an issue.
 
@@ -48,28 +51,19 @@
 
 - With Android Studio opened, navigate to File/Open and choose the ```source code root/src/android/``` folder. The android project for EKA2L1 should setup and ready.
 
-### On iOS (work in progress)
+### On iOS
 
-The iOS port is being bootstrapped (see `IOS_PORTING_PLAN.md` and `IOS_PORTING_TASKS.md`). At this point only the build skeleton is in place — no UI, no working emulator on device yet.
-
-To attempt a build (Xcode 15+ recommended, on macOS):
+Requires Xcode (macOS host). Use `scripts/build_ios.sh` rather than invoking CMake/xcodebuild directly — it wires up the FFmpeg sub-build, the iOS toolchain file, and per-flavor defaults (dynarmic JIT, code signing):
 
 ```sh
-# Device (arm64)
-cmake -S . -B build/ios \
-    -G Xcode \
-    -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
-    -DPLATFORM=OS64 \
-    -DDEPLOYMENT_TARGET=18.0
-
-# Simulator (arm64)
-cmake -S . -B build/iossim \
-    -G Xcode \
-    -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
-    -DPLATFORM=SIMULATORARM64 \
-    -DDEPLOYMENT_TARGET=18.0
+scripts/build_ios.sh simulator       # simulator build (unsigned)
+scripts/build_ios.sh device          # device build, unsigned (sideload IPA)
+scripts/build_ios.sh device-signed   # device build, code-signed (needs EKA2L1_IOS_DEVELOPMENT_TEAM)
+scripts/build_ios.sh install         # build signed device build + install to a connected phone
+scripts/build_ios.sh archive         # signed .xcarchive for TestFlight / App Store
+scripts/build_ios.sh clean           # remove build/ios-* directories
 ```
 
-On iOS the following options are forced OFF regardless of the command line: `EKA2L1_BUILD_TOOLS`, `EKA2L1_BUILD_TESTS`, `EKA2L1_ENABLE_SCRIPTING_ABILITY`, `EKA2L1_BUILD_VULKAN_BACKEND`, `EKA2L1_BUILD_PATCH`, `EKA2L1_DEPLOY_DMG`, `EKA2L1_ENABLE_DISCORD_RICH_PRESENCE`.
+Notable environment variables (see the script header for the full list): `EKA2L1_IOS_CONFIGURATION` (Debug by default; use `Release` for performance/regression testing), `EKA2L1_IOS_DEPLOYMENT_TARGET` (default 16.0), `EKA2L1_IOS_DEVELOPMENT_TEAM` and `EKA2L1_IOS_DEVICE` (device signing/install). The dynarmic JIT is compiled in for simulator and unsigned-device builds but forced off for signed device/archive builds, since App Store/TestFlight processes can never map executable pages — the emulator falls back to the dyncom interpreter there.
 
-The deployment target defaults to **iOS 18.0** during early porting work to keep the toolchain modern; it will be lowered later once the port stabilizes. 
+On iOS the following options are always forced OFF regardless of the command line: `EKA2L1_BUILD_TOOLS`, `EKA2L1_BUILD_TESTS`, `EKA2L1_ENABLE_SCRIPTING_ABILITY`, `EKA2L1_BUILD_VULKAN_BACKEND`, `EKA2L1_BUILD_PATCH`, `EKA2L1_DEPLOY_DMG`, `EKA2L1_ENABLE_DISCORD_RICH_PRESENCE`. 

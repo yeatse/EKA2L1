@@ -1,6 +1,6 @@
 # iOS sandbox 内 vfs 路径解析 case-sensitive，混合大小写 ROM 文件名失败
 
-> 来源：阶段 3 修复清单 #2（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
+> 来源：阶段 3 修复清单 #2（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
 >
 > **一句话结论**：iOS 下 `is_system_case_insensitive()` 返回 false → 整条路径被强制小写，而 host（app 进程视角）case-sensitive，混合大小写的 ROM 文件（如 `Wsini.ini`）找不到；修法是在 `get_real_physical_path` 的 iOS 分支里逐级用目录迭代 + `compare_ignore_case` 解析回真实大小写。
 

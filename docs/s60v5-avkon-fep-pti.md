@@ -1,6 +1,6 @@
 # S60v5（N97 / RM-507）GUI app 卡在 AVKON FEP / PtiEngine 启动
 
-> 来源：阶段 3「已知风险」（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：未解决，独立立项。
+> 来源：阶段 3「已知风险」（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：未解决，独立立项。
 >
 > **一句话结论**：N97 点 Calculator 黑屏 + CPU 100% 是 **backend 无关、iOS 无关**的 EKA2L1 通用 S60v5 重 app 启动缺口；深挖后定论：FEP/Pti 崩溃（`Can't open object: ZIDATA_`）只是稀有副经路，主导黑屏是 dyncom 下 AVKON/CONE/OpenVG/多服务握手的**非确定性卡死**，单解决 FEP 不会让 Calculator 渲染。**实务建议**：N97 用 Zip manager 这类不吃 FEP/OpenVG 的轻量 app 验收；Calculator 等重 app 暂不作为 iOS 验收目标，待 dynarmic-on-sim + S60v5 启动稳定性作为独立大任务推进。
 

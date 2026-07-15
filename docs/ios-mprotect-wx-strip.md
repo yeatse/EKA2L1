@@ -1,6 +1,6 @@
 # `prot_read_write_exec` 在 iOS sandbox 下 `mprotect` 静默丢 W
 
-> 来源：阶段 3 修复清单 #1（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决（阶段 2 #14 SIGBUS 根因）。
+> 来源：阶段 3 修复清单 #1（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决（阶段 2 #14 SIGBUS 根因）。
 >
 > **一句话结论**：iOS arm64 sandbox 强制 W^X，`mprotect(R|W|X)` 返回成功但实际页是 RX（W 被静默剥离），随后写入即 `KERN_PROTECTION_FAILURE`；dyncom 是解释器、host 永不真正执行 guest 页，PROT_EXEC 纯冗余，故在 `translate_protection` 的 iOS 分支统一剥 PROT_EXEC。
 

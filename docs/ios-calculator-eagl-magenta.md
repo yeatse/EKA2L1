@@ -1,6 +1,6 @@
 # iOS Calculator 已启动但 EAGL 仍无真帧（整屏洋红）
 
-> 来源：阶段 3.2.2（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
+> 来源：阶段 3.2.2（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
 >
 > **一句话结论**：洋红空帧的 root cause 是 ogl 后端 `bind_swapchain_framebuf()` / `bind_framebuffer(0)` 硬编码 `glBindFramebuffer(GL_FRAMEBUFFER, 0)`，而 iOS GLES 没有默认 framebuffer（FBO 0 无效、渲染命令静默丢弃，drawable 保留 Apple 的洋红未初始化色）；修法是给 `gl_context` 加 `virtual swapchain_framebuffer()`、由 `gl_context_eagl` 返回挂着 CAEAGLLayer colorbuffer 的内部 FBO，桌面/Android 仍返回 0。期间还连修了三类缺省 driver 空指针崩溃 + present 时序对齐。
 

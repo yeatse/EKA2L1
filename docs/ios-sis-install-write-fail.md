@@ -1,6 +1,6 @@
 # SIS 安装在 iOS 上静默写失败
 
-> 来源：阶段 3.2.3（[`../IOS_PORTING_TASKS.md`](../IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
+> 来源：阶段 3.2.3（[`IOS_PORTING_TASKS.md`](IOS_PORTING_TASKS.md)）。状态：✅ 已解决。
 >
 > **一句话结论**：`sis_script_interpreter` 在 case-sensitive 平台上把已解析出的 **host 绝对路径**整条 `lowercase_string`，iOS 容器路径含 `/Users/…` 和 UUID，小写后变成不存在的 `/users/…` 导致 payload 写失败（registry 却成功，形成"安装成功但 E 盘为空"的假阳性）；修法是只 lower-case Symbian 虚拟路径（`e:\...`）再交给 `io->get_raw_path` 解析、绝不 lower-case host 路径，并让 `get_raw_path` 失败时传播 false。
 
