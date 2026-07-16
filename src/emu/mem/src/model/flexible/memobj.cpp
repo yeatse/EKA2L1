@@ -117,12 +117,13 @@ namespace eka2l1::mem::flexible {
                 LOG_WARN(MEMORY, "Unable to unmap decommitted memory from a mapping!");
             }
 
+            // Invalidate the CPU TLB for every mapping, not just the one owned by the
+            // current address space: kernel/shared fixed mappings (code, ROM) are visible
+            // from every address space, so the running core may hold entries for them
+            // even while another address space is current, and the host memory is about
+            // to be freed. Dirtying a foreign or stale entry is always safe.
             for (auto &mm : ctrl_fx->mmus_) {
-                if (mapping->owner_->id() == mm->current_addr_space()) {
-                    // Unmap from to CPU right away
-                    mm->unmap_from_cpu(mapping->base_ + start_offset, size_to_decommit);
-                    break;
-                }
+                mm->unmap_from_cpu(mapping->base_ + start_offset, size_to_decommit);
             }
         }
 
