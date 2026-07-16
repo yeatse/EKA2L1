@@ -97,12 +97,6 @@ struct ContentView: View {
         devices.first { $0.index == currentIndex } ?? devices.first
     }
 
-    // Drives the uninstall confirmation dialog off `pendingUninstall`.
-    private var uninstallDialogShown: Binding<Bool> {
-        Binding(get: { pendingUninstall != nil },
-                set: { if !$0 { pendingUninstall = nil } })
-    }
-
     // Apps shown in the list, honouring the "show system apps" toggle.
     private var visibleApps: [EKA2L1AppItem] {
         showSystemApps ? apps : apps.filter { !$0.system }
@@ -171,16 +165,6 @@ struct ContentView: View {
                           allowedContentTypes: homeImporterTypes,
                           allowsMultipleSelection: homeImporterAllowsMultipleSelection) {
                 handleHomeImport($0)
-            }
-            .confirmationDialog(Text("home.uninstall.title \(pendingUninstall?.name ?? "")"),
-                                isPresented: uninstallDialogShown,
-                                titleVisibility: .visible) {
-                if let app = pendingUninstall {
-                    Button("home.uninstall.confirm", role: .destructive) { uninstall(app) }
-                }
-                Button("common.cancel", role: .cancel) { pendingUninstall = nil }
-            } message: {
-                Text("home.uninstall.message")
             }
         }
         .onAppear {
@@ -289,6 +273,21 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                             .contextMenu { appContextMenu(for: app) }
+                            // Attached to the icon itself (rather than the
+                            // NavigationStack root) so the confirmation is
+                            // anchored to the pressed app's cell, matching
+                            // iOS 26's popover-style presentation instead of
+                            // detaching to a generic bottom sheet.
+                            .confirmationDialog(Text("home.uninstall.title \(app.name)"),
+                                                isPresented: Binding(
+                                                    get: { pendingUninstall?.uid == app.uid },
+                                                    set: { if !$0 { pendingUninstall = nil } }),
+                                                titleVisibility: .visible) {
+                                Button("home.uninstall.confirm", role: .destructive) { uninstall(app) }
+                                Button("common.cancel", role: .cancel) { pendingUninstall = nil }
+                            } message: {
+                                Text("home.uninstall.message")
+                            }
                         }
                     }
                     .id(currentIndex)
