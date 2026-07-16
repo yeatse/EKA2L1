@@ -653,13 +653,20 @@ namespace eka2l1::ios {
         auto &mode = scr->current_mode();
 
         // Keep accelerometer samples aligned with what the player sees: the
-        // emulated device's natural orientation sits mode.rotation CCW from
-        // the guest picture, and the picture sits host_interface_rotation_deg
-        // CCW from the iPhone's natural orientation. Refreshing here tracks
-        // both guest screen-mode switches and host rotations (a host rotation
+        // emulated device's natural orientation sits (mode.rotation -
+        // natural_mode.rotation) CCW from the guest picture, and the picture
+        // sits host_interface_rotation_deg CCW from the iPhone's natural
+        // orientation. wsini SCR_ROTATION is framebuffer-to-panel, so the
+        // first mode (the orientation the device is normally held in, where
+        // Symbian defines the sensor axes) must be subtracted as the panel
+        // mount angle: S60v5 nHD panels are landscape-native (portrait mode
+        // rot=270), unlike Symbian^3 (rot=0). Refreshing here tracks both
+        // guest screen-mode switches and host rotations (a host rotation
         // re-attaches the surface, which re-presents even a static screen).
         if (state->sensor_driver) {
-            state->sensor_driver->set_motion_rotation(mode.rotation
+            const eka2l1::epoc::config::screen_mode *natural_mode = scr->mode_info(0);
+            const int panel_mount = natural_mode ? natural_mode->rotation : 0;
+            state->sensor_driver->set_motion_rotation(mode.rotation - panel_mount
                 + state->host_interface_rotation_deg.load(std::memory_order_relaxed));
         }
         eka2l1::rect src;
