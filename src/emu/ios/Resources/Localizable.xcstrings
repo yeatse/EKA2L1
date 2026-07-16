@@ -39,6 +39,7 @@
     "home.banner.importFailed %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Import failed: %@" } } } },
     "home.banner.installDeviceFirst" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install a device (ROM) first, then re-open the SIS file." } } } },
     "home.banner.installedPackages %lld" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed %lld package(s)." } } } },
+    "home.banner.installingPackages" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installing package(s)..." } } } },
     "home.banner.uninstallFailed %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to uninstall %@." } } } },
     "home.banner.uninstalled %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Uninstalled %@." } } } },
     "home.empty.hiddenSystemApps" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No installed apps. Tap + to install a SIS / SISX package, or enable Show System Apps." } } } },

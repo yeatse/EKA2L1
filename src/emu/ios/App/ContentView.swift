@@ -250,20 +250,6 @@ struct ContentView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 0) {
-            if let banner {
-                Text(banner)
-                    .font(.caption)
-                    .foregroundColor(.green)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-            emptyStateBody
-        }
-    }
-
-    @ViewBuilder
-    private var emptyStateBody: some View {
         if #available(iOS 17, *) {
             ContentUnavailableView {
                 Label("home.noDevice.title", systemImage: "iphone.slash")
@@ -286,10 +272,6 @@ struct ContentView: View {
     private var appList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let banner {
-                    Text(banner).font(.caption).foregroundColor(.green)
-                }
-
                 Text("home.appsCount \(visibleApps.count)")
                     .font(.headline)
 
@@ -344,8 +326,37 @@ struct ContentView: View {
         .disabled(switching)
     }
 
+    private var statusToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .status) {
+            HStack(spacing: 6) {
+                if switching {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                if let banner {
+                    Text(banner)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .fixedSize()
+        }
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // Status text (install/boot results) lives in the bottom-center status
+        // toolbar slot; a spinner joins it while a long-running task (device
+        // switch, SIS/N-Gage install) is in flight. On iOS 26 the shared glass
+        // background is hidden so the text sits directly on the content.
+        if switching || banner != nil {
+            if #available(iOS 26.0, *) {
+                statusToolbarItem.sharedBackgroundVisibility(.hidden)
+            } else {
+                statusToolbarItem
+            }
+        }
+
         if !devices.isEmpty {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
@@ -612,16 +623,25 @@ struct ContentView: View {
             // extracts everything onto the device drives, so the package file
             // itself is not needed afterwards — no staging copy. The URLs are
             // security-scoped, so hold the scope across the install call.
-            var installed = 0
-            for url in urls {
-                let ext = url.pathExtension.lowercased()
-                guard ext == "sis" || ext == "sisx" else { continue }
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                if EKA2L1Bridge.shared.installSis(atPath: url.path) { installed += 1 }
+            // Extraction can take a while for large packages, so run it off
+            // the main thread with the busy indicator up.
+            switching = true
+            banner = String(localized: "home.banner.installingPackages")
+            DispatchQueue.global(qos: .userInitiated).async {
+                var installed = 0
+                for url in urls {
+                    let ext = url.pathExtension.lowercased()
+                    guard ext == "sis" || ext == "sisx" else { continue }
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    if EKA2L1Bridge.shared.installSis(atPath: url.path) { installed += 1 }
+                }
+                DispatchQueue.main.async {
+                    switching = false
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                    banner = String(localized: "home.banner.installedPackages \(installed)")
+                }
             }
-            apps = EKA2L1Bridge.shared.rescanApps()
-            banner = String(localized: "home.banner.installedPackages \(installed)")
         }
     }
 
