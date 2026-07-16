@@ -5,10 +5,11 @@ import UniformTypeIdentifiers
 // Home surface:
 //   - No device installed → ContentUnavailableView prompting a device import
 //     (Android `no_device_installed`). The CTA opens the import Form.
-//   - One or more devices → app list for the current device. Title is the
-//     device name; the ellipsis menu holds Settings, a device switcher,
-//     "Install device" and Diagnostics; the leading "+" installs a SIS onto
-//     the running device.
+//   - One or more devices → app grid for the current device. The navigation
+//     title doubles as a device menu (tap the title) holding the device
+//     switcher and, below a divider, "Install device"; the ellipsis menu holds
+//     Settings, the system-apps toggle, help and N-Gage install; the leading
+//     "+" installs a SIS onto the running device.
 
 // SIS files only — device ROM / RPKG go through ImportDeviceView's own picker.
 private let sisTypes: [UTType] = {
@@ -66,13 +67,8 @@ struct ContentView: View {
     @State private var homeImportTarget: HomeImportTarget = .sis
     @State private var showingHomeImporter = false
     @State private var showingSettings = false
-    @State private var showingDiagnostics = false
     @State private var showingOnboarding = false
     @AppStorage("ios.onboarding.completed") private var onboardingCompleted = false
-
-    // App list presentation: adaptive icon grid (default) or compact rows.
-    // Persisted so the choice sticks across launches.
-    @AppStorage("appListUsesGrid") private var usesGridLayout = true
 
     // Whether to show built-in ROM/system apps alongside user-installed ones.
     // Defaults to false so the list shows only what the user installed.
@@ -139,11 +135,11 @@ struct ContentView: View {
             Group {
                 if let bootError {
                     if #available(iOS 17, *) {
-                        ContentUnavailableView("Emulator failed to initialise",
+                        ContentUnavailableView(String(localized: "home.error.initTitle"),
                                                systemImage: "exclamationmark.triangle",
                                                description: Text(bootError))
                     } else {
-                        FallbackUnavailableView(title: "Emulator failed to initialise",
+                        FallbackUnavailableView(title: String(localized: "home.error.initTitle"),
                                                 systemImage: "exclamationmark.triangle",
                                                 message: bootError) { EmptyView() }
                     }
@@ -156,8 +152,8 @@ struct ContentView: View {
             .navigationTitle(currentDevice?.displayName ?? "EKA2L1")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            .toolbarTitleMenu { titleMenuContent }
             .navigationDestination(isPresented: $showingSettings) { SettingsView() }
-            .navigationDestination(isPresented: $showingDiagnostics) { DiagnosticsView() }
             .navigationDestination(isPresented: $showingAutoLaunch) {
                 if let uid = autoLaunchUID { EmulatorView(uid: uid) }
             }
@@ -176,15 +172,15 @@ struct ContentView: View {
                           allowsMultipleSelection: homeImporterAllowsMultipleSelection) {
                 handleHomeImport($0)
             }
-            .confirmationDialog("Uninstall \(pendingUninstall?.name ?? "")?",
+            .confirmationDialog(Text("home.uninstall.title \(pendingUninstall?.name ?? "")"),
                                 isPresented: uninstallDialogShown,
                                 titleVisibility: .visible) {
                 if let app = pendingUninstall {
-                    Button("Uninstall", role: .destructive) { uninstall(app) }
+                    Button("home.uninstall.confirm", role: .destructive) { uninstall(app) }
                 }
-                Button("Cancel", role: .cancel) { pendingUninstall = nil }
+                Button("common.cancel", role: .cancel) { pendingUninstall = nil }
             } message: {
-                Text("This removes the package and its files from the device.")
+                Text("home.uninstall.message")
             }
         }
         .onAppear {
@@ -196,6 +192,15 @@ struct ContentView: View {
         .onOpenURL { url in
             pendingOpenURLs.append(url)
             processPendingOpenURLs()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .eka2l1AppListInvalidated)) { _ in
+            // A settings action (e.g. a system-language switch) changed how the
+            // app list should render; re-scan so the new captions show.
+            guard booted, currentIndex >= 0 else { return }
+            apps = EKA2L1Bridge.shared.rescanApps()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .eka2l1DevicesChanged)) { note in
+            handleDevicesChanged(note)
         }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
             guard let rawType = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -224,7 +229,7 @@ struct ContentView: View {
     private func appContextMenu(for app: EKA2L1AppItem) -> some View {
         Button {
             UIPasteboard.general.string = uidHexString(app.uid)
-            banner = "Copied \(uidHexString(app.uid))."
+            banner = String(localized: "home.banner.copied \(uidHexString(app.uid))")
         } label: {
             Label(uidHexString(app.uid), systemImage: "doc.on.doc")
         }
@@ -233,7 +238,7 @@ struct ContentView: View {
             Button(role: .destructive) {
                 pendingUninstall = app
             } label: {
-                Label("Uninstall", systemImage: "trash")
+                Label("home.uninstall.action", systemImage: "trash")
             }
         }
     }
@@ -261,7 +266,7 @@ struct ContentView: View {
     private var emptyStateBody: some View {
         if #available(iOS 17, *) {
             ContentUnavailableView {
-                Label("No device installed", systemImage: "iphone.slash")
+                Label("home.noDevice.title", systemImage: "iphone.slash")
             } description: {
                 Text("import.noDeviceInstalled")
             } actions: {
@@ -269,7 +274,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
             }
         } else {
-            FallbackUnavailableView(title: "No device installed",
+            FallbackUnavailableView(title: String(localized: "home.noDevice.title"),
                                     systemImage: "iphone.slash",
                                     message: String(localized: "import.noDeviceInstalled")) {
                 Button("import.title") { showingImportDevice = true }
@@ -278,23 +283,14 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
     private var appList: some View {
-        if usesGridLayout {
-            appGrid
-        } else {
-            appRows
-        }
-    }
-
-    private var appGrid: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let banner {
                     Text(banner).font(.caption).foregroundColor(.green)
                 }
 
-                Text("Apps (\(visibleApps.count))")
+                Text("home.appsCount \(visibleApps.count)")
                     .font(.headline)
 
                 if visibleApps.isEmpty {
@@ -320,25 +316,32 @@ struct ContentView: View {
         }
     }
 
-    private var appRows: some View {
-        List {
-            if let banner {
-                Section { Text(banner).font(.caption).foregroundColor(.green) }
-            }
-            Section("Apps (\(visibleApps.count))") {
-                if visibleApps.isEmpty {
-                    Text(emptyAppsHint)
-                        .font(.caption).foregroundColor(.secondary)
-                }
-                ForEach(visibleApps, id: \.uid) { app in
-                    NavigationLink(destination: EmulatorView(uid: app.uid)) {
-                        AppRow(uid: app.uid, name: app.name)
-                    }
-                    .contextMenu { appContextMenu(for: app) }
+    // The navigation title's tap menu (SwiftUI toolbarTitleMenu): the device
+    // switcher with a checkmark on the active device, then "Install device"
+    // below a divider.
+    @ViewBuilder
+    private var titleMenuContent: some View {
+        ForEach(devices) { dev in
+            Button {
+                switchDevice(to: dev.index)
+            } label: {
+                if dev.index == currentIndex {
+                    Label(dev.displayName, systemImage: "checkmark")
+                } else {
+                    Text(dev.displayName)
                 }
             }
+            .disabled(switching)
         }
-        .id(currentIndex)
+
+        Divider()
+
+        Button {
+            showingImportDevice = true
+        } label: {
+            Label("import.title", systemImage: "square.and.arrow.down")
+        }
+        .disabled(switching)
     }
 
     @ToolbarContentBuilder
@@ -361,66 +364,28 @@ struct ContentView: View {
                     }
 
                     Button {
-                        usesGridLayout.toggle()
-                    } label: {
-                        if usesGridLayout {
-                            Label("home.layout.list", systemImage: "list.bullet")
-                        } else {
-                            Label("home.layout.grid", systemImage: "square.grid.2x2")
-                        }
-                    }
-
-                    Button {
                         showSystemApps.toggle()
                     } label: {
                         if showSystemApps {
-                            Label("Hide System Apps", systemImage: "eye.slash")
+                            Label("home.hideSystemApps", systemImage: "eye.slash")
                         } else {
-                            Label("Show System Apps", systemImage: "eye")
+                            Label("home.showSystemApps", systemImage: "eye")
                         }
-                    }
-
-                    Menu {
-                        ForEach(devices) { dev in
-                            Button {
-                                switchDevice(to: dev.index)
-                            } label: {
-                                if dev.index == currentIndex {
-                                    Label(dev.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(dev.displayName)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Devices", systemImage: "iphone")
-                    }
-
-                    Button {
-                        showingOnboarding = true
-                    } label: {
-                        Label("onboarding.title", systemImage: "questionmark.circle")
-                    }
-
-                    Button {
-                        showingImportDevice = true
-                    } label: {
-                        Label("import.title", systemImage: "square.and.arrow.down")
                     }
 
                     Button {
                         homeImportTarget = .ngage
                         showingHomeImporter = true
                     } label: {
-                        Label("Install N-Gage Game", systemImage: "folder.badge.plus")
+                        Label("home.installNGage", systemImage: "folder.badge.plus")
                     }
 
                     Divider()
 
                     Button {
-                        showingDiagnostics = true
+                        showingOnboarding = true
                     } label: {
-                        Label("Diagnostics", systemImage: "stethoscope")
+                        Label("onboarding.title", systemImage: "questionmark.circle")
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
@@ -438,7 +403,7 @@ struct ContentView: View {
             selectLaunchRomThenAutoLaunch()
             processPendingOpenURLs()
         } else {
-            bootError = "Check Console for details."
+            bootError = String(localized: "home.error.checkConsole")
         }
     }
 
@@ -459,7 +424,7 @@ struct ContentView: View {
         }
         guard !sisURLs.isEmpty else { return }
         guard currentIndex >= 0 else {
-            banner = "Install a device (ROM) first, then re-open the SIS file."
+            banner = String(localized: "home.banner.installDeviceFirst")
             return
         }
         handleSisImport(.success(sisURLs))
@@ -476,7 +441,7 @@ struct ContentView: View {
         launchRomHandled = true
 
         guard let target = devices.first(where: { $0.firmwareCode.caseInsensitiveCompare(code) == .orderedSame }) else {
-            bootError = "Launch ROM code \(code) is missing."
+            bootError = String(localized: "home.error.launchRomMissing \(code)")
             return
         }
         guard target.index != currentIndex else {
@@ -490,12 +455,12 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 switching = false
                 guard ok else {
-                    bootError = "Failed to boot ROM code \(target.firmwareCode)."
+                    bootError = String(localized: "home.error.bootRomFailed \(target.firmwareCode)")
                     return
                 }
                 currentIndex = target.index
                 apps = EKA2L1Bridge.shared.rescanApps()
-                banner = "Booted \(target.displayName) (\(target.firmwareCode))."
+                banner = String(localized: "home.banner.booted \(target.displayName) \(target.firmwareCode)")
                 maybeAutoLaunch()
             }
         }
@@ -579,7 +544,54 @@ struct ContentView: View {
         pendingUninstall = nil
         let ok = EKA2L1Bridge.shared.uninstallApp(uid: app.uid)
         apps = EKA2L1Bridge.shared.rescanApps()
-        banner = ok ? "Uninstalled \(app.name)." : "Failed to uninstall \(app.name)."
+        banner = ok ? String(localized: "home.banner.uninstalled \(app.name)")
+                    : String(localized: "home.banner.uninstallFailed \(app.name)")
+    }
+
+    // A ROM was deleted or all data was reset from Settings. Re-sync the device
+    // list; if the booted device itself was removed, boot device_manager's
+    // adjusted current (the previous ROM) so the running system matches
+    // devices.yml, or drop to the empty state when nothing remains.
+    private func handleDevicesChanged(_ note: Notification) {
+        let deletedFirmcode = note.userInfo?["firmcode"] as? String
+        let wasCurrent = deletedFirmcode.map { code in
+            currentDevice?.firmwareCode.caseInsensitiveCompare(code) == .orderedSame
+        } ?? true
+
+        let newDevices = EKA2L1Bridge.shared.installedDevices()
+        devices = newDevices
+        banner = nil
+
+        if newDevices.isEmpty {
+            currentIndex = -1
+            apps = []
+            return
+        }
+
+        guard wasCurrent else {
+            // The booted device is unchanged; only indices shifted. Re-sync
+            // from device_manager's adjusted current.
+            currentIndex = EKA2L1Bridge.shared.currentDeviceIndex()
+            apps = EKA2L1Bridge.shared.rescanApps()
+            return
+        }
+
+        // The booted device was deleted: fall back to the previous ROM in the
+        // list (clamped into range), so repeated deletes walk backwards until
+        // the list is empty. `currentIndex` still holds the deleted device's
+        // old position at this point.
+        let target = min(max(0, currentIndex - 1), newDevices.count - 1)
+        switching = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = EKA2L1Bridge.bootDevice(at: target)
+            DispatchQueue.main.async {
+                if ok {
+                    currentIndex = target
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                }
+                switching = false
+            }
+        }
     }
 
     private func handleHomeImport(_ result: Result<[URL], Error>) {
@@ -594,7 +606,7 @@ struct ContentView: View {
     private func handleSisImport(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let err):
-            banner = "Import failed: \(err.localizedDescription)"
+            banner = String(localized: "home.banner.importFailed \(err.localizedDescription)")
         case .success(let urls):
             // Install straight from the picked/opened location. The installer
             // extracts everything onto the device drives, so the package file
@@ -609,18 +621,18 @@ struct ContentView: View {
                 if EKA2L1Bridge.shared.installSis(atPath: url.path) { installed += 1 }
             }
             apps = EKA2L1Bridge.shared.rescanApps()
-            banner = "Installed \(installed) package(s)."
+            banner = String(localized: "home.banner.installedPackages \(installed)")
         }
     }
 
     private func handleNGageImport(_ result: Result<[URL], Error>) {
         switch result {
         case .failure(let err):
-            banner = "N-Gage import failed: \(err.localizedDescription)"
+            banner = String(localized: "home.ngage.importFailed \(err.localizedDescription)")
         case .success(let urls):
             guard let url = urls.first else { return }
             switching = true
-            banner = "Installing N-Gage game..."
+            banner = String(localized: "home.ngage.installing")
             DispatchQueue.global(qos: .userInitiated).async {
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -630,7 +642,8 @@ struct ContentView: View {
                     apps = EKA2L1Bridge.shared.rescanApps()
                     if report.succeeded {
                         let name = report.gameName.trimmingCharacters(in: .whitespacesAndNewlines)
-                        banner = name.isEmpty ? "Installed N-Gage game." : "Installed N-Gage game: \(name)."
+                        banner = name.isEmpty ? String(localized: "home.ngage.installed")
+                                              : String(localized: "home.ngage.installedNamed \(name)")
                     } else {
                         banner = ngageErrorMessage(report.result)
                     }
@@ -642,15 +655,15 @@ struct ContentView: View {
     private func ngageErrorMessage(_ code: Int) -> String {
         switch code {
         case 1:
-            return "N-Gage import failed: choose the game card folder that contains the system folder."
+            return String(localized: "home.ngage.error.chooseFolder")
         case 2:
-            return "N-Gage import failed: that folder contains more than one game."
+            return String(localized: "home.ngage.error.multipleGames")
         case 3:
-            return "N-Gage import failed: the registration file is missing."
+            return String(localized: "home.ngage.error.regMissing")
         case 4:
-            return "N-Gage import failed: the registration file is corrupted."
+            return String(localized: "home.ngage.error.regCorrupt")
         default:
-            return "N-Gage import failed (error \(code))."
+            return String(localized: "home.ngage.error.generic \(code)")
         }
     }
 }
@@ -713,7 +726,7 @@ struct ImportDeviceView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.disabled(installing)
+                    Button("common.cancel") { dismiss() }.disabled(installing)
                 }
             }
             .fileImporter(isPresented: $showingImporter,
@@ -891,52 +904,6 @@ struct AppGridCell: View {
                 .frame(maxWidth: .infinity)
         }
         .padding(.vertical, 8)
-    }
-}
-
-// Compact row used by the List layout: small leading icon and name.
-struct AppRow: View {
-    let uid: UInt32
-    let name: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            AppIconView(uid: uid, decodePx: 72, iconSide: 36, placeholderSide: 26)
-                .frame(width: 40, height: 40)
-            Text(name)
-        }
-    }
-}
-
-struct DiagnosticsView: View {
-    @State private var dyncomResult: CpuSmokeReport?
-    @State private var running = false
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if let r = dyncomResult {
-                    Text(r.pass ? "PASS" : "FAIL").bold().foregroundColor(r.pass ? .green : .red)
-                    Text("instrs: \(r.instructionsExecuted)").font(.caption.monospaced())
-                    Text(String(format: "pc=0x%08X", r.pc)).font(.caption.monospaced())
-                    if let reason = r.fallbackReason {
-                        Text("fallback: \(reason)").font(.caption).foregroundColor(.orange)
-                    }
-                } else {
-                    Text("Tap to run").font(.caption).foregroundColor(.secondary)
-                }
-                Button(running ? "Running…" : "Run dyncom smoke") {
-                    running = true
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        let r = EKA2L1Bridge.runSmoke(backend: .dyncom)
-                        DispatchQueue.main.async {
-                            dyncomResult = r
-                            running = false
-                        }
-                    }
-                }.disabled(running)
-            }.padding()
-        }.navigationTitle("Diagnostics")
     }
 }
 

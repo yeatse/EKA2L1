@@ -1,6 +1,6 @@
 # EKA2L1 iOS frontend
 #
-# Builds the SwiftUI shell plus the Obj-C++ bridge (IosEmulator / CpuSmoke)
+# Builds the SwiftUI shell plus the Obj-C++ bridge (IosEmulator)
 # that drives the emu core on iOS: device install/boot, applist scan + launch,
 # EAGL rendering, input, audio and vibration. Mirrors the Android JNI bridge
 # under src/emu/android/app/src/main/cpp.
@@ -45,9 +45,6 @@ set(EKA2L1_IOS_SOURCES
     "${EKA2L1_IOS_APP_DIR}/ControllerMapping.swift"
     "${EKA2L1_IOS_APP_DIR}/ImportRouter.swift"
     "${EKA2L1_IOS_APP_DIR}/SettingsView.swift"
-    "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBlob.h"
-    "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.h"
-    "${EKA2L1_IOS_BRIDGE_DIR}/CpuSmokeBridge.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.h"
     "${EKA2L1_IOS_BRIDGE_DIR}/IosEmulator.mm"
     "${EKA2L1_IOS_BRIDGE_DIR}/EKA2L1-Bridging-Header.h"

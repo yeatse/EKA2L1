@@ -47,23 +47,13 @@ struct EKA2L1LanguageItem: Identifiable, Hashable {
     var id: Int { code }
 }
 
-struct CpuSmokeReport {
-    enum Backend {
-        case dyncom
-        case dynarmic
-    }
-
-    let requestedBackend: Backend
-    let resolvedBackend: Backend
-    let fallbackReason: String?
-    let pass: Bool
-    let instructionsExecuted: UInt32
-    let registers: [UInt32]
-    let pc: UInt32
-    let sp: UInt32
-    let lr: UInt32
-    let cpsr: UInt32
-    let diff: String?
+// Cross-view frontend signals. Posted by settings actions that mutate emulator
+// state the home surface owns, so ContentView can refresh without a shared
+// store: the app list after a language switch, and the device list / booted
+// device after a ROM install/delete or a full data reset.
+extension Notification.Name {
+    static let eka2l1AppListInvalidated = Notification.Name("eka2l1AppListInvalidated")
+    static let eka2l1DevicesChanged = Notification.Name("eka2l1DevicesChanged")
 }
 
 @MainActor
@@ -112,6 +102,18 @@ final class EKA2L1Bridge {
 
     nonisolated static func bootDevice(at index: Int) -> Bool {
         EKA2L1Emulator.shared().bootDevice(at: UInt(index))
+    }
+
+    // Remove an installed device (ROM) from devices.yml and delete its files.
+    // Does not reboot; the caller decides which device to boot next.
+    nonisolated static func deleteDevice(at index: Int) -> Bool {
+        EKA2L1Emulator.shared().deleteDevice(at: UInt(index))
+    }
+
+    // Reset the in-memory device list to empty (used by the full data reset,
+    // which removes the sandbox storage tree separately).
+    func resetDevicesState() {
+        emulator.resetDevicesState()
     }
 
     nonisolated static func unzipArchive(atPath path: String, toDirectory destination: String) throws {
@@ -177,6 +179,15 @@ final class EKA2L1Bridge {
         emulator.advanceGuestScreenMode(forAppUID: appUID, completion: completion)
     }
 
+    // Per-app guest frame-rate cap: 15 / 30 / 60, or 0 for unlimited.
+    func setGuestFrameLimit(appUID: UInt32, limit: Int) {
+        emulator.setGuestFrameLimit(forAppUID: appUID, limit: limit)
+    }
+
+    func guestFrameLimit(appUID: UInt32) -> Int {
+        emulator.guestFrameLimit(forAppUID: appUID)
+    }
+
     func submitPointer(x: CGFloat, y: CGFloat, phase: EKA2L1PointerPhase, pointerId: UInt) {
         emulator.submitPointer(x: x, y: y, phase: phase, pointerId: pointerId)
     }
@@ -232,37 +243,11 @@ final class EKA2L1Bridge {
         emulator.jitAvailable
     }
 
-    func testVibration() {
-        emulator.testVibration()
-    }
-
     func renderedFrameCount() -> UInt64 {
         emulator.renderedFrameCount()
     }
 
     nonisolated static func iconPNGData(uid: UInt32, sizePx: UInt) -> Data? {
         EKA2L1Emulator.shared().iconPNGData(forUID: uid, sizePx: sizePx)
-    }
-
-    nonisolated static func runSmoke(backend: CpuSmokeReport.Backend) -> CpuSmokeReport {
-        let rawBackend: EKA2L1SmokeBackend = backend == .dyncom ? .dyncom : .dynarmic
-        let raw = EKA2L1CpuSmokeBridge.run(with: rawBackend)
-        return CpuSmokeReport(
-            requestedBackend: mapSmokeBackend(raw.requestedBackend),
-            resolvedBackend: mapSmokeBackend(raw.resolvedBackend),
-            fallbackReason: raw.fallbackReason,
-            pass: raw.pass,
-            instructionsExecuted: raw.instructionsExecuted,
-            registers: raw.registers.map { $0.uint32Value },
-            pc: raw.pc,
-            sp: raw.sp,
-            lr: raw.lr,
-            cpsr: raw.cpsr,
-            diff: raw.diff
-        )
-    }
-
-    private nonisolated static func mapSmokeBackend(_ backend: EKA2L1SmokeBackend) -> CpuSmokeReport.Backend {
-        backend == .dynarmic ? .dynarmic : .dyncom
     }
 }

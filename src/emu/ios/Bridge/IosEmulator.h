@@ -99,6 +99,19 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // success.
 - (BOOL)bootDeviceAtIndex:(NSUInteger)index;
 
+// Delete an installed device by index: removes its entry from devices.yml and
+// deletes the device's ROM filesystem (drive Z) and resident ROM image from
+// the sandbox. Does NOT reboot — the caller decides which device to boot next
+// (device_manager decrements its current index to keep pointing at the same
+// device when a lower-indexed one is removed). Returns YES on success.
+- (BOOL)deleteDeviceAtIndex:(NSUInteger)index NS_SWIFT_NAME(deleteDevice(at:));
+
+// Reset the in-memory device list + booted-device selection to the empty
+// state, matching a fresh install. The caller removes the sandbox storage
+// tree separately; this only clears device_manager and conf.device so the
+// frontend surface returns to "no device installed" without an app restart.
+- (void)resetDevicesState;
+
 // Trigger applist rescan + return the resulting (uid, name) list.
 - (NSArray<EKA2L1AppEntry *> *)rescanApps;
 
@@ -183,6 +196,20 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 - (void)advanceGuestScreenModeForAppUID:(uint32_t)uid
                              completion:(void (^)(NSInteger mode))completion;
 
+// Per-app guest frame-rate limit (the emulated screen's vsync cap, persisted
+// through the shared per-app compatibility settings). `limit` is a target FPS
+// of 15 / 30 / 60; pass 0 (or negative) for "unlimited" (uncapped presentation
+// for the running session). The value applies live to the focused screen and
+// is restored on the app's next launch.
+- (void)setGuestFrameLimitForAppUID:(uint32_t)uid limit:(NSInteger)limit
+    NS_SWIFT_NAME(setGuestFrameLimit(forAppUID:limit:));
+
+// The current guest frame-rate limit for `uid`: 15 / 30 / 60, or 0 for
+// unlimited. Reads the live focused screen when a session is running, else the
+// persisted per-app setting.
+- (NSInteger)guestFrameLimitForAppUID:(uint32_t)uid
+    NS_SWIFT_NAME(guestFrameLimit(forAppUID:));
+
 // Current interface orientation as a CCW rotation from the device's natural
 // portrait orientation: portrait 0, landscapeLeft 90, portraitUpsideDown 180,
 // landscapeRight 270. Combined with the guest screen mode's rotation to keep
@@ -215,7 +242,6 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 // back to the interpreter even if the user opted in.
 @property(nonatomic, readonly) BOOL jitCompiledIn;
 @property(nonatomic, readonly) BOOL jitAvailable;
-- (void)testVibration;
 - (uint64_t)renderedFrameCount;
 
 // 3.6: decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)

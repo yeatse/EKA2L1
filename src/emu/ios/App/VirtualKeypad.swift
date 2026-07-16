@@ -106,6 +106,9 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
 struct KeypadMenuActions {
     var layoutSelection: Binding<String>
     var rotateGuestScreen: () -> Void
+    // Per-game frame-rate cap shown in the Game Settings submenu: 15 / 30 / 60,
+    // or 0 for unlimited.
+    var frameLimit: Binding<Int>
     var saveScreenshot: () -> Void
     var exitGame: () -> Void
 }
@@ -114,7 +117,10 @@ struct KeypadMenuActions {
 enum KeypadDefaults {
     static let opacityKey = "ios.keypadOpacity"
     static let opacity = 0.85
-    static let opacityChoices: [Double] = [1.0, 0.85, 0.7, 0.55, 0.4]
+    // Overlay opacity bounds (fully opaque down to a still-usable minimum, so
+    // the floating menu key can never disappear entirely).
+    static let opacityRange: ClosedRange<Double> = 0.1...1.0
+    static let opacityStep = 0.1
 }
 
 // Entry point used by EmulatorView: renders the keypad for the selected layout.
@@ -134,9 +140,10 @@ struct VirtualKeypad: View {
 
 // MARK: - System menu key
 
-// The "system function" key: opens a native menu with keypad switching, keypad
-// opacity, screenshot, restart and exit. Present in every layout so the
-// emulator screen works without a navigation bar.
+// The "system function" key: opens a native menu with a Keypad Settings and a
+// Game Settings submenu, screenshot and exit. Both submenus use menu-native
+// controls (Picker / Stepper) that a UIMenu can host — no presented sheet.
+// Present in every layout so the emulator screen works without a navigation bar.
 struct SystemMenuKey: View {
     let actions: KeypadMenuActions
     var size: CGSize = CGSize(width: 58, height: 38)
@@ -151,22 +158,25 @@ struct SystemMenuKey: View {
                         Text(layout.displayName).tag(layout.rawValue)
                     }
                 }
-            } label: {
-                Label("emulator.menu.keypadLayout", systemImage: "keyboard")
-            }
-            Menu {
-                Picker("emulator.menu.keypadOpacity", selection: $keypadOpacity) {
-                    ForEach(KeypadDefaults.opacityChoices, id: \.self) { value in
-                        Text(value, format: .percent).tag(value)
-                    }
+                Divider()
+                Stepper(value: $keypadOpacity,
+                        in: KeypadDefaults.opacityRange,
+                        step: KeypadDefaults.opacityStep) {
+                    Text("emulator.menu.opacityValue \(keypadOpacity.formatted(.percent.precision(.fractionLength(0))))")
                 }
             } label: {
-                Label("emulator.menu.keypadOpacity", systemImage: "circle.lefthalf.filled")
+                Label("emulator.menu.keypadSettings", systemImage: "keyboard")
             }
-            Button {
-                actions.rotateGuestScreen()
+            Menu {
+                fpsLimitPicker
+                Divider()
+                Button {
+                    actions.rotateGuestScreen()
+                } label: {
+                    Label("emulator.menu.rotateGuestScreen", systemImage: "rotate.right")
+                }
             } label: {
-                Label("emulator.menu.rotateGuestScreen", systemImage: "rotate.right")
+                Label("emulator.menu.gameSettings", systemImage: "slider.horizontal.3")
             }
             Button {
                 actions.saveScreenshot()
@@ -185,6 +195,25 @@ struct SystemMenuKey: View {
                 .keyCap(kind: .soft, pressed: false)
         }
         .accessibilityLabel("emulator.menu")
+    }
+
+    // 15 / 30 / 60 are numeric units shown verbatim; only "Unlimited" (tag 0,
+    // matching the bridge's unlimited sentinel) is localized. The palette style
+    // renders the options as an inline row inside the menu; it is iOS 17+, so
+    // pre-17 falls back to the default menu picker.
+    @ViewBuilder
+    private var fpsLimitPicker: some View {
+        let picker = Picker("emulator.menu.fpsLimit", selection: actions.frameLimit) {
+            Text(verbatim: "15").tag(15)
+            Text(verbatim: "30").tag(30)
+            Text(verbatim: "60").tag(60)
+            Text("emulator.fpsLimit.unlimited").tag(0)
+        }
+        if #available(iOS 17, *) {
+            picker.pickerStyle(.palette)
+        } else {
+            picker
+        }
     }
 }
 
@@ -327,7 +356,7 @@ private struct CompactKeypad: View {
                 .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(showNumeric ? "Switch to direction pad" : "Switch to number pad")
+        .accessibilityLabel(Text(showNumeric ? "keypad.accessibility.toDirectionPad" : "keypad.accessibility.toNumberPad"))
     }
 
 }

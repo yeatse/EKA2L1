@@ -193,7 +193,7 @@ struct ClearKey: View {
 
     var body: some View {
         CapKey(scan: Scan.clear, symbol: "delete.left.fill", size: size)
-            .accessibilityLabel("Clear")
+            .accessibilityLabel(Text("keypad.accessibility.clear"))
     }
 }
 

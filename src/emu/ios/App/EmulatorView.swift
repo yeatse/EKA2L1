@@ -21,6 +21,9 @@ struct EmulatorView: View {
     @State private var fpsDragStart: CGPoint?
     @State private var wasIdleTimerDisabled = false
     @State private var hostProxy = EmulatorHostProxy()
+    // Per-game guest frame-rate cap (0 = unlimited); loaded on appear and
+    // written straight through to the emulator when changed from Game Settings.
+    @State private var frameLimit = 0
     // Whether the booted ROM is touch-driven (S60v5 / Symbian^3+); those use a
     // separate layout preference that defaults to the fullscreen layout.
     @State private var isTouchDevice = false
@@ -52,12 +55,25 @@ struct EmulatorView: View {
         )
     }
 
+    // Writing the frame-limit binding pushes the new cap straight to the
+    // emulator (which applies it live and persists it per app UID).
+    private var frameLimitSelection: Binding<Int> {
+        Binding(
+            get: { frameLimit },
+            set: { newValue in
+                frameLimit = newValue
+                EKA2L1Bridge.shared.setGuestFrameLimit(appUID: uid, limit: newValue)
+            }
+        )
+    }
+
     private var menuActions: KeypadMenuActions {
         KeypadMenuActions(
             layoutSelection: layoutSelection,
             rotateGuestScreen: {
                 EKA2L1Bridge.shared.advanceGuestScreenMode(appUID: uid) { _ in }
             },
+            frameLimit: frameLimitSelection,
             saveScreenshot: { saveScreenshot() },
             exitGame: {
                 EKA2L1Bridge.shared.closeRunningApp()
@@ -115,7 +131,7 @@ struct EmulatorView: View {
                         .onChange(of: proxy.size) { newSize in
                             ensureOverlayPosition(in: newSize)
                         }
-                        .accessibilityLabel("Game FPS")
+                        .accessibilityLabel(Text("emulator.fps.accessibility"))
                 }
             }
             .overlay(alignment: keypadOverlayAlignment) {
@@ -138,6 +154,7 @@ struct EmulatorView: View {
             wasIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
             isTouchDevice = EKA2L1Bridge.shared.currentDeviceIsTouchScreen()
+            frameLimit = EKA2L1Bridge.shared.guestFrameLimit(appUID: uid)
             if !Self.launchLayoutApplied, let forced = KeypadLayout.launchArgumentLayout() {
                 Self.launchLayoutApplied = true
                 layoutSelection.wrappedValue = forced.rawValue
@@ -160,7 +177,7 @@ struct EmulatorView: View {
             UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled
             DisplayOrientation.unlock()
         }
-        .alert("Guest fatal", isPresented: Binding(
+        .alert("emulator.guestFatal", isPresented: Binding(
             get: { guestFatalDetails != nil },
             set: { isPresented in
                 if !isPresented {
@@ -168,7 +185,7 @@ struct EmulatorView: View {
                 }
             }
         )) {
-            Button("确定") {
+            Button("common.ok") {
                 guestFatalDetails = nil
                 dismiss()
             }

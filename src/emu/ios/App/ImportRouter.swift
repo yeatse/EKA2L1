@@ -31,9 +31,9 @@ final class ImportRouter {
             }
         }
         if skipped.isEmpty {
-            return "Imported \(ok) item(s)."
+            return String(localized: "import.router.imported \(ok)")
         }
-        return "Imported \(ok) item(s); \(skipped.count) skipped: \(skipped.joined(separator: "; "))"
+        return String(localized: "import.router.importedSkipped \(ok) \(skipped.count) \(skipped.joined(separator: "; "))")
     }
 
     private enum ImportError: LocalizedError {
@@ -41,7 +41,8 @@ final class ImportRouter {
 
         var errorDescription: String? {
             switch self {
-            case .unsupportedExtension(let ext): return "unsupported file type .\(ext)"
+            case .unsupportedExtension(let ext):
+                return String(localized: "import.router.unsupportedType \(ext)")
             }
         }
     }

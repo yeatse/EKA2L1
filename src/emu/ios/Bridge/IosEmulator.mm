@@ -1419,6 +1419,71 @@ namespace eka2l1::ios {
     return YES;
 }
 
+- (BOOL)deleteDeviceAtIndex:(NSUInteger)index {
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    // Mutating device_manager + deleting the sandbox storage tree must not race
+    // the os loop or an app rescan. Mirror the install/boot prologue: take the
+    // session lock, then stop and drain the loop. The caller reboots afterwards
+    // (or drops to the empty state), so preserve the prior mounted flag.
+    const bool was_mounted = _state->mounted;
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+
+    auto *dvc = _state->symsys->get_device_manager();
+    if (!dvc) {
+        _state->mounted = was_mounted;
+        return NO;
+    }
+
+    std::string firmcode;
+    {
+        std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+        auto &devices = dvc->get_devices();
+        if (index >= devices.size()) {
+            _state->mounted = was_mounted;
+            return NO;
+        }
+        firmcode = devices[index].firmware_code;
+    }
+
+    // delete_device takes dvc->lock itself, so it must be called without the
+    // scoped lock above held.
+    const bool removed = dvc->delete_device(firmcode);
+
+    // Drop the device's ROM filesystem (drive Z) and resident image from disk.
+    const std::string firmcode_low = eka2l1::common::lowercase_string(firmcode);
+    const std::string storage = _state->conf.storage;
+    eka2l1::common::delete_folder(eka2l1::add_path(storage, "drives/z/" + firmcode_low + "/"));
+    eka2l1::common::delete_folder(eka2l1::add_path(storage, "roms/" + firmcode_low + "/"));
+
+    // Keep conf.device in step with device_manager's adjusted current index so
+    // a later boot (or a fresh launch) targets the surviving device.
+    _state->conf.device = dvc->get_current_index();
+    _state->conf.serialize();
+
+    _state->mounted = was_mounted;
+    return removed ? YES : NO;
+}
+
+- (void)resetDevicesState {
+    if (!_state) {
+        return;
+    }
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+    if (_state->symsys) {
+        if (auto *dvc = _state->symsys->get_device_manager()) {
+            dvc->clear();
+        }
+    }
+    _state->conf.device = -1;
+    _lastAppList = nil;
+    // mounted stays false: with no device the frontend shows the empty state
+    // and never ticks a guest, so leaving the loop paused is correct.
+}
+
 - (NSArray<EKA2L1AppEntry *> *)rescanApps {
     NSMutableArray<EKA2L1AppEntry *> *out = [NSMutableArray array];
     if (!_state || !_state->symsys) {
@@ -1968,6 +2033,58 @@ namespace eka2l1::ios {
     _state->host_interface_rotation_deg.store(static_cast<int>(degrees), std::memory_order_relaxed);
 }
 
+// The screen's vsync divides 1s by refresh_rate, so 0 would divide-by-zero;
+// "unlimited" is represented as a high cap the 60Hz-native guests never reach.
+static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
+
+- (void)setGuestFrameLimitForAppUID:(uint32_t)uid limit:(NSInteger)limit {
+    if (!_state) {
+        return;
+    }
+    const std::uint8_t refresh_rate = (limit <= 0)
+        ? k_unlimited_refresh_rate
+        : static_cast<std::uint8_t>(std::min<NSInteger>(limit, k_unlimited_refresh_rate));
+    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
+        std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
+        eka2l1::epoc::screen *scr = nullptr;
+        if (self->_state->winserv) {
+            scr = self->_state->winserv->get_current_focus_screen();
+            if (scr) {
+                scr->refresh_rate = refresh_rate;
+            }
+        }
+        if (self->_state->settings) {
+            eka2l1::config::app_setting setting;
+            if (eka2l1::config::app_setting *existing = self->_state->settings->get_setting(uid)) {
+                setting = *existing;
+            }
+            if (scr) {
+                scr->store_to_config(self->_state->graphics_driver.get(), setting);
+            }
+            setting.fps = refresh_rate;
+            self->_state->settings->add_or_replace_setting(uid, setting);
+        }
+    });
+}
+
+- (NSInteger)guestFrameLimitForAppUID:(uint32_t)uid {
+    if (!_state) {
+        return 0;
+    }
+    std::uint8_t refresh_rate = 60;
+    std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex, std::try_to_lock);
+    if (session_lock.owns_lock() && _state->winserv) {
+        if (eka2l1::epoc::screen *scr = _state->winserv->get_current_focus_screen()) {
+            refresh_rate = scr->refresh_rate;
+        }
+    } else if (_state->settings) {
+        if (eka2l1::config::app_setting *existing = _state->settings->get_setting(uid)) {
+            refresh_rate = static_cast<std::uint8_t>(existing->fps);
+        }
+    }
+    return (refresh_rate == 0 || refresh_rate > 60) ? 0 : static_cast<NSInteger>(refresh_rate);
+}
+
 - (void)submitRawKey:(uint32_t)scanCode pressed:(BOOL)pressed {
     if (!_state || !_state->winserv) {
         return;
@@ -2179,6 +2296,15 @@ namespace eka2l1::ios {
 
     locale_lang->language = static_cast<eka2l1::epoc::language>(code);
     lang_prop->set<eka2l1::epoc::locale_language>(locale_lang.value());
+
+    // The applist caches each registration's caption in the language it was
+    // first loaded in, and rescan_registries() skips reloading a registry whose
+    // .rsc mtime is unchanged — so a language switch alone leaves the app list
+    // showing the old-language names. Drop the cached registrations so the next
+    // rescanApps re-reads every caption with the new current language.
+    if (auto *alserv = eka2l1::ios::get_applist_server(kern)) {
+        alserv->get_registerations().clear();
+    }
 }
 
 - (BOOL)jitCompiledIn {
@@ -2191,13 +2317,6 @@ namespace eka2l1::ios {
 
 - (BOOL)jitAvailable {
     return eka2l1::arm::host_can_jit() ? YES : NO;
-}
-
-- (void)testVibration {
-    auto vibrator = eka2l1::drivers::hwrm::make_suitable_vibrator();
-    if (vibrator) {
-        vibrator->vibrate(180, 70);
-    }
 }
 
 - (uint64_t)renderedFrameCount {
