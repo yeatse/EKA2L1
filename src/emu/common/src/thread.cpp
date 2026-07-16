@@ -25,6 +25,10 @@
 #include <pthread.h>
 #endif
 
+#if EKA2L1_PLATFORM(DARWIN)
+#include <pthread/qos.h>
+#endif
+
 #include <common/cvt.h>
 #include <common/thread.h>
 
@@ -122,6 +126,33 @@ namespace eka2l1::common {
     }
 
     void set_thread_priority(const thread_priority pri) {
+#if EKA2L1_PLATFORM(DARWIN)
+        // On Darwin the QoS class both raises the timeshare priority and
+        // steers the scheduler's P-core/E-core placement, which matters far
+        // more for the CPU-bound emulator threads than the raw sched_priority
+        // value. Note a thread with a QoS class set can no longer be adjusted
+        // through pthread_setschedparam, so keep every caller on this path.
+        qos_class_t qos = QOS_CLASS_DEFAULT;
+
+        switch (pri) {
+        case thread_priority_low:
+            qos = QOS_CLASS_UTILITY;
+            break;
+        case thread_priority_normal:
+            qos = QOS_CLASS_DEFAULT;
+            break;
+        case thread_priority_high:
+            qos = QOS_CLASS_USER_INITIATED;
+            break;
+        case thread_priority_very_high:
+            qos = QOS_CLASS_USER_INTERACTIVE;
+            break;
+        default:
+            break;
+        }
+
+        pthread_set_qos_class_self_np(qos, 0);
+#else
         pthread_t this_thread = pthread_self();
 
         std::int32_t max_prio = sched_get_priority_max(SCHED_OTHER);
@@ -136,6 +167,7 @@ namespace eka2l1::common {
         }
 
         pthread_setschedparam(this_thread, SCHED_OTHER, &params);
+#endif
     }
 #endif
 }

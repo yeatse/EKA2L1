@@ -35,6 +35,7 @@
 #include <common/log.h>
 #include <common/path.h>
 #include <common/pystr.h>
+#include <common/thread.h>
 #include <common/version.h>
 #include <config/app_settings.h>
 #include <config/config.h>
@@ -1084,6 +1085,9 @@ namespace eka2l1::ios {
 
     auto *state = _state.get();
     _state->graphics_thread = std::make_unique<std::thread>([state]() {
+        eka2l1::common::set_thread_name("Graphics thread");
+        eka2l1::common::set_thread_priority(eka2l1::common::thread_priority_high);
+
         // Wait for the EAGLView to publish its CAEAGLLayer; the EAGL context
         // can't be created without a drawable. attachLayer:pixelSize:scale:
         // flips layer_dirty under layer_mutex.
@@ -1129,6 +1133,9 @@ namespace eka2l1::ios {
     });
 
     _state->os_thread = std::make_unique<std::thread>([state]() {
+        eka2l1::common::set_thread_name("Symbian OS thread");
+        eka2l1::common::set_thread_priority(eka2l1::common::thread_priority_high);
+
         while (state->running) {
             if (state->paused || !state->mounted.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
