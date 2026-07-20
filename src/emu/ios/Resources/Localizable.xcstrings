@@ -3,6 +3,7 @@
   "strings" : {
     "common.cancel" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } } },
     "common.completed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed!" } } } },
+    "common.done" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } } },
     "common.error" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Error" } } } },
     "common.install" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install" } } } },
     "common.ok" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } } },

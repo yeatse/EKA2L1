@@ -30,6 +30,10 @@ struct EmulatorView: View {
     // Screen-space frame of the keypad overlay, handed to the render view so it
     // yields touches there to the keys drawn above it.
     @State private var keypadFrame: CGRect = .null
+    // Whether the floating opacity slider is presented (opened from the system
+    // menu's Keypad Settings). Lives here so the bar can sit at the screen's
+    // bottom centre, outside the keypad's own opacity fade.
+    @State private var showOpacitySlider = false
 
     // The -LaunchKeypadLayout testing argument seeds the layout only for the
     // first emulator screen of the process; later screens use the stored pick.
@@ -74,6 +78,9 @@ struct EmulatorView: View {
                 EKA2L1Bridge.shared.advanceGuestScreenMode(appUID: uid) { _ in }
             },
             frameLimit: frameLimitSelection,
+            adjustOpacity: {
+                withAnimation(.easeInOut(duration: 0.22)) { showOpacitySlider = true }
+            },
             saveScreenshot: { saveScreenshot() },
             exitGame: {
                 EKA2L1Bridge.shared.closeRunningApp()
@@ -143,6 +150,15 @@ struct EmulatorView: View {
                                 .onChange(of: keypadProxy.frame(in: .global)) { updateKeypadFrame($0) }
                         }
                     )
+            }
+            .overlay(alignment: .bottom) {
+                if showOpacitySlider {
+                    OpacitySliderBar(opacity: $keypadOpacity) {
+                        withAnimation(.easeInOut(duration: 0.22)) { showOpacitySlider = false }
+                    }
+                    .padding(12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
         }
         .background(Color.black.ignoresSafeArea())

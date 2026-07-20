@@ -102,13 +102,16 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
 
 // What the keypad's system menu key needs from the hosting screen: the layout
 // selection (EmulatorView owns which preference store backs it) and the
-// actions that operate on the emulator session. Opacity is menu-internal.
+// actions that operate on the emulator session.
 struct KeypadMenuActions {
     var layoutSelection: Binding<String>
     var rotateGuestScreen: () -> Void
     // Per-game frame-rate cap shown in the Game Settings submenu: 15 / 30 / 60,
     // or 0 for unlimited.
     var frameLimit: Binding<Int>
+    // Opens the floating opacity slider hosted by EmulatorView. A UIMenu can't
+    // host a live slider, so the menu item just asks the screen to present one.
+    var adjustOpacity: () -> Void
     var saveScreenshot: () -> Void
     var exitGame: () -> Void
 }
@@ -120,7 +123,6 @@ enum KeypadDefaults {
     // Overlay opacity bounds (fully opaque down to a still-usable minimum, so
     // the floating menu key can never disappear entirely).
     static let opacityRange: ClosedRange<Double> = 0.1...1.0
-    static let opacityStep = 0.1
 }
 
 // Entry point used by EmulatorView: renders the keypad for the selected layout.
@@ -141,8 +143,9 @@ struct VirtualKeypad: View {
 // MARK: - System menu key
 
 // The "system function" key: opens a native menu with a Keypad Settings and a
-// Game Settings submenu, screenshot and exit. Both submenus use menu-native
-// controls (Picker / Stepper) that a UIMenu can host — no presented sheet.
+// Game Settings submenu, screenshot and exit. Menu-native controls (Picker) are
+// hosted inline; opacity, which needs a live slider a UIMenu can't host, opens a
+// floating bar owned by EmulatorView instead.
 // Present in every layout so the emulator screen works without a navigation bar.
 struct SystemMenuKey: View {
     let actions: KeypadMenuActions
@@ -159,10 +162,11 @@ struct SystemMenuKey: View {
                     }
                 }
                 Divider()
-                Stepper(value: $keypadOpacity,
-                        in: KeypadDefaults.opacityRange,
-                        step: KeypadDefaults.opacityStep) {
-                    Text("emulator.menu.opacityValue \(keypadOpacity.formatted(.percent.precision(.fractionLength(0))))")
+                Button {
+                    actions.adjustOpacity()
+                } label: {
+                    Label("emulator.menu.opacityValue \(keypadOpacity.formatted(.percent.precision(.fractionLength(0))))",
+                          systemImage: "slider.horizontal.below.rectangle")
                 }
             } label: {
                 Label("emulator.menu.keypadSettings", systemImage: "keyboard")
@@ -408,5 +412,55 @@ private struct FullscreenKeypad: View {
 
     var body: some View {
         SystemMenuKey(actions: actions, size: CGSize(width: 46, height: 40))
+    }
+}
+
+// MARK: - Floating opacity slider
+
+// Horizontal bar EmulatorView floats at the bottom-centre while the user tunes
+// the keypad opacity. The slider drives the shared opacity preference directly,
+// so the keypad fades live as it moves; the circular checkmark dismisses it.
+struct OpacitySliderBar: View {
+    @Binding var opacity: Double
+    let onDone: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "keyboard")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.7))
+            Slider(value: $opacity, in: KeypadDefaults.opacityRange)
+                .tint(.white)
+                .frame(minWidth: 180)
+            Text(opacity.formatted(.percent.precision(.fractionLength(0))))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white)
+                .frame(width: 42, alignment: .trailing)
+            doneButton
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.72), in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+        .accessibilityLabel("settings.keypadOpacity")
+    }
+
+    // Circular checkmark. .circle button-border shape is iOS 17+, so pre-17
+    // falls back to the capsule shape available since iOS 15.
+    @ViewBuilder
+    private var doneButton: some View {
+        let button = Button {
+            onDone()
+        } label: {
+            Image(systemName: "checkmark")
+                .font(.system(size: 15, weight: .bold))
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityLabel("common.done")
+        if #available(iOS 17, *) {
+            button.buttonBorderShape(.circle)
+        } else {
+            button.buttonBorderShape(.capsule)
+        }
     }
 }
