@@ -30,6 +30,10 @@
 #                               Gameloft movie renders, reaches the main menu,
 #                               selects Free Race / Nassau / Normal Race,
 #                               chooses the Mini, and asserts a rendered race.
+#   strings      (no sim)     : reconciles the Localizable string catalog with
+#                               the build's .stringsdata. FAILs on new/stale
+#                               entries (an agent must fix them); a pure
+#                               formatting drift is rewritten and `git add`ed.
 #
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
 # (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
@@ -47,12 +51,13 @@
 #       build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
 #
 # Usage:
-#   scripts/ios_regression_test.sh                 # fbattle + calculator + n95calc
+#   scripts/ios_regression_test.sh                 # fbattle + calculator + n95calc + strings
 #   scripts/ios_regression_test.sh fbattle         # FBattle only
 #   scripts/ios_regression_test.sh calculator      # Calculator only
 #   scripts/ios_regression_test.sh n95calc         # N95 boot/host-survival only
 #   scripts/ios_regression_test.sh angrybirds      # X7 touch suite only
 #   scripts/ios_regression_test.sh asphalt6        # X7 Asphalt 6 race suite
+#   scripts/ios_regression_test.sh strings         # string catalog sync check (no simulator)
 #   scripts/ios_regression_test.sh --install <path-to-EKA2L1.app> [suite]
 #
 # Env overrides:
@@ -107,6 +112,10 @@ SCREEN_DIFF_MIN="${EKA2L1_REG_SCREEN_DIFF_MIN:-4000}"
 BLANK_STDEV_MAX="0.04"
 
 CRASH_REGEX='Active scheduler dump|E32USER-CBase|panicked|access violation|Emulation halt|KERN-EXEC|Unhandled'
+
+# Repo root + string catalog, for the `strings` suite (static, no simulator).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+XCSTRINGS="${EKA2L1_XCSTRINGS:-$REPO_ROOT/src/emu/ios/Resources/Localizable.xcstrings}"
 
 PASS=0; FAIL=0
 declare -a RESULTS
@@ -632,15 +641,153 @@ test_asphalt6() {
     assert_no_crash "$base" "Asphalt6"
 }
 
+# Static (no-simulator) suite: keep the Localizable string catalog in sync with
+# source. The keys used by the app are read straight out of the build's
+# .stringsdata (the Swift compiler's extraction; the lightweight `xcstringstool
+# extract` disagrees with it), and compared against the catalog's keys:
+#   - new (referenced but missing) or stale (orphaned) keys -> FAIL so an agent
+#     reconciles them by hand.
+#   - otherwise a pure canonical-formatting drift -> rewrite + `git add`.
+# We deliberately do NOT use `xcstringstool sync` for the new/stale verdict:
+# under Xcode 26.6 its ingestion regressed and marks every key stale. The set
+# comparison is immune to that; formatting still uses sync but with
+# --skip-marking-strings-stale (never stales, keeps every key) and a guard.
+# Needs the app to have been built (for the .stringsdata); SKIPs cleanly if the
+# data is missing or older than the current sources.
+test_strings() {
+    echo "== String catalog =="
+    echo "   $XCSTRINGS"
+    if ! command -v xcrun >/dev/null 2>&1; then check FAIL "strings: xcrun available"; return; fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "      python3 not on PATH"; check PASS "strings: SKIPPED (needs python3)"; return
+    fi
+    [ -f "$XCSTRINGS" ] || { check FAIL "strings: catalog exists"; return; }
+
+    # Locate a stringsdata dir: env override, else the build output holding the
+    # newest .stringsdata overall (skip asan / CompilerId probe dirs). Selecting
+    # by the freshest file — not a fixed one like ContentView — matters because
+    # an incremental build only regenerates the sources that changed.
+    local ddir="${EKA2L1_STRINGSDATA_DIR:-}" newest_data=0
+    if [ -z "$ddir" ]; then
+        local newest="" bestm=0 f m
+        while IFS= read -r f; do
+            case "$f" in *"/Objects-normal-asan/"*|*"/CompilerId"*) continue ;; esac
+            m="$(stat -f '%m' "$f" 2>/dev/null || echo 0)"
+            if [ "$m" -gt "$bestm" ]; then bestm="$m"; newest="$f"; fi
+        done < <(find "$REPO_ROOT/build" -type f -name '*.stringsdata' 2>/dev/null)
+        [ -n "$newest" ] && ddir="$(dirname "$newest")"
+    fi
+    if [ -z "$ddir" ] || [ ! -d "$ddir" ]; then
+        echo "      no .stringsdata found — build the app first (or set EKA2L1_STRINGSDATA_DIR)"
+        check PASS "strings: SKIPPED (no build stringsdata)"; return
+    fi
+    echo "      stringsdata: $ddir"
+
+    # Guard against stale data: if the newest source out-dates the newest
+    # extraction, the verdict would be wrong, so skip rather than fail spuriously.
+    local newest_src=0 m f
+    while IFS= read -r f; do
+        m="$(stat -f '%m' "$f" 2>/dev/null || echo 0)"; [ "$m" -gt "$newest_src" ] && newest_src="$m"
+    done < <(find "$REPO_ROOT/src/emu/ios" -name '*.swift' 2>/dev/null)
+    while IFS= read -r f; do
+        m="$(stat -f '%m' "$f" 2>/dev/null || echo 0)"; [ "$m" -gt "$newest_data" ] && newest_data="$m"
+    done < <(find "$ddir" -name '*.stringsdata' 2>/dev/null)
+    if [ "$newest_src" -gt "$newest_data" ]; then
+        echo "      sources are newer than the stringsdata — rebuild before checking"
+        check PASS "strings: SKIPPED (stringsdata stale; rebuild)"; return
+    fi
+
+    # Reconcile by key set: keys referenced in source (union of every
+    # .stringsdata Localizable table) vs. keys in the catalog.
+    local recon
+    recon="$(python3 - "$XCSTRINGS" "$ddir" <<'PY'
+import json, sys, glob, os
+xc = json.load(open(sys.argv[1]))
+cat = set(xc['strings'].keys())
+ref = set()
+for f in glob.glob(os.path.join(sys.argv[2], '*.stringsdata')):
+    try: d = json.load(open(f))
+    except Exception: continue
+    for e in d.get('tables', {}).get('Localizable', []):
+        if e.get('key'): ref.add(e['key'])
+if not ref:
+    print("ERR"); sys.exit(0)
+print("NEW "   + ",".join(sorted(ref - cat)))
+print("STALE " + ",".join(sorted(cat - ref)))
+PY
+)"
+    if printf '%s\n' "$recon" | grep -q '^ERR$'; then
+        echo "      stringsdata carried no Localizable keys — rebuild the app"
+        check PASS "strings: SKIPPED (empty extraction)"; return
+    fi
+    local new stale
+    new="$(printf '%s\n' "$recon" | sed -n 's/^NEW //p')"
+    stale="$(printf '%s\n' "$recon" | sed -n 's/^STALE //p')"
+
+    if [ -n "$new" ] || [ -n "$stale" ]; then
+        check FAIL "strings: catalog in sync with source"
+        [ -n "$new" ]   && echo "      NEW   (used in source, missing from catalog): $new"
+        [ -n "$stale" ] && echo "      STALE (in catalog, no longer referenced):    $stale"
+        echo "      -> an agent must reconcile: add the new keys (translate or verbatim), delete the stale ones."
+        return
+    fi
+
+    # Keys are in sync. Canonicalise the formatting to match what Xcode writes:
+    # plain `sync` produces the canonical layout, and (under Xcode 26.6) also
+    # marks every key stale — but the key-set check above already proved none
+    # are really stale, so those markers are spurious and stripped by line. The
+    # result is byte-identical to an Xcode save; stage it if it changed.
+    local work; work="$(mktemp -d)"; cp "$XCSTRINGS" "$work/f.xcstrings"
+    local args=() f
+    for f in "$ddir"/*.stringsdata; do args+=(--stringsdata "$f"); done
+    xcrun xcstringstool sync "$work/f.xcstrings" "${args[@]}" >/dev/null 2>&1
+    sed '/^[[:space:]]*"extractionState" : "stale",$/d' "$work/f.xcstrings" > "$work/canon.xcstrings"
+
+    # Safety: only touch the file if the rewrite is valid JSON, keeps the exact
+    # same key set, and carries no leftover extractionState.
+    local safe
+    safe="$(python3 - "$XCSTRINGS" "$work/canon.xcstrings" <<'PY'
+import json, sys
+try:
+    a = json.load(open(sys.argv[1])); b = json.load(open(sys.argv[2]))
+except Exception:
+    print("UNSAFE"); sys.exit(0)
+ok = set(a['strings']) == set(b['strings']) and \
+     not any('extractionState' in v for v in b['strings'].values())
+print("OK" if ok else "UNSAFE")
+PY
+)"
+    if [ "$safe" != OK ]; then
+        check PASS "strings: catalog in sync (formatting rewrite skipped — unsafe)"
+    elif diff -q "$XCSTRINGS" "$work/canon.xcstrings" >/dev/null 2>&1; then
+        check PASS "strings: catalog in sync (no changes)"
+    else
+        cp "$work/canon.xcstrings" "$XCSTRINGS"
+        if git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            git -C "$REPO_ROOT" add "$XCSTRINGS" >/dev/null 2>&1
+            check PASS "strings: formatting normalised and staged"
+        else
+            check PASS "strings: formatting normalised (not a git tree; left unstaged)"
+        fi
+    fi
+    rm -rf "$work"
+}
+
 # ---- main ------------------------------------------------------------------
 
-need xcodebuildmcp; need jq; need magick; need xcrun
-SIM="$(booted_sim)"; [ -z "$SIM" ] && die "no booted iPhone simulator"
+need xcrun
+if [ "$SUITE" != strings ]; then
+    need xcodebuildmcp; need jq; need magick
+    SIM="$(booted_sim)"; [ -z "$SIM" ] && die "no booted iPhone simulator"
+else
+    SIM=""
+fi
 mkdir -p "$OUTDIR"
-echo "simulator: $SIM"
+[ -n "$SIM" ] && echo "simulator: $SIM"
 echo "results:   $OUTDIR"
 
 if [ -n "$INSTALL_APP" ]; then
+    [ -n "$SIM" ] || die "--install requires a booted simulator"
     [ -d "$INSTALL_APP" ] || die "app not found: $INSTALL_APP"
     echo "installing $INSTALL_APP"
     xcrun simctl install "$SIM" "$INSTALL_APP" || die "install failed"
@@ -652,8 +799,9 @@ case "$SUITE" in
     n95calc)    test_n95calc ;;
     angrybirds|ab) test_angrybirds ;;
     asphalt6|asphalt|a6) test_asphalt6 ;;
-    all|"")     test_fbattle; test_calculator; test_n95calc ;;
-    *) die "unknown suite: $SUITE (use fbattle|calculator|n95calc|angrybirds|asphalt6|all)" ;;
+    strings)    test_strings ;;
+    all|"")     test_fbattle; test_calculator; test_n95calc; test_strings ;;
+    *) die "unknown suite: $SUITE (use fbattle|calculator|n95calc|angrybirds|asphalt6|strings|all)" ;;
 esac
 
 echo
