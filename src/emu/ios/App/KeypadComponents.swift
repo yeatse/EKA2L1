@@ -183,7 +183,7 @@ struct SoftKey: View {
     var body: some View {
         CapKey(scan: side == .left ? Scan.leftSoft : Scan.rightSoft,
                symbol: symbolName, size: size)
-            .accessibilityLabel(side == .left ? "LSK" : "RSK")
+            .accessibilityLabel(Text(verbatim: side == .left ? "LSK" : "RSK"))
     }
 }
 
@@ -277,7 +277,7 @@ struct SlidingDPad: View {
                 )
 
             HoldableRawKey(scan: Scan.select, hitShape: AnyShape(Circle())) { pressed in
-                Text("OK")
+                Text(verbatim: "OK")
                     .font(.system(size: okSize * 0.28, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
                     .frame(width: okSize, height: okSize)

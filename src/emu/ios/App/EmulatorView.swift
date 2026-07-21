@@ -395,7 +395,7 @@ private struct FPSOverlay: View {
     @State private var previousTimestamp = Date()
 
     var body: some View {
-        Text("\(fps) FPS")
+        Text(verbatim: "\(fps) FPS")
             .font(.system(size: 13, weight: .semibold, design: .monospaced))
             .foregroundStyle(.white)
             .padding(.horizontal, 10)

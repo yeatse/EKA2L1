@@ -82,7 +82,7 @@ struct SettingsView: View {
             }
             Section("settings.audio") {
                 Slider(value: $audioMasterVolume, in: 0...100, step: 1)
-                Text("\(Int(audioMasterVolume))%")
+                Text(verbatim: "\(Int(audioMasterVolume))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -115,7 +115,7 @@ struct SettingsView: View {
                 }
                 if btDiscoveryMode != 0 {
                     LabeledContent("settings.netplay.portOffset") {
-                        TextField("15000", value: $btPortOffset, format: .number.grouping(.never))
+                        TextField(String("15000"), value: $btPortOffset, format: .number.grouping(.never))
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 100)
@@ -133,7 +133,7 @@ struct SettingsView: View {
                 }
                 if btDiscoveryMode == 1 {
                     ForEach(btFriends) { friendEntry in
-                        Text("\(friendEntry.addr) : \(String(friendEntry.port))")
+                        Text(verbatim: "\(friendEntry.addr) : \(String(friendEntry.port))")
                             .font(.callout.monospacedDigit())
                     }
                     .onDelete { offsets in
