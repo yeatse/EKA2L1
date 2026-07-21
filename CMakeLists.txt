@@ -18,6 +18,7 @@ set(EKA2L1_IOS_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version to tar
 option(EKA2L1_BUILD_TOOLS "Build EKA2L1's tool" ON)
 option(EKA2L1_BUILD_TESTS "Build EKA2L1's tests" ON)
 option(EKA2L1_ENABLE_SCRIPTING_ABILITY "Enable to script with Python or Lua" ON)
+option(EKA2L1_SCRIPTING_LUA "Use the LuaJIT runtime for scripting. When OFF, only the built-in native patches are compiled (no runtime script loading)." ON)
 option(EKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER "Enable EKA2L1 to dump unexpected exception" OFF)
 option(EKA2L1_BUILD_VULKAN_BACKEND "Build Vulkan backend" OFF)
 option(EKA2L1_DEPLOY_DMG "Deploy EKA2L1 as .dmg" OFF)
@@ -73,12 +74,16 @@ if (EKA2L1_IOS)
 
     set(EKA2L1_BUILD_TOOLS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_BUILD_TESTS OFF CACHE BOOL "Disabled on iOS" FORCE)
-    set(EKA2L1_ENABLE_SCRIPTING_ABILITY OFF CACHE BOOL "Disabled on iOS" FORCE)
+    # iOS keeps the scripting engine (for the built-in native game patches) but
+    # cannot use the LuaJIT runtime: JIT/FFI callbacks need writable-executable
+    # memory, which iOS forbids on non-jailbroken devices. Build native-only.
+    set(EKA2L1_ENABLE_SCRIPTING_ABILITY ON CACHE BOOL "Native patches only on iOS" FORCE)
+    set(EKA2L1_SCRIPTING_LUA OFF CACHE BOOL "No LuaJIT on iOS" FORCE)
     set(EKA2L1_BUILD_VULKAN_BACKEND OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_BUILD_PATCH OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_DEPLOY_DMG OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE OFF CACHE BOOL "Disabled on iOS" FORCE)
-    message(STATUS "iOS build: tools/tests/scripting/vulkan/patch/dmg/discord forced OFF")
+    message(STATUS "iOS build: tools/tests/vulkan/patch/dmg/discord forced OFF; scripting is native-patch only (no LuaJIT)")
 endif()
 
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -115,6 +120,12 @@ if (EKA2L1_ENABLE_SCRIPTING_ABILITY)
 else()
     set (ENABLE_SCRIPTING 0)
 endif(EKA2L1_ENABLE_SCRIPTING_ABILITY)
+
+if (EKA2L1_ENABLE_SCRIPTING_ABILITY AND EKA2L1_SCRIPTING_LUA)
+    set (ENABLE_SCRIPTING_LUA 1)
+else()
+    set (ENABLE_SCRIPTING_LUA 0)
+endif()
 
 if (CI)
     set (BUILD_FOR_USER 1)
