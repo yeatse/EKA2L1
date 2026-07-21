@@ -39,8 +39,50 @@
     "home.banner.copied %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Copied %@." } } } },
     "home.banner.importFailed %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Import failed: %@" } } } },
     "home.banner.installDeviceFirst" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install a device (ROM) first, then re-open the SIS file." } } } },
-    "home.banner.installedPackages %lld" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed %lld package(s)." } } } },
-    "home.banner.installingPackages" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installing package(s)..." } } } },
+    "home.banner.installedPackages %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installed %lld package."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installed %lld packages."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "home.banner.installingPackages %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installing %lld package..."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installing %lld packages..."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "home.banner.uninstallFailed %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed to uninstall %@." } } } },
     "home.banner.uninstalled %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Uninstalled %@." } } } },
     "home.empty.hiddenSystemApps" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No installed apps. Tap + to install a SIS / SISX package, or enable Show System Apps." } } } },
@@ -50,7 +92,11 @@
     "home.error.initTitle" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Emulator failed to initialise" } } } },
     "home.error.launchRomMissing %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Launch ROM code %@ is missing." } } } },
     "home.hideSystemApps" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide System Apps" } } } },
+    "home.install.sis" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install SIS/SISX Package" } } } },
     "home.installNGage" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install N-Gage Game" } } } },
+    "home.installNGage.subtitle" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requires N-Gage ROM" } } } },
+    "home.installNGage2" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Import N-Gage 2.0 Game" } } } },
+    "home.installNGage2.subtitle" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Requires S60v3 ROM and N-Gage launcher" } } } },
     "home.ngage.error.chooseFolder" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "N-Gage import failed: choose the game card folder that contains the system folder." } } } },
     "home.ngage.error.generic %lld" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "N-Gage import failed (error %lld)." } } } },
     "home.ngage.error.multipleGames" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "N-Gage import failed: that folder contains more than one game." } } } },
@@ -60,6 +106,50 @@
     "home.ngage.installed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed N-Gage game." } } } },
     "home.ngage.installedNamed %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installed N-Gage game: %@." } } } },
     "home.ngage.installing" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Installing N-Gage game..." } } } },
+    "home.ngage2.imported %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported %lld package. Open the N-Gage launcher to continue."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported %lld packages. Open the N-Gage launcher to continue."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "home.ngage2.importing %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Importing %lld N-Gage 2.0 package..."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Importing %lld N-Gage 2.0 packages..."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "home.noDevice.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No device installed" } } } },
     "home.showSystemApps" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show System Apps" } } } },
     "home.uninstall.action" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Uninstall" } } } },
@@ -82,8 +172,60 @@
     "import.note.rpkg" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "For S60v2 devices or higher, you may need to provide an additional RPKG file. The path chooser will appear if the installer detects that it is needed." } } } },
     "import.recommendedDevices" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recommended devices to install" } } } },
     "import.romFile" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ROM file" } } } },
-    "import.router.imported %lld" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imported %lld item(s)." } } } },
-    "import.router.importedSkipped %lld %lld %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Imported %1$lld item(s); %2$lld skipped: %3$@" } } } },
+    "import.router.imported %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported %lld item."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Imported %lld items."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "import.router.importedSkipped %lld %lld %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported %#@imported@; %2$lld skipped: %3$@"
+          },
+          "substitutions" : {
+            "imported" : {
+              "argNum" : 1,
+              "formatSpecifier" : "lld",
+              "variations" : {
+                "plural" : {
+                  "one" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg item"
+                    }
+                  },
+                  "other" : {
+                    "stringUnit" : {
+                      "state" : "translated",
+                      "value" : "%arg items"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "import.router.unsupportedType %@" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unsupported file type .%@" } } } },
     "import.rpkgFile" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "RPKG file (optional)" } } } },
     "import.title" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Install Device" } } } },

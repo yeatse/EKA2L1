@@ -80,6 +80,7 @@
          app / "Open in" / "Share to". The UTI tree is:
            public.data → com.eka2l1.sis (.sis)
                        → com.eka2l1.sisx (.sisx)
+                       → com.eka2l1.ngage (.n-gage, N-Gage 2.0 game package)
            public.font → public.truetype-ttf-font (.ttf)
                        → public.opentype-font (.otf)
            public.archive → public.zip-archive (.zip, used for ROM bundles)
@@ -99,6 +100,18 @@
             <array>
                 <string>com.eka2l1.sis</string>
                 <string>com.eka2l1.sisx</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>N-Gage 2.0 Game Package</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.eka2l1.ngage</string>
             </array>
         </dict>
         <dict>
@@ -160,6 +173,23 @@
                 <key>public.filename-extension</key>
                 <array>
                     <string>sisx</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.eka2l1.ngage</string>
+            <key>UTTypeDescription</key>
+            <string>N-Gage 2.0 Game Package</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>n-gage</string>
                 </array>
             </dict>
         </dict>

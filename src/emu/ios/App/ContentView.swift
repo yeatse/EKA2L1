@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 //   - One or more devices → app grid for the current device. The navigation
 //     title doubles as a device menu (tap the title) holding the device
 //     switcher and, below a divider, "Install device"; the ellipsis menu holds
-//     Settings, the system-apps toggle, help and N-Gage install; the leading
-//     "+" installs a SIS onto the running device.
+//     Settings, the system-apps toggle and help; the "+" menu installs a SIS,
+//     a classic N-Gage game card, or an N-Gage 2.0 package onto the device.
 
 // SIS files only — device ROM / RPKG go through ImportDeviceView's own picker.
 private let sisTypes: [UTType] = {
@@ -20,9 +20,19 @@ private let sisTypes: [UTType] = {
     return v
 }()
 
+// N-Gage 2.0 game packages (.n-gage). Copied onto the E drive for the N-Gage
+// launcher to install from; see handleNGage2Import.
+private let ngage2Types: [UTType] = {
+    var v: [UTType] = []
+    if let pkg = UTType("com.eka2l1.ngage") { v.append(pkg) }
+    v.append(.data) // fallback so packages without UTI hints still pick
+    return v
+}()
+
 private enum HomeImportTarget {
     case sis
-    case ngage
+    case ngage    // classic N-Gage game card folder (installed onto E:)
+    case ngage2   // N-Gage 2.0 .n-gage package (staged into E:\n-gage)
 }
 
 // iOS 16 fallback for ContentUnavailableView (which is iOS 17+). Mimics its
@@ -117,11 +127,15 @@ struct ContentView: View {
             return sisTypes
         case .ngage:
             return [.folder]
+        case .ngage2:
+            return ngage2Types
         }
     }
 
     private var homeImporterAllowsMultipleSelection: Bool {
-        homeImportTarget == .sis
+        // Folder-based classic N-Gage install picks a single game card; SIS and
+        // .n-gage packages can be batch-imported.
+        homeImportTarget != .ngage
     }
 
     var body: some View {
@@ -358,9 +372,34 @@ struct ContentView: View {
 
         if !devices.isEmpty {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    homeImportTarget = .sis
-                    showingHomeImporter = true
+                Menu {
+                    Button {
+                        homeImportTarget = .sis
+                        showingHomeImporter = true
+                    } label: {
+                        Label("home.install.sis", systemImage: "square.and.arrow.down")
+                    }
+
+                    // A second Text in a menu button's label renders as the item
+                    // subtitle (UIMenuElement.subtitle), spelling out the ROM /
+                    // launcher prerequisite for each N-Gage flavour.
+                    Button {
+                        homeImportTarget = .ngage
+                        showingHomeImporter = true
+                    } label: {
+                        Text("home.installNGage")
+                        Text("home.installNGage.subtitle")
+                        Image(systemName: "folder.badge.plus")
+                    }
+
+                    Button {
+                        homeImportTarget = .ngage2
+                        showingHomeImporter = true
+                    } label: {
+                        Text("home.installNGage2")
+                        Text("home.installNGage2.subtitle")
+                        Image(systemName: "arrow.down.doc")
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
@@ -381,13 +420,6 @@ struct ContentView: View {
                         } else {
                             Label("home.showSystemApps", systemImage: "eye")
                         }
-                    }
-
-                    Button {
-                        homeImportTarget = .ngage
-                        showingHomeImporter = true
-                    } label: {
-                        Label("home.installNGage", systemImage: "folder.badge.plus")
                     }
 
                     Divider()
@@ -418,19 +450,24 @@ struct ContentView: View {
     }
 
     // Drains system-opened files once the emulator is up. SIS packages are
-    // auto-installed onto the current device (same path as the "+" importer);
-    // other registered types (fonts, ROM zips) are staged by ImportRouter.
+    // auto-installed onto the current device; .n-gage packages are staged onto
+    // the E drive (both mirror the "+" importer); other registered types
+    // (fonts, ROM zips) are staged by ImportRouter.
     private func processPendingOpenURLs() {
         guard booted, !pendingOpenURLs.isEmpty else { return }
         let urls = pendingOpenURLs
         pendingOpenURLs = []
 
         let sisURLs = urls.filter { ["sis", "sisx"].contains($0.pathExtension.lowercased()) }
-        let otherURLs = urls.filter { !sisURLs.contains($0) }
+        let ngage2URLs = urls.filter { $0.pathExtension.lowercased() == "n-gage" }
+        let otherURLs = urls.filter { !sisURLs.contains($0) && !ngage2URLs.contains($0) }
 
         if !otherURLs.isEmpty {
             banner = ImportRouter.shared.ingest(urls: otherURLs)
             refresh()
+        }
+        if !ngage2URLs.isEmpty {
+            handleNGage2Import(.success(ngage2URLs))
         }
         guard !sisURLs.isEmpty else { return }
         guard currentIndex >= 0 else {
@@ -610,6 +647,8 @@ struct ContentView: View {
             handleSisImport(result)
         case .ngage:
             handleNGageImport(result)
+        case .ngage2:
+            handleNGage2Import(result)
         }
     }
 
@@ -625,7 +664,7 @@ struct ContentView: View {
             // Extraction can take a while for large packages, so run it off
             // the main thread with the busy indicator up.
             switching = true
-            banner = String(localized: "home.banner.installingPackages")
+            banner = String(localized: "home.banner.installingPackages \(urls.count)")
             DispatchQueue.global(qos: .userInitiated).async {
                 var installed = 0
                 for url in urls {
@@ -666,6 +705,53 @@ struct ContentView: View {
                     } else {
                         banner = ngageErrorMessage(report.result)
                     }
+                }
+            }
+        }
+    }
+
+    // N-Gage 2.0 install directory on the E drive. The mounted physical path is
+    // <Documents>/data/drives/e/ (see IosEmulator mount), and the N-Gage
+    // launcher reads packages from E:\n-gage.
+    private static func ngage2StagingDir() -> String {
+        (documentsRoot() as NSString).appendingPathComponent("data/drives/e/n-gage")
+    }
+
+    // N-Gage 2.0 packages aren't installed by us — they're just copied onto the
+    // E drive so the (separately installed) N-Gage launcher can pick them up.
+    // Same security-scoped copy pattern as the SIS importer.
+    private func handleNGage2Import(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            banner = String(localized: "home.ngage.importFailed \(err.localizedDescription)")
+        case .success(let urls):
+            switching = true
+            banner = String(localized: "home.ngage2.importing \(urls.count)")
+            DispatchQueue.global(qos: .userInitiated).async {
+                let dir = Self.ngage2StagingDir()
+                let fm = FileManager.default
+                var imported = 0
+                do {
+                    try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                    for url in urls {
+                        guard url.pathExtension.lowercased() == "n-gage" else { continue }
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        let dst = (dir as NSString).appendingPathComponent(url.lastPathComponent)
+                        if fm.fileExists(atPath: dst) { try fm.removeItem(atPath: dst) }
+                        try fm.copyItem(at: url, to: URL(fileURLWithPath: dst))
+                        imported += 1
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        switching = false
+                        banner = String(localized: "home.ngage.importFailed \(error.localizedDescription)")
+                    }
+                    return
+                }
+                DispatchQueue.main.async {
+                    switching = false
+                    banner = String(localized: "home.ngage2.imported \(imported)")
                 }
             }
         }
