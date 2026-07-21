@@ -739,11 +739,25 @@ namespace eka2l1::ios {
     // launch path schedules a couple of these to kick a stale/black screen.
     static void kick_screen_redraw(emulator *state) {
         eka2l1::epoc::screen *scr = state->winserv ? state->winserv->get_screens() : nullptr;
-        if (scr && !scr->screen_texture && state->graphics_driver) {
-            scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
-        }
-        if (scr && state->graphics_driver) {
-            scr->redraw(state->graphics_driver.get());
+        if (scr && state->graphics_driver && state->symsys) {
+            // scr->redraw() walks the guest window tree and rasterises text
+            // through the (non-reentrant) FreeType font atlas. The window
+            // server's own animation_scheduler drives the same redraw from the
+            // ntimer thread under kern->lock() + screen_mutex, so this launch
+            // kick — dispatched onto a global queue — must take the identical
+            // locks in the same order, or the two redraws race inside FreeType
+            // and corrupt the shared glyph cache (SIGSEGV in get_glyph_atlas).
+            if (auto *kern = state->symsys->get_kernel_system()) {
+                kern->lock();
+                {
+                    const std::lock_guard<std::mutex> guard(scr->screen_mutex);
+                    if (!scr->screen_texture) {
+                        scr->set_screen_mode(state->winserv, state->graphics_driver.get(), scr->crr_mode);
+                    }
+                    scr->redraw(state->graphics_driver.get());
+                }
+                kern->unlock();
+            }
         }
         submit_screen_frame(state, scr);
     }
