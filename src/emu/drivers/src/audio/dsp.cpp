@@ -35,6 +35,12 @@ namespace eka2l1::drivers {
             format(PCM16_FOUR_CC_CODE);
         }
 
+        ~dsp_output_stream_pcm() override {
+            // Stop the render callback before the vtable degrades to the abstract
+            // base, so an in-flight data_callback() can't hit a pure virtual.
+            shutdown_stream();
+        }
+
         bool decode_data(std::vector<std::uint8_t> &dest) override {
             dest.clear();
             return false;

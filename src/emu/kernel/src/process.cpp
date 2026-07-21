@@ -521,12 +521,22 @@ namespace eka2l1::kernel {
     }
 
     void process::finish_logons() {
+        // The thread that armed a Logon/Rendezvous lives in another process and may
+        // already have exited by the time this process is killed, leaving a dangling
+        // requester pointer in the queues. notify_info::complete() dereferences the
+        // requester (its owning process, for the request-status translation), so
+        // completing a stale entry faults on a freed/half-torn thread. Signal only
+        // requesters that are still alive; drop the rest (the queues are cleared below).
         for (auto &req : logon_requests) {
-            req.complete(exit_reason);
+            if (kern->is_thread_alive(req.requester)) {
+                req.complete(exit_reason);
+            }
         }
 
         for (auto &req : rendezvous_requests) {
-            req.complete(exit_reason);
+            if (kern->is_thread_alive(req.requester)) {
+                req.complete(exit_reason);
+            }
         }
 
         logon_requests.clear();

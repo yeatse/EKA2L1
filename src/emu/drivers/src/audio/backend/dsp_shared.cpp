@@ -29,10 +29,20 @@ namespace eka2l1::drivers {
         , avg_frame_count_(0) {
     }
 
-    dsp_output_stream_shared::~dsp_output_stream_shared() {
+    void dsp_output_stream_shared::shutdown_stream() {
         if (stream_) {
             stream_->stop();
+            stream_.reset();
         }
+    }
+
+    dsp_output_stream_shared::~dsp_output_stream_shared() {
+        // Safety net for a stream that a derived class did not tear down itself.
+        // The most-derived destructor is expected to have already called
+        // shutdown_stream() while its vtable was still intact (see the header);
+        // by this point calling back into a virtual would be unsafe, so this
+        // only stops a stream that is somehow still alive.
+        shutdown_stream();
     }
 
     bool dsp_output_stream_shared::set_properties(const std::uint32_t freq, const std::uint8_t channels) {
