@@ -241,7 +241,13 @@ namespace eka2l1 {
             stream_->register_callback(
                 drivers::dsp_stream_notification_more_buffer, [this](void *userdata) {
                     kernel_system *kern = server<mmf_dev_server>()->get_kernel_object_owner();
-                    if (!kern->try_lock()) {
+                    // RAII so the kernel lock is released even if the completion
+                    // body throws: this callback runs on the host audio render
+                    // thread, whose noexcept boundary swallows the exception, so
+                    // a manual unlock would leak the kernel lock and wedge the
+                    // whole emulator (os/timing/input threads block on it).
+                    std::unique_lock<kernel_system> kern_guard(*kern, std::try_to_lock);
+                    if (!kern_guard.owns_lock()) {
                         return false;
                     }
 
@@ -255,7 +261,6 @@ namespace eka2l1 {
                         }
                     }
 
-                    kern->unlock();
                     return true;
                 },
                 nullptr);
@@ -270,7 +275,10 @@ namespace eka2l1 {
             stream_->register_callback(
                 drivers::dsp_stream_notification_more_buffer, [this](void *userdata) {
                     kernel_system *kern = server<mmf_dev_server>()->get_kernel_object_owner();
-                    if (!kern->try_lock()) {
+                    // RAII so the kernel lock is released even if the completion
+                    // body throws (see the playback path above).
+                    std::unique_lock<kernel_system> kern_guard(*kern, std::try_to_lock);
+                    if (!kern_guard.owns_lock()) {
                         return false;
                     }
 
@@ -284,7 +292,6 @@ namespace eka2l1 {
                         }
                     }
 
-                    kern->unlock();
                     return true;
                 },
                 nullptr);
