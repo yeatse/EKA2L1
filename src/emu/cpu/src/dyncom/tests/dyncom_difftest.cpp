@@ -23,6 +23,7 @@
  */
 
 #include <cpu/dyncom/arm_dyncom.h>
+#include <cpu/dyncom/arm_dyncom_thumb.h>
 #include <cpu/dyncom/vfp/asm_vfp.h>
 #include <cpu/dyncom/vfp/vfp.h>
 #include <cpu/12l1r/exclusive_monitor.h>
@@ -855,6 +856,20 @@ int main(int argc, char **argv) {
     std::vector<std::uint8_t> golden_mem(MEM_SIZE, 0);
 
     std::uint32_t failures = 0;
+
+    // Thumb BKPT must translate to the ARM form consumed by dyncom's existing
+    // breakpoint decoder. It once became SVC 0 instead.
+    {
+        std::uint32_t translated = 0;
+        std::uint32_t instruction_size = 0;
+        TranslateThumbInstruction(0, 0xBE00, &translated, &instruction_size);
+        if ((translated != 0xE1200070) || (instruction_size != 2)) {
+            std::printf("[THUMB BKPT] instruction=0x%08X size=%u\n",
+                translated, instruction_size);
+            failures++;
+        }
+    }
+
     auto window_eq = [](const std::vector<std::uint8_t> &x, const std::vector<std::uint8_t> &y) {
         return std::memcmp(x.data() + LS_DATA_LO, y.data() + LS_DATA_LO, LS_DATA_HI - LS_DATA_LO) == 0;
     };

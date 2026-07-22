@@ -76,6 +76,17 @@ namespace eka2l1::manager {
         scripting::cpu::set_register(0, 3500);
     }
 
+    // --- RM-409 empty Avkon menu fix ---
+    // This firmware's CEikMenuBar::StartDisplayingMenuBarL indexes Count()-1
+    // without checking for an empty menu-title array. Later Avkon versions end
+    // menu display through the existing cleanup path instead.
+    static void rm409_skip_empty_avkon_menu() {
+        if (static_cast<std::int32_t>(scripting::cpu::get_register(1)) < 0) {
+            scripting::cpu::set_register(7, 0);
+            scripting::cpu::set_register(15, 0x814F5210);
+        }
+    }
+
     void scripts::register_builtin_patches() {
         // The kernel-level hooks must be live for breakpoints to fire.
         register_kernel_hooks();
@@ -125,6 +136,12 @@ namespace eka2l1::manager {
                 register_breakpoint(lib, p.addr_, 0, WH40K_UID3, 0x8EFD9C7, p.func_);
             }
         }
+
+        // Nokia 5320 / RM-409 eikcoctl.dll. The absolute address includes the
+        // Thumb bit; the mapped-code hash keeps this firmware-specific hook
+        // from applying to other Avkon builds with the same UID3.
+        register_breakpoint("eikcoctl.dll", 0x814F511D, 0, 0x1000489E,
+            0x17EDD4DD, rm409_skip_empty_avkon_menu, false);
 
         current_module = nullptr;
 

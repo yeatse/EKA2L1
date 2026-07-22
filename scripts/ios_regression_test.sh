@@ -400,9 +400,21 @@ test_n95calc() {
     local base; base="$(log_baseline)"
     wait_s 22
 
+    # launchctl can publish the UIKitApplication label a few seconds after the
+    # first rendered frame when this suite follows another guest. Poll instead
+    # of turning that registration race into a false host-crash result.
+    local host_alive=false i
+    for i in 1 2 3 4 5 6 7 8; do
+        if xcrun simctl spawn "$SIM" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE_ID"; then
+            host_alive=true
+            break
+        fi
+        wait_s 1
+    done
+
     local host_crash
     host_crash="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'EKA2L1*.ips' -newer "$crash_stamp" 2>/dev/null | head -1)"
-    if [ -z "$host_crash" ] && xcrun simctl spawn "$SIM" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE_ID"; then
+    if [ -z "$host_crash" ] && [ "$host_alive" = true ]; then
         check PASS "N95Calc: host process survives boot"
     else
         check FAIL "N95Calc: host process survives boot"

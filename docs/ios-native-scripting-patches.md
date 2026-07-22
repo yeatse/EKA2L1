@@ -4,7 +4,7 @@
 
 Upstream EKA2L1 ships a handful of per-game/OS compatibility patches as Lua
 scripts under `src/scripts/*.lua` (AstroQuest, Eternal Legacy, Hero of Sparta,
-Warhammer 40K, and an S^3 ROM-DLL preload). The iOS port disabled the whole
+Warhammer 40K, RM-409 Avkon, and an S^3 ROM-DLL preload). The iOS port disabled the whole
 scripting subsystem (`EKA2L1_ENABLE_SCRIPTING_ABILITY OFF`), so none of those
 fixes applied on iOS.
 
@@ -51,12 +51,22 @@ independently selectable.
   `register_kernel_hooks()` so it runs in both modes.
 - `import_all_modules()` branches: with Lua it scans `scripts/*.lua` as before;
   without Lua it calls the new `register_builtin_patches()`.
-- `builtin_patches.cpp` (new, native-only) is the C++ transcription of the five
+- `builtin_patches.cpp` (new, native-only) is the C++ transcription of the six
   shipped scripts — one `register_breakpoint(...)` per Lua `registerBreakpointHook`
   (argument order matches the C export: `lib, addr, process_uid, uid3, seghash,
   func`), plus the S^3 `domaincli.dll` preload guarded on
   `get_symbian_version_use() >= epocver::epoc95`. Keep it in sync with
   `src/scripts/*.lua`.
+
+Breakpoint callbacks may change the guest PC to bypass a faulty code path. The
+breakpoint handler restores the original instruction address before invoking the
+callback, so a callback's final PC is preserved while ordinary callbacks still
+single-step the displaced instruction before reinstalling the breakpoint.
+Resolved ROM hooks retain one shared preimage instead of cycling the same physical
+instruction per process. Dyncom translates Thumb `BKPT` to its internal breakpoint
+form, synchronizes CPSR before dispatch, and leaves PC on the displaced instruction
+when a hook stops the core for single-stepping. The scripting manager also uses
+the registered address's Thumb bit during dispatch.
 
 Desktop and Android are unaffected: `EKA2L1_SCRIPTING_LUA` defaults ON, so they
 still build the full LuaJIT path and load `.lua` files at runtime.
@@ -71,6 +81,6 @@ still build the full LuaJIT path and load `.lua` files at runtime.
   `register_builtin_patches()` runs at startup. The S^3 branch correctly stays
   silent on the S60v3 regression devices (rm-409/rm-320).
 
-Runtime firing of an individual patch was not exercised — none of the five patched
-titles are in the regression set. The registration path and engine integration are
-proven; landing one of those games would confirm an actual breakpoint hit.
+The RM-409 Avkon patch was exercised directly with 7Days: six consecutive left
+soft-key presses left the game on its first screen with no guest or host crash.
+Calculator's populated Options menu remained a passing control.
