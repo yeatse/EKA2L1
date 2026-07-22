@@ -22,12 +22,22 @@ namespace eka2l1::drivers {
 
 namespace {
 
+// CoreAudio invokes these render callbacks through a C ABI on its realtime
+// I/O thread; some are reached via AudioConverterFillComplexBufferRealtimeSafe,
+// which is not exception-aware. The guest callback chain below can legitimately
+// throw (ffmpeg decode / std::vector growth / std::mutex acquisition / kernel
+// completion), most notably during the last in-flight callback that
+// AudioOutputUnitStop() drains while a stream is being torn down. Letting any
+// exception escape into Apple's realtime code unwinds into std::terminate()
+// (SIGABRT). Every callback body therefore runs inside a noexcept boundary and
+// falls back to silence rather than crossing the C boundary with an exception.
+
 OSStatus output_render_cb(void *inRefCon,
                           AudioUnitRenderActionFlags *ioActionFlags,
                           const AudioTimeStamp * /*inTimeStamp*/,
                           UInt32 /*inBusNumber*/,
                           UInt32 inNumberFrames,
-                          AudioBufferList *ioData) {
+                          AudioBufferList *ioData) noexcept {
     auto *self = reinterpret_cast<eka2l1::drivers::audiounit_ios_stream_base *>(inRefCon);
     if (!self || !ioData || ioData->mNumberBuffers == 0) {
         return noErr;
@@ -35,7 +45,12 @@ OSStatus output_render_cb(void *inRefCon,
     AudioBuffer &buf = ioData->mBuffers[0];
     // S16 interleaved — buffer is sized for inNumberFrames * channels * 2.
     auto *out = reinterpret_cast<std::int16_t *>(buf.mData);
-    const std::size_t got = self->call_callback(out, inNumberFrames);
+    std::size_t got = 0;
+    try {
+        got = self->call_callback(out, inNumberFrames);
+    } catch (...) {
+        got = 0;
+    }
     const std::size_t produced_bytes = got * /*channels handled inside*/ sizeof(std::int16_t);
     (void)produced_bytes; // call_callback writes the right amount.
     if (got == 0) {
@@ -52,7 +67,7 @@ OSStatus input_render_cb(void *inRefCon,
                          const AudioTimeStamp *inTimeStamp,
                          UInt32 inBusNumber,
                          UInt32 inNumberFrames,
-                         AudioBufferList * /*ioData*/) {
+                         AudioBufferList * /*ioData*/) noexcept {
     auto *self = reinterpret_cast<eka2l1::drivers::audiounit_ios_stream_base *>(inRefCon);
     if (!self) return noErr;
 
@@ -61,22 +76,27 @@ OSStatus input_render_cb(void *inRefCon,
     // we render into a scratch we own and pass it through.
     static thread_local std::vector<std::int16_t> scratch;
     const std::size_t needed = static_cast<std::size_t>(inNumberFrames) * 2; // mono OK too
-    if (scratch.size() < needed) scratch.resize(needed);
-
-    AudioBufferList list{};
-    list.mNumberBuffers = 1;
-    list.mBuffers[0].mNumberChannels = 1;
-    list.mBuffers[0].mDataByteSize = static_cast<UInt32>(needed * sizeof(std::int16_t));
-    list.mBuffers[0].mData = scratch.data();
 
     AudioUnit unit_handle = eka2l1::drivers::audiounit_ios_stream_handle(self);
     if (!unit_handle) return noErr;
 
-    OSStatus r = AudioUnitRender(unit_handle, ioActionFlags, inTimeStamp,
-        inBusNumber, inNumberFrames, &list);
-    if (r != noErr) return noErr;
+    try {
+        if (scratch.size() < needed) scratch.resize(needed);
 
-    self->call_callback(scratch.data(), inNumberFrames);
+        AudioBufferList list{};
+        list.mNumberBuffers = 1;
+        list.mBuffers[0].mNumberChannels = 1;
+        list.mBuffers[0].mDataByteSize = static_cast<UInt32>(needed * sizeof(std::int16_t));
+        list.mBuffers[0].mData = scratch.data();
+
+        OSStatus r = AudioUnitRender(unit_handle, ioActionFlags, inTimeStamp,
+            inBusNumber, inNumberFrames, &list);
+        if (r != noErr) return noErr;
+
+        self->call_callback(scratch.data(), inNumberFrames);
+    } catch (...) {
+        // Swallow: never unwind across CoreAudio's C callback boundary.
+    }
     return noErr;
 }
 
