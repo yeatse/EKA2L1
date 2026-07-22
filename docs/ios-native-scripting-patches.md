@@ -52,9 +52,8 @@ independently selectable.
 - `import_all_modules()` branches: with Lua it scans `scripts/*.lua` as before;
   without Lua it calls the new `register_builtin_patches()`.
 - `builtin_patches.cpp` (new, native-only) is the C++ transcription of the six
-  shipped scripts — one `register_breakpoint(...)` per Lua `registerBreakpointHook`
-  (argument order matches the C export: `lib, addr, process_uid, uid3, seghash,
-  func`), plus the S^3 `domaincli.dll` preload guarded on
+  shipped scripts — using the same scripting manager breakpoint APIs as their
+  Lua counterparts — plus the S^3 `domaincli.dll` preload guarded on
   `get_symbian_version_use() >= epocver::epoc95`. Keep it in sync with
   `src/scripts/*.lua`.
 
@@ -69,6 +68,14 @@ when a hook stops the core for single-stepping. The scripting manager also uses
 the registered address's Thumb bit during dispatch. Eager ROM registration can
 resolve an absolute hook even when the system DLL was loaded before scripting and
 has no current process attachment, while still requiring the requested UID/hash.
+
+For ROM methods that vary by firmware address, `register_rom_export_breakpoint`
+locates a method by Symbian export ordinal, hashes only its bytes through the next
+higher export, and installs a method-relative hook only for a known fingerprint.
+The Lua API exposes the same operation as
+`events.registerRomExportBreakpointHook`. The S60v3 empty-menu patch uses this
+path, so relocation and unrelated changes elsewhere in `eikcoctl.dll` no longer
+need absolute-address or whole-DLL-hash entries.
 
 Desktop and Android are unaffected: `EKA2L1_SCRIPTING_LUA` defaults ON, so they
 still build the full LuaJIT path and load `.lua` files at runtime.
