@@ -4,7 +4,7 @@
 
 Upstream EKA2L1 ships a handful of per-game/OS compatibility patches as Lua
 scripts under `src/scripts/*.lua` (AstroQuest, Eternal Legacy, Hero of Sparta,
-Warhammer 40K, RM-409 Avkon, and an S^3 ROM-DLL preload). The iOS port disabled the whole
+Warhammer 40K, S60v3 Avkon, and an S^3 ROM-DLL preload). The iOS port disabled the whole
 scripting subsystem (`EKA2L1_ENABLE_SCRIPTING_ABILITY OFF`), so none of those
 fixes applied on iOS.
 
@@ -66,7 +66,9 @@ Resolved ROM hooks retain one shared preimage instead of cycling the same physic
 instruction per process. Dyncom translates Thumb `BKPT` to its internal breakpoint
 form, synchronizes CPSR before dispatch, and leaves PC on the displaced instruction
 when a hook stops the core for single-stepping. The scripting manager also uses
-the registered address's Thumb bit during dispatch.
+the registered address's Thumb bit during dispatch. Eager ROM registration can
+resolve an absolute hook even when the system DLL was loaded before scripting and
+has no current process attachment, while still requiring the requested UID/hash.
 
 Desktop and Android are unaffected: `EKA2L1_SCRIPTING_LUA` defaults ON, so they
 still build the full LuaJIT path and load `.lua` files at runtime.
@@ -81,6 +83,6 @@ still build the full LuaJIT path and load `.lua` files at runtime.
   `register_builtin_patches()` runs at startup. The S^3 branch correctly stays
   silent on the S60v3 regression devices (rm-409/rm-320).
 
-The RM-409 Avkon patch was exercised directly with 7Days: six consecutive left
-soft-key presses left the game on its first screen with no guest or host crash.
-Calculator's populated Options menu remained a passing control.
+The RM-409 and RM-320 Avkon patches were exercised directly with 7Days: repeated
+left-soft-key presses left the game on its first screen with no guest or host
+crash. Calculator's populated Options menu remained a passing control.
