@@ -347,6 +347,8 @@ private final class EKA2L1RenderView: UIView {
 
 final class EmulatorViewController: UIViewController {
     private let uid: UInt32
+    // Delivered on the main queue after the guest launch path has completed.
+    var onAppLaunch: ((Bool) -> Void)?
     // Invoked when the guest app exits on its own (Exit soft key / panic /
     // normal termination) so the SwiftUI host can pop this screen.
     var onAppExit: ((String?) -> Void)?
@@ -420,7 +422,9 @@ final class EmulatorViewController: UIViewController {
             EKA2L1Bridge.shared.setAppExitHandler { [weak self] fatalDetails in
                 self?.handleAppExited(fatalDetails: fatalDetails)
             }
-            EKA2L1Bridge.shared.launchApp(uid: uid)
+            EKA2L1Bridge.shared.launchApp(uid: uid) { [weak self] success in
+                self?.onAppLaunch?(success)
+            }
         }
     }
 

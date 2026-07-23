@@ -251,6 +251,16 @@
         }
       }
     },
+    "emulator.menu.guestScreenMode" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guest Screen Mode"
+          }
+        }
+      }
+    },
     "emulator.menu.keypadLayout" : {
       "localizations" : {
         "en" : {
@@ -277,16 +287,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Opacity: %@"
-          }
-        }
-      }
-    },
-    "emulator.menu.rotateGuestScreen" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Rotate Guest Screen"
           }
         }
       }

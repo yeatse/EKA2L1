@@ -105,7 +105,10 @@ enum KeypadLayout: String, CaseIterable, Identifiable {
 // actions that operate on the emulator session.
 struct KeypadMenuActions {
     var layoutSelection: Binding<String>
-    var rotateGuestScreen: () -> Void
+    // Real Window Server screen modes exposed by the mounted device, with the
+    // current per-game selection bound straight through to the emulator.
+    var guestScreenModes: [Int]
+    var guestScreenMode: Binding<Int>
     // Per-game frame-rate cap shown in the Game Settings submenu: 15 / 30 / 60,
     // or 0 for unlimited.
     var frameLimit: Binding<Int>
@@ -173,11 +176,9 @@ struct SystemMenuKey: View {
             }
             Menu {
                 fpsLimitPicker
-                Divider()
-                Button {
-                    actions.rotateGuestScreen()
-                } label: {
-                    Label("emulator.menu.rotateGuestScreen", systemImage: "rotate.right")
+                if !actions.guestScreenModes.isEmpty {
+                    Divider()
+                    guestScreenModePicker
                 }
             } label: {
                 Label("emulator.menu.gameSettings", systemImage: "slider.horizontal.3")
@@ -212,6 +213,20 @@ struct SystemMenuKey: View {
             Text(verbatim: "30").tag(30)
             Text(verbatim: "60").tag(60)
             Text("emulator.fpsLimit.unlimited").tag(0)
+        }
+        if #available(iOS 17, *) {
+            picker.pickerStyle(.palette)
+        } else {
+            picker
+        }
+    }
+
+    @ViewBuilder
+    private var guestScreenModePicker: some View {
+        let picker = Picker("emulator.menu.guestScreenMode", selection: actions.guestScreenMode) {
+            ForEach(actions.guestScreenModes, id: \.self) { mode in
+                Text(verbatim: "\(mode)").tag(mode)
+            }
         }
         if #available(iOS 17, *) {
             picker.pickerStyle(.palette)

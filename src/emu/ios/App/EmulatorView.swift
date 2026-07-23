@@ -24,6 +24,10 @@ struct EmulatorView: View {
     // Per-game guest frame-rate cap (0 = unlimited); loaded on appear and
     // written straight through to the emulator when changed from Game Settings.
     @State private var frameLimit = 0
+    // Real Window Server modes are queried once app launch has completed, so
+    // the menu reflects the active device and later picks.
+    @State private var guestScreenModes: [Int] = []
+    @State private var guestScreenMode = -1
     // Whether the booted ROM is touch-driven (S60v5 / Symbian^3+); those use a
     // separate layout preference that defaults to the fullscreen layout.
     @State private var isTouchDevice = false
@@ -71,12 +75,27 @@ struct EmulatorView: View {
         )
     }
 
+    private var guestScreenModeSelection: Binding<Int> {
+        Binding(
+            get: { guestScreenMode },
+            set: { newValue in
+                guestScreenMode = newValue
+                EKA2L1Bridge.shared.setGuestScreenMode(appUID: uid, mode: newValue) { selectedMode in
+                    Task { @MainActor in
+                        if selectedMode >= 0 {
+                            guestScreenMode = selectedMode
+                        }
+                    }
+                }
+            }
+        )
+    }
+
     private var menuActions: KeypadMenuActions {
         KeypadMenuActions(
             layoutSelection: layoutSelection,
-            rotateGuestScreen: {
-                EKA2L1Bridge.shared.advanceGuestScreenMode(appUID: uid) { _ in }
-            },
+            guestScreenModes: guestScreenModes,
+            guestScreenMode: guestScreenModeSelection,
             frameLimit: frameLimitSelection,
             adjustOpacity: {
                 withAnimation(.easeInOut(duration: 0.22)) { showOpacitySlider = true }
@@ -97,6 +116,10 @@ struct EmulatorView: View {
                     host: hostProxy,
                     anchorsDisplayTop: keypadLayout.prefersTopAnchoredDisplay && showVirtualKeypad,
                     keypadHitRegion: keypadFrame,
+                    onAppLaunch: { success in
+                        guard success else { return }
+                        refreshGuestScreenModes()
+                    },
                     onAppExit: { fatalDetails in
                         if let fatalDetails {
                             guestFatalDetails = fatalDetails
@@ -236,6 +259,12 @@ struct EmulatorView: View {
         if frame != keypadFrame {
             keypadFrame = frame
         }
+    }
+
+    private func refreshGuestScreenModes() {
+        let snapshot = EKA2L1Bridge.shared.guestScreenModeSnapshot()
+        guestScreenModes = snapshot.modes
+        guestScreenMode = snapshot.current
     }
 
     @ViewBuilder private var keypadOverlay: some View {
@@ -440,10 +469,12 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     // Screen-space region covered by the keypad overlay; the render view yields
     // touches there so the keys (drawn above it) receive them.
     let keypadHitRegion: CGRect
+    let onAppLaunch: (Bool) -> Void
     let onAppExit: (String?) -> Void
 
     func makeUIViewController(context: Context) -> EmulatorViewController {
         let controller = EmulatorViewController(uid: uid)
+        controller.onAppLaunch = onAppLaunch
         controller.onAppExit = onAppExit
         controller.anchorsDisplayTop = anchorsDisplayTop
         controller.keypadHitRegion = keypadHitRegion
@@ -452,6 +483,7 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: EmulatorViewController, context: Context) {
+        uiViewController.onAppLaunch = onAppLaunch
         uiViewController.onAppExit = onAppExit
         uiViewController.anchorsDisplayTop = anchorsDisplayTop
         uiViewController.keypadHitRegion = keypadHitRegion

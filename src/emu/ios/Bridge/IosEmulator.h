@@ -191,10 +191,16 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 // overlays the bottom of the screen.
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop;
 
-// Advance the guest's real Window Server screen mode and persist it through
-// the shared per-app compatibility settings used by the other frontends.
-- (void)advanceGuestScreenModeForAppUID:(uint32_t)uid
-                             completion:(void (^)(NSInteger mode))completion;
+// Available Window Server screen-mode indices plus the current mode. The
+// snapshot keys are `modes` ([NSNumber]) and `current` (NSNumber).
+- (NSDictionary<NSString *, id> *)guestScreenModeSnapshot;
+
+// Select the guest's real Window Server screen mode and persist it through the
+// shared per-app compatibility settings used by the other frontends.
+- (void)setGuestScreenModeForAppUID:(uint32_t)uid
+                               mode:(NSInteger)mode
+                         completion:(void (^)(NSInteger mode))completion
+    NS_SWIFT_NAME(setGuestScreenMode(forAppUID:mode:completion:));
 
 // Per-app guest frame-rate limit (the emulated screen's vsync cap, persisted
 // through the shared per-app compatibility settings). `limit` is a target FPS

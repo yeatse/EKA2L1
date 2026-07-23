@@ -175,8 +175,15 @@ final class EKA2L1Bridge {
         emulator.resume()
     }
 
-    func advanceGuestScreenMode(appUID: UInt32, completion: @escaping @Sendable (Int) -> Void) {
-        emulator.advanceGuestScreenMode(forAppUID: appUID, completion: completion)
+    func guestScreenModeSnapshot() -> (modes: [Int], current: Int) {
+        let snapshot = emulator.guestScreenModeSnapshot()
+        let modes = (snapshot["modes"] as? [NSNumber])?.map(\.intValue) ?? []
+        let current = (snapshot["current"] as? NSNumber)?.intValue ?? -1
+        return (modes, current)
+    }
+
+    func setGuestScreenMode(appUID: UInt32, mode: Int, completion: @escaping @Sendable (Int) -> Void) {
+        emulator.setGuestScreenMode(forAppUID: appUID, mode: mode, completion: completion)
     }
 
     // Per-app guest frame-rate cap: 15 / 30 / 60, or 0 for unlimited.

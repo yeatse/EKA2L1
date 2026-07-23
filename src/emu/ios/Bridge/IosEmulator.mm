@@ -2016,8 +2016,28 @@ namespace eka2l1::ios {
     _state->display_anchor_top_px.store(static_cast<int>(anchorTop), std::memory_order_relaxed);
 }
 
-- (void)advanceGuestScreenModeForAppUID:(uint32_t)uid
-                             completion:(void (^)(NSInteger mode))completion {
+- (NSDictionary<NSString *, id> *)guestScreenModeSnapshot {
+    if (!_state) {
+        return @{ @"modes": @[], @"current": @(-1) };
+    }
+
+    NSMutableArray<NSNumber *> *modes = [NSMutableArray array];
+    NSInteger current = -1;
+    std::unique_lock<std::recursive_mutex> session_lock(_state->session_mutex, std::try_to_lock);
+    if (session_lock.owns_lock() && _state->winserv) {
+        if (eka2l1::epoc::screen *screen = _state->winserv->get_current_focus_screen()) {
+            current = screen->crr_mode;
+            for (int mode = 0; mode < screen->total_screen_mode(); ++mode) {
+                [modes addObject:@(mode)];
+            }
+        }
+    }
+    return @{ @"modes": modes, @"current": @(current) };
+}
+
+- (void)setGuestScreenModeForAppUID:(uint32_t)uid
+                               mode:(NSInteger)mode
+                         completion:(void (^)(NSInteger mode))completion {
     if (!_state) {
         return;
     }
@@ -2027,8 +2047,8 @@ namespace eka2l1::ios {
             std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
             if (self->_state->winserv && self->_state->graphics_driver) {
                 eka2l1::epoc::screen *screen = self->_state->winserv->get_current_focus_screen();
-                if (screen && screen->total_screen_mode() > 0) {
-                    selected_mode = (screen->crr_mode + 1) % screen->total_screen_mode();
+                if (screen && mode >= 0 && mode < screen->total_screen_mode()) {
+                    selected_mode = mode;
                     screen->ui_rotation = 0;
                     screen->set_screen_mode(self->_state->winserv,
                         self->_state->graphics_driver.get(), static_cast<int>(selected_mode));
