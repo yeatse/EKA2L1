@@ -337,6 +337,13 @@ struct ContentView: View {
             Label("import.title", systemImage: "square.and.arrow.down")
         }
         .disabled(switching)
+
+        Button {
+            rescanDevices()
+        } label: {
+            Label("device.rescan", systemImage: "arrow.clockwise")
+        }
+        .disabled(switching)
     }
 
     private var statusToolbarItem: some ToolbarContent {
@@ -587,6 +594,31 @@ struct ContentView: View {
         }
     }
 
+    // Mirrors the Android device-list screen's "Rescan devices" action: rebuild
+    // device_manager from what's on drive Z (recovers devices dropped from
+    // devices.yml), then boot the resulting current device (always index 0
+    // when the scan finds anything).
+    private func rescanDevices() {
+        guard !switching else { return }
+        switching = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = EKA2L1Bridge.rescanDevices()
+            let bootedOK = found && EKA2L1Bridge.bootDevice(at: 0)
+            DispatchQueue.main.async {
+                devices = EKA2L1Bridge.shared.installedDevices()
+                if bootedOK {
+                    currentIndex = 0
+                    apps = EKA2L1Bridge.shared.rescanApps()
+                } else if devices.isEmpty {
+                    currentIndex = -1
+                    apps = []
+                }
+                banner = String(localized: "common.completed")
+                switching = false
+            }
+        }
+    }
+
     private func uninstall(_ app: EKA2L1AppItem) {
         pendingUninstall = nil
         let ok = EKA2L1Bridge.shared.uninstallApp(uid: app.uid)
@@ -807,10 +839,7 @@ struct ImportDeviceView: View {
                         fileRow(title: String(localized: "import.rpkgFile"), value: rpkg?.name)
                     }
                 } footer: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("import.note.rpkg")
-                        Text("import.recommendedDevices")
-                    }
+                    Text("import.recommendedDevices")
                 }
 
                 if let errorMessage {

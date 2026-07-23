@@ -116,6 +116,13 @@ final class EKA2L1Bridge {
         emulator.resetDevicesState()
     }
 
+    // Rebuild the device list from what's on drive Z (recovers devices dropped
+    // from devices.yml). Does not reboot; the caller boots the resulting
+    // current device (index 0) when this returns true, mirroring installDevice.
+    nonisolated static func rescanDevices() -> Bool {
+        EKA2L1Emulator.shared().rescanDevices()
+    }
+
     nonisolated static func unzipArchive(atPath path: String, toDirectory destination: String) throws {
         try EKA2L1Emulator.unzipArchive(atPath: path, toDirectory: destination)
     }

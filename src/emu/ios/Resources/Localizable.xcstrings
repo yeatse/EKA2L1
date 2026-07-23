@@ -181,6 +181,16 @@
         }
       }
     },
+    "device.rescan" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Rescan devices"
+          }
+        }
+      }
+    },
     "emulator.exit" : {
       "localizations" : {
         "en" : {
@@ -889,22 +899,12 @@
         }
       }
     },
-    "import.note.rpkg" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "For S60v2 devices or higher, you may need to provide an additional RPKG file. The path chooser will appear if the installer detects that it is needed."
-          }
-        }
-      }
-    },
     "import.recommendedDevices" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Recommended devices to install"
+            "value" : "Recommended devices to install:\n\nS60v1: N-Gage\nS60v2: Nokia N70\nS60v3: Nokia 5320 XpressMusic, Nokia E5\nS60v5: Nokia 5800 XpressMusic, Nokia 5230\n\nFor S60v2 devices or higher, you may need to provide an additional file called RPKG.\n\nFor more info about device install, please check out our wiki: [eka2l1.miraheze.org](https://eka2l1.miraheze.org/wiki/Main_Page)"
           }
         }
       }

@@ -112,6 +112,13 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // frontend surface returns to "no device installed" without an app restart.
 - (void)resetDevicesState;
 
+// Mirrors the Android/Qt "Rescan devices" action: rebuild device_manager by
+// walking drive Z's storage tree for device dumps (recovers devices dropped
+// from devices.yml, e.g. after restoring a backup that lost it). Does NOT
+// boot the device — call bootDeviceAtIndex: after if this returns YES.
+// Returns YES if the scan found at least one device.
+- (BOOL)rescanDevices;
+
 // Trigger applist rescan + return the resulting (uid, name) list.
 - (NSArray<EKA2L1AppEntry *> *)rescanApps;
 

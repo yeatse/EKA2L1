@@ -1512,6 +1512,48 @@ namespace eka2l1::ios {
     // and never ticks a guest, so leaving the loop paused is correct.
 }
 
+- (BOOL)rescanDevices {
+    if (!_state) {
+        return NO;
+    }
+    // Mirrors the Android/Qt launcher's rescan_devices call. It clears +
+    // repopulates device_manager from what's found on drive Z, then (if
+    // anything was found) resets the current symsys to index 0 as a side
+    // effect via set_device()/reset() — that call chain reaches down into
+    // kernel_system::install_memory(), which on iOS is only ever exercised
+    // right after bootDeviceAtIndex:'s fresh symsys + startup() prologue.
+    // Calling it on the long-lived _state->symsys (which may have never been
+    // through set_device if no device was booted yet) crashes there. Run the
+    // same rebuild prologue bootDeviceAtIndex: uses so rescan_devices() always
+    // sees a freshly-started system, exactly like a real boot would. The
+    // caller must not treat the device as booted afterward — call
+    // bootDeviceAtIndex: next (like the install flow), which rebuilds symsys
+    // again and rereads the devices.yml this call just saved.
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+    const bool sensor_paused_for_reboot = _state->sensor_driver && _state->sensor_driver->pause();
+    struct sensor_resume_guard {
+        eka2l1::drivers::sensor_driver *drv_;
+        ~sensor_resume_guard() {
+            if (drv_) {
+                drv_->resume();
+            }
+        }
+    } sensor_resume{ sensor_paused_for_reboot ? _state->sensor_driver.get() : nullptr };
+    _state->winserv = nullptr;
+    _state->screen_redraw_handles.clear();
+    _state->present_status[0] = 0;
+    _state->present_status[1] = 0;
+    _state->present_slot = 0;
+
+    auto comp = eka2l1::ios::make_system_components(_state.get());
+    _state->symsys = std::make_unique<eka2l1::system>(comp);
+    _state->symsys->startup();
+
+    const bool found = _state->symsys->rescan_devices(drive_z);
+    return found ? YES : NO;
+}
+
 - (NSArray<EKA2L1AppEntry *> *)rescanApps {
     NSMutableArray<EKA2L1AppEntry *> *out = [NSMutableArray array];
     if (!_state || !_state->symsys) {

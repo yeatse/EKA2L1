@@ -378,7 +378,14 @@ namespace eka2l1 {
 
                 dvcmngr_->clear();
 
-                std::string rom_drive_name = std::string(1, static_cast<char>(drive_to_char16(romdrv)));
+                // Lowercase to match the drive folder name every frontend's
+                // installer actually creates (e.g. "drives/z/", not
+                // "drives/Z/") - on a case-sensitive filesystem the two don't
+                // resolve to the same directory, so an uppercase probe here
+                // would silently find nothing and still persist the cleared
+                // (now empty) device list below.
+                std::string rom_drive_name = common::lowercase_string(
+                    std::string(1, static_cast<char>(drive_to_char16(romdrv))));
 
                 std::string storage_path;
                 common::get_current_directory(storage_path);
@@ -405,7 +412,12 @@ namespace eka2l1 {
                         std::string manu, firm_name, model;
                         loader::determine_rpkg_product_info(full_entry_path, manu, firm_name, model);
 
-                        const std::string rom_directory = eka2l1::add_path(storage_path, eka2l1::add_path("roms", firm_name + "\\"));
+                        // install_rom/install_rpkg save the resident ROM under
+                        // roms/<lowercase firmcode>/ (see firmcode_low in
+                        // rpkg.cpp); match that here or a case-sensitive
+                        // filesystem sees no SYM.ROM and deletes an otherwise
+                        // valid dump below.
+                        const std::string rom_directory = eka2l1::add_path(storage_path, eka2l1::add_path("roms", common::lowercase_string(firm_name) + "\\"));
                         const std::string rom_file = eka2l1::add_path(rom_directory, "SYM.ROM");
                         if (!common::exists(rom_file)) {
                             LOG_ERROR(SYSTEM, "Removing broken device: {} ({})", model, firm_name);
