@@ -1817,10 +1817,18 @@ namespace eka2l1::ios {
     std::string gameName;
     eka2l1::ngage_game_card_install_error result = eka2l1::ngage_game_card_general_error;
     {
-        std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+        // symsys->loop() may be parked in the scheduler's idle wait while it
+        // still owns loop_mutex. A plain lock here can therefore wait forever.
+        // Use the same writer prologue as device install/switch: protect the
+        // symsys lifetime, stop new ticks, wake the parked one, then take the
+        // loop lock between ticks.
+        std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+        const bool was_mounted = _state->mounted;
+        auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
         result = _state->symsys->install_ngage_game_card(folderPath.UTF8String, [&](std::string name) {
             gameName = std::move(name);
         });
+        _state->mounted = was_mounted;
     }
 
     report.result = result;

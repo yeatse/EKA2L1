@@ -1059,7 +1059,6 @@ namespace eka2l1 {
             } else {
                 return ngage_game_card_no_game_data_folder;
             }
-            return ngage_game_card_no_game_data_folder;
         }
 
         std::string specific_app, specific_app_2;
@@ -1123,11 +1122,16 @@ namespace eka2l1 {
 
         std::uint32_t copied_count = 0;
 
-        common::copy_folder(folder_path, drive_e_path_root, common::is_platform_case_sensitive() ? common::FOLDER_COPY_FLAG_LOWERCASE_NAME : 0, 
+        const bool copied = common::copy_folder(
+            folder_path, drive_e_path_root,
+            common::is_platform_case_sensitive() ? common::FOLDER_COPY_FLAG_LOWERCASE_NAME : 0,
             [&](const std::size_t copied, const std::size_t total) {
                 if (progress_cb)
                     progress_cb(copied * 100 / total, total_percentage);
             });
+        if (!copied) {
+            return ngage_game_card_general_error;
+        }
 
         // Remove the app registeration file of the original
         if (!specific_app_2.empty()) {
