@@ -79,6 +79,14 @@ final class EKA2L1Bridge {
         emulator.currentDeviceIndex()
     }
 
+    // Rename an installed device (updates its model + devices.yml). The home
+    // surface refreshes its title / device list off the eka2l1DevicesChanged
+    // notification the caller posts on success.
+    @discardableResult
+    func renameDevice(at index: Int, to name: String) -> Bool {
+        emulator.renameDevice(at: UInt(index), to: name)
+    }
+
     func availableLanguages() -> [EKA2L1LanguageItem] {
         emulator.availableLanguages().map {
             EKA2L1LanguageItem(code: Int($0.code), name: $0.name)

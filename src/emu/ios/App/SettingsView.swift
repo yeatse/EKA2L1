@@ -26,6 +26,13 @@ struct SettingsView: View {
     // Installed ROMs shown in the Storage section, with swipe-to-delete.
     @State private var installedDevices: [EKA2L1DeviceItem] = []
 
+    // Editable name of the currently-booted device. Committed to
+    // device_manager when the settings page closes (mirrors the Android
+    // rename dialog, but applied on dismiss). -1 = no device booted yet.
+    @State private var currentDeviceIndex = -1
+    @State private var deviceName = ""
+    @State private var originalDeviceName = ""
+
     // BT netplay. Mirrors the Android BTNetplaySettingsFragment surface; the
     // bluetooth midman reads these at device boot, so edits apply from the
     // next app launch.
@@ -52,6 +59,16 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("settings.device") {
+                if currentDeviceIndex >= 0 {
+                    HStack {
+                        Text("settings.deviceName")
+                        Spacer()
+                        TextField("settings.deviceName", text: $deviceName)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundStyle(.secondary)
+                            .submitLabel(.done)
+                    }
+                }
                 if !availableLanguages.isEmpty {
                     Picker("settings.systemLanguage", selection: $systemLanguageCode) {
                         ForEach(availableLanguages) { language in
@@ -251,7 +268,11 @@ struct SettingsView: View {
         .onAppear {
             load()
             installedDevices = EKA2L1Bridge.shared.installedDevices()
+            loadDeviceName()
             refreshStorageUsage()
+        }
+        .onDisappear {
+            commitDeviceRename()
         }
         .onChange(of: audioMasterVolume) { _ in save() }
         .onChange(of: useJIT) { _ in save() }
@@ -343,6 +364,31 @@ struct SettingsView: View {
                 return BTNetFriend(addr: addr, port: port.intValue)
             }
         }
+    }
+
+    // Seed the device-name field from the booted device's current title, so
+    // the field shows exactly what the home surface displays.
+    private func loadDeviceName() {
+        currentDeviceIndex = EKA2L1Bridge.shared.currentDeviceIndex()
+        let current = installedDevices.first { $0.index == currentDeviceIndex }
+        deviceName = current?.displayName ?? ""
+        originalDeviceName = deviceName
+    }
+
+    // Persist a device rename on page close. Skips no-ops and blank names so a
+    // device never ends up with an empty title.
+    private func commitDeviceRename() {
+        guard currentDeviceIndex >= 0 else { return }
+        let trimmed = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != originalDeviceName else { return }
+        guard EKA2L1Bridge.shared.renameDevice(at: currentDeviceIndex, to: trimmed) else { return }
+        originalDeviceName = trimmed
+        // Tell the home surface to refresh its title / device switcher. The
+        // "renamed" flag keeps it from treating this like a delete (which
+        // would reboot a different device).
+        NotificationCenter.default.post(name: .eka2l1DevicesChanged,
+                                        object: nil,
+                                        userInfo: ["renamed": true])
     }
 
     private func save() {

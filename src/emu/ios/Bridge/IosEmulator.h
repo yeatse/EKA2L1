@@ -106,6 +106,14 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // device when a lower-indexed one is removed). Returns YES on success.
 - (BOOL)deleteDeviceAtIndex:(NSUInteger)index NS_SWIFT_NAME(deleteDevice(at:));
 
+// Rename an installed device by index: updates the device's model (the name
+// shown on the home title / device switcher) and persists devices.yml. Mirrors
+// the Android launcher::set_device_name path. Does NOT reboot. Returns YES on
+// success (NO if the index is out of range or no system is up).
+- (BOOL)renameDeviceAtIndex:(NSUInteger)index
+                     toName:(NSString *)name
+    NS_SWIFT_NAME(renameDevice(at:to:));
+
 // Reset the in-memory device list + booted-device selection to the empty
 // state, matching a fresh install. The caller removes the sandbox storage
 // tree separately; this only clears device_manager and conf.device so the

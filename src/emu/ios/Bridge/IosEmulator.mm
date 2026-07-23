@@ -1495,6 +1495,28 @@ namespace eka2l1::ios {
     return removed ? YES : NO;
 }
 
+- (BOOL)renameDeviceAtIndex:(NSUInteger)index toName:(NSString *)name {
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+    auto *dvc = _state->symsys->get_device_manager();
+    if (!dvc) {
+        return NO;
+    }
+    // A rename only rewrites the in-memory model string and serialises
+    // devices.yml — it touches neither symsys memory nor the drive tree, so
+    // (like installedDevices) the device_manager lock alone guards it against a
+    // concurrent list read. save_devices() does not take the lock itself.
+    std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+    auto &devices = dvc->get_devices();
+    if (index >= devices.size()) {
+        return NO;
+    }
+    devices[index].model = name.UTF8String ? name.UTF8String : "";
+    dvc->save_devices();
+    return YES;
+}
+
 - (void)resetDevicesState {
     if (!_state) {
         return;

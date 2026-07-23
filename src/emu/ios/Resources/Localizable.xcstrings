@@ -1353,6 +1353,16 @@
         }
       }
     },
+    "settings.deviceName" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device name"
+          }
+        }
+      }
+    },
     "settings.discord" : {
       "localizations" : {
         "en" : {

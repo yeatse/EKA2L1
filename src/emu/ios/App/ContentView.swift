@@ -632,6 +632,14 @@ struct ContentView: View {
     // adjusted current (the previous ROM) so the running system matches
     // devices.yml, or drop to the empty state when nothing remains.
     private func handleDevicesChanged(_ note: Notification) {
+        // A rename only rewrites device titles; the count and current index are
+        // unchanged, so just re-read the list (refreshing the nav title + device
+        // switcher) without rebooting or re-scanning apps.
+        if note.userInfo?["renamed"] as? Bool == true {
+            devices = EKA2L1Bridge.shared.installedDevices()
+            return
+        }
+
         let deletedFirmcode = note.userInfo?["firmcode"] as? String
         let wasCurrent = deletedFirmcode.map { code in
             currentDevice?.firmwareCode.caseInsensitiveCompare(code) == .orderedSame
