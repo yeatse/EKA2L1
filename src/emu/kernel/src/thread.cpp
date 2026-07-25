@@ -692,6 +692,24 @@ namespace eka2l1 {
                     break;
                 }
 
+                // Counterpart of the shortcut above for User::WaitForRequest(TRequestStatus&).
+                // Its euser wrapper is a do-while: it always consumes one signal per turn, so a
+                // target that is already completed must still have its signal sitting in the
+                // semaphore. Reaching here with an empty semaphore means the signal was taken by
+                // the stray filter below, and blocking would strand this thread for good (the
+                // completion has already happened, nothing will signal again). Give the wait back
+                // and pay it out of what the filter took, so no signal is ever invented.
+                if ((before_count <= 0) && stub_pre.wait_for_request_wrapper && (stray_absorbed_refund_ > 0)) {
+                    epoc::request_status *wait_target = eka2l1::ptr<epoc::request_status>(ctx.cpu_registers[0])
+                                                            .get(owner);
+
+                    if (wait_target && (wait_target->status != epoc::request_status::pending_status)
+                        && (kern->is_eka1() || !(wait_target->flags & epoc::request_status::pending))) {
+                        stray_absorbed_refund_--;
+                        break;
+                    }
+                }
+
                 request_sema->wait(0);
 
                 if (state != thread_state::run) {
@@ -723,6 +741,8 @@ namespace eka2l1 {
                 // Count every absorption but only log periodically — a single
                 // animated splash can produce hundreds.
                 stray_absorbed_count++;
+                stray_absorbed_refund_++;
+
                 if ((stray_absorbed_count == 1) || (stray_absorbed_count % 100 == 0)) {
                     LOG_INFO(KERNEL, "Absorbed stray request signal #{} on thread {} (pc=0x{:X})",
                         stray_absorbed_count, name(), ctx.get_pc());

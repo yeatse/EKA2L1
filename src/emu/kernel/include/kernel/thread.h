@@ -226,6 +226,11 @@ namespace eka2l1 {
             // see docs/stray-signal-accounting-followup.md.
             std::uint32_t stray_absorbed_count;
 
+            // Absorbed signals not yet handed back. The filter can only guess, and a wrong guess
+            // eats a real completion; this is the budget wait_for_any_request may repay when it
+            // catches a thread about to block on an already-completed request status.
+            std::uint32_t stray_absorbed_refund_ = 0;
+
             entity_exit_type exit_type;
             std::u16string exit_category;
 
