@@ -525,6 +525,16 @@
         }
       }
     },
+    "home.install" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install Games"
+          }
+        }
+      }
+    },
     "home.install.sis" : {
       "localizations" : {
         "en" : {
@@ -540,7 +550,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Install N-Gage Game"
+            "value" : "Install N-Gage Card Game"
           }
         }
       }
@@ -571,6 +581,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Requires S60v3 ROM and N-Gage launcher"
+          }
+        }
+      }
+    },
+    "home.more" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More"
           }
         }
       }

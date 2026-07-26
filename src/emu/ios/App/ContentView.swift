@@ -379,14 +379,14 @@ struct ContentView: View {
 
         if !devices.isEmpty {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Menu {
+                Menu("home.install", systemImage: "plus") {
                     Button {
                         homeImportTarget = .sis
                         showingHomeImporter = true
                     } label: {
                         Label("home.install.sis", systemImage: "square.and.arrow.down")
                     }
-
+                    
                     // A second Text in a menu button's label renders as the item
                     // subtitle (UIMenuElement.subtitle), spelling out the ROM /
                     // launcher prerequisite for each N-Gage flavour.
@@ -398,7 +398,7 @@ struct ContentView: View {
                         Text("home.installNGage.subtitle")
                         Image(systemName: "folder.badge.plus")
                     }
-
+                    
                     Button {
                         homeImportTarget = .ngage2
                         showingHomeImporter = true
@@ -407,18 +407,16 @@ struct ContentView: View {
                         Text("home.installNGage2.subtitle")
                         Image(systemName: "arrow.down.doc")
                     }
-                } label: {
-                    Image(systemName: "plus")
                 }
                 .disabled(switching)
 
-                Menu {
+                Menu("home.more", systemImage: "ellipsis.circle") {
                     Button {
                         showingSettings = true
                     } label: {
                         Label("settings.title", systemImage: "gearshape")
                     }
-
+                    
                     Button {
                         showSystemApps.toggle()
                     } label: {
@@ -428,16 +426,14 @@ struct ContentView: View {
                             Label("home.showSystemApps", systemImage: "eye")
                         }
                     }
-
+                    
                     Divider()
-
+                    
                     Button {
                         showingOnboarding = true
                     } label: {
                         Label("onboarding.title", systemImage: "questionmark.circle")
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
                 }
                 .disabled(switching)
             }
