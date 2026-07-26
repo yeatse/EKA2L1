@@ -157,6 +157,9 @@ struct ContentView: View {
                     appList
                 }
             }
+            // Status messages ride above the home content only; EmulatorView is
+            // a pushed destination, so a toast never covers the guest screen.
+            .toast(message: $banner)
             .navigationTitle(currentDevice?.displayName ?? "EKA2L1")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
@@ -348,28 +351,19 @@ struct ContentView: View {
 
     private var statusToolbarItem: some ToolbarContent {
         ToolbarItem(placement: .status) {
-            HStack(spacing: 6) {
-                if switching {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                if let banner {
-                    Text(banner)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .fixedSize()
+            ProgressView()
+                .controlSize(.small)
+                .fixedSize()
         }
     }
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        // Status text (install/boot results) lives in the bottom-center status
-        // toolbar slot; a spinner joins it while a long-running task (device
-        // switch, SIS/N-Gage install) is in flight. On iOS 26 the shared glass
-        // background is hidden so the text sits directly on the content.
-        if switching || banner != nil {
+        // A spinner occupies the bottom-center status slot while a long-running
+        // task (device switch, SIS/N-Gage install) is in flight; its result is
+        // reported by the toast instead. On iOS 26 the shared glass background
+        // is hidden so the spinner sits directly on the content.
+        if switching {
             if #available(iOS 26.0, *) {
                 statusToolbarItem.sharedBackgroundVisibility(.hidden)
             } else {
