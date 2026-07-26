@@ -28,7 +28,6 @@
 #include <loader/mbm.h>
 #include <loader/mif.h>
 #include <loader/nvg.h>
-#include <loader/svgb.h>
 #include <system/epoc.h>
 #include <utils/err.h>
 #include <vfs/vfs.h>
@@ -140,37 +139,12 @@ namespace eka2l1 {
             return nullptr;
         }
 
-        if (data.size() < sizeof(loader::mif_icon_header)) {
-            return nullptr;
-        }
-
-        loader::mif_icon_header header;
-        std::memcpy(&header, data.data(), sizeof(header));
-
         common::wo_growable_buf_stream svg_out;
+        loader::nvg_options opts;
+        opts.width = want_w;
+        opts.height = want_h;
 
-        if (header.type == loader::mif_icon_type_svg) {
-            common::ro_buf_stream in(data.data() + sizeof(header), data.size() - sizeof(header));
-            std::vector<loader::svgb_convert_error_description> errors;
-            if (!loader::convert_svgb_to_svg(in, svg_out, errors)) {
-                if (!errors.empty() && (errors[0].reason_ == loader::svgb_convert_error_invalid_file)) {
-                    // Already plain SVG — load directly from the raw payload.
-                    return lunasvg::Document::loadFromData(std::string(
-                        reinterpret_cast<const char *>(data.data() + sizeof(header)), data.size() - sizeof(header)));
-                }
-                return nullptr;
-            }
-        } else if (header.type == loader::mif_icon_type_nvg) {
-            common::ro_buf_stream in(data.data() + sizeof(header), data.size() - sizeof(header));
-            std::vector<loader::nvg_convert_error_description> errors;
-            loader::nvg_options opts;
-            opts.width = want_w;
-            opts.height = want_h;
-            if (!loader::convert_nvg_to_svg(in, svg_out, errors, &opts)) {
-                return nullptr;
-            }
-        } else {
-            // Raster (mif_icon_type_bmp) is not handled by this path.
+        if (!loader::convert_mif_icon_to_svg(data.data(), data.size(), svg_out, &opts)) {
             return nullptr;
         }
 

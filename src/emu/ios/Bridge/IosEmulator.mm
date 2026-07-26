@@ -55,8 +55,6 @@
 #include <kernel/thread.h>
 #include <loader/mbm.h>
 #include <loader/mif.h>
-#include <loader/nvg.h>
-#include <loader/svgb.h>
 #include <package/manager.h>
 #include <services/applist/applist.h>
 #include <services/fbs/bitmap.h>
@@ -251,36 +249,20 @@ namespace eka2l1::ios {
                 if (parser.read_mif_entry(0, nullptr, dest_size) && dest_size > 0) {
                     std::vector<std::uint8_t> data(dest_size);
                     parser.read_mif_entry(0, data.data(), dest_size);
-                    eka2l1::common::ro_buf_stream inside(data.data(), data.size());
+
                     auto outfile = std::make_unique<eka2l1::common::wo_std_file_stream>(cached_path, true);
+                    const bool converted = eka2l1::loader::convert_mif_icon_to_svg(data.data(),
+                        data.size(), *outfile);
+                    outfile.reset();
 
-                    eka2l1::loader::mif_icon_header header;
-                    inside.read(&header, sizeof(header));
-
-                    std::vector<eka2l1::loader::svgb_convert_error_description> svgb_errors;
-                    std::vector<eka2l1::loader::nvg_convert_error_description> nvg_errors;
-
-                    if (header.type == eka2l1::loader::mif_icon_type_svg) {
-                        if (!eka2l1::loader::convert_svgb_to_svg(inside, *outfile, svgb_errors)) {
-                            if (!svgb_errors.empty()
-                                && svgb_errors[0].reason_ == eka2l1::loader::svgb_convert_error_invalid_file) {
-                                // SVGB conversion failed because the payload is already plain SVG.
-                                outfile->write(reinterpret_cast<const char *>(data.data()) + sizeof(header),
-                                    data.size() - sizeof(header));
-                            }
-                        }
-                        outfile.reset();
+                    if (converted) {
                         document = lunasvg::Document::loadFromFile(cached_path.c_str());
-                    } else {
-                        inside = eka2l1::common::ro_buf_stream(data.data() + sizeof(header),
-                            data.size() - sizeof(header));
-                        if (eka2l1::loader::convert_nvg_to_svg(inside, *outfile, nvg_errors)) {
-                            outfile.reset();
-                            document = lunasvg::Document::loadFromFile(cached_path.c_str());
-                        } else {
-                            outfile.reset();
-                            eka2l1::common::remove(cached_path);
-                        }
+                    }
+
+                    if (!document) {
+                        // Don't leave a half-written cache entry behind: the mtime check
+                        // would happily serve it back on the next launch.
+                        eka2l1::common::remove(cached_path);
                     }
                 }
             }
