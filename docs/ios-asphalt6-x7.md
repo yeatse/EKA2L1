@@ -95,21 +95,68 @@ iOS main thread
 
 ## SCDV DLL 制作
 
-### 为什么保留二进制补丁路径
+### 当前交付：Belle SDK 完整源码构建
 
-`src/patch/scdv` 已补齐 `EColor16MAP` 与 `MSurfaceId` 的完整 C++ 实现，可用 macOS Symbian DLL 工具链编译。但重新链接整个 DLL 会改变函数布局、导入区、exception descriptor 和压缩结果；旧 ROM 的 replacement DLL 又要求既有 ordinal/ABI 完全不变。因此交付 DLL 以仓库原始 `scdv_general.dll` 为基线，只修改确定的 code bytes，并重新生成 E32 header CRC。
+2026-07-27 在 Windows XP / Nokia Symbian Belle SDK v1.0 / GCCE 4.4.1
+中重新验证后，完整 C++ 源码可以直接生成兼容的 replacement DLL，不再需要把
+交付产物限制为原 DLL 的字节补丁。关键是保留 `scdv_general.def` 的 ordinal，
+而不是保留各函数的内部地址。
 
-基线信息：
+Belle SDK 构建需要两项源码兼容：
 
-- Git blob：`ec2ffa212c3cc7e0a426adacb656e1b962db3e6a`
-- SHA-256：`6ead71eb0538bf519a4a088a2efa4ccec711ed53acc5dad42d105f1b4418b4ee`
+- Belle 的受控头文件在 `epoc32\include\platform`，`priv.mmp` 和
+  `scdv_general.mmp` 必须显式加入该目录。
+- 公开 Belle SDK 不带 partner-only `cdsb.h`；仓库在
+  `src/patch/scdv/inc/cdsb.h` 保存所需的最小 `CDirectScreenBitmap` ABI 声明，
+  实现仍完全位于 EKA2L1 源码中。
+
+XP 命令行中设置 SDK 根目录，然后依次构建静态库与 DLL：
+
+```bat
+set EPOCROOT=\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\
+
+cd C:\path\to\EKA2L1\src\patch\priv\group
+sbs -b bld.inf -c arm.v5.urel.gcce4_4_1 ^
+  --mo=POSTLINKER_SUPPORTS_ASMTYPE=1 ^
+  --mo=ASM=C:/PROGRA~1/CODESO~1/SOURCE~1/bin/arm-none-symbianelf-gcc.exe
+
+cd C:\path\to\EKA2L1\src\patch\scdv\group\general
+sbs -b bld.inf -c arm.v5.urel.gcce4_4_1 ^
+  --mo=POSTLINKER_SUPPORTS_ASMTYPE=1 ^
+  --mo=ASM=C:/PROGRA~1/CODESO~1/SOURCE~1/bin/arm-none-symbianelf-gcc.exe
+```
+
+两个 make override 是 Belle SDK 这套 Raptor/GCCE 组合的工具问题：
+`POSTLINKER_SUPPORTS_ASMTYPE=1` 让 `elf2e32` 生成 GNU 汇编；使用 `gcc.exe`
+生成纯汇编 export stub，避免 `g++.exe` 无意义地查找安装包中不存在的
+`libstdc++.a`。
+
+当前完整构建产物：
+
 - UID：`10000079 10003B19 EE000002`
 - ARMV5 / EKA2 / DEFLATE
 - code link address：`0x8000`
-- code size：`0x6104`
+- code size：`0x6E24`
 - exports：31，ordinal 表不变
 
-### 一键生成
+在 iPhone 16 Pro 模拟器（`26D5FEDA-3BDC-4699-83ED-58B749D676DF`）上运行
+Asphalt 6 完整自动回归为 `PASS=9 FAIL=0`：进入 Nassau 比赛且无 guest
+crash。完整构建与旧 binary-patch 产物观察到的模拟器图形表现一致。
+
+### 历史 ABI-preserving 二进制补丁路径
+
+最初调查时尚未有可用的 Nokia SDK 环境，因此 `16ee637` 以仓库原始
+`scdv_general.dll` 为基线，只修改确定的 code bytes 并重算 E32 header CRC。
+这条路径仍保留为历史和诊断工具，但不再生成当前交付 DLL。
+
+历史基线信息：
+
+- Git blob：`ec2ffa212c3cc7e0a426adacb656e1b962db3e6a`
+- SHA-256：`6ead71eb0538bf519a4a088a2efa4ccec711ed53acc5dad42d105f1b4418b4ee`
+- code size：`0x6104`
+- exports：31
+
+### 生成历史二进制补丁
 
 工具链放在 `~/Developer/symbian` 时执行：
 
@@ -158,16 +205,17 @@ python3 ~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py \
 
 不同 host compiler 可能生成不同但等价的 DEFLATE bitstream；验收依据是解压后的 code、header/CRC、31 个 exports 和运行回归，不以压缩文件逐字节相同为前提。
 
-### 完整源码编译校验
+### macOS 工具链交叉校验
 
-完整源码仍应能通过工具链编译，以防二进制补丁和 C++ 实现长期漂移：
+macOS 工具链仍可用于独立的源码/ABI 交叉校验：
 
 ```sh
 cd ~/Developer/symbian/symbian-dll-agent-kit
 ./scripts/build-dll.sh projects/scdv.env
 ```
 
-产物位于 `out/scdv_general/`。该路径用于源码/ABI校验；iOS bundle 当前部署的是上述 ABI-preserving binary patch。
+产物位于 `out/scdv_general/`。iOS bundle 当前部署的是 Nokia Belle SDK /
+GCCE 生成的完整源码构建。
 
 ## 自动回归
 
