@@ -32,6 +32,10 @@
 #                                  binaries never carry JIT code. Runtime
 #                                  still requires the sideloaded process to
 #                                  have JIT permission.
+#   EKA2L1_SANITIZER               address | thread: build with ASan or TSan.
+#                                  Forces the dynarmic JIT off (sanitizers
+#                                  cannot see into JIT-emitted code), so the
+#                                  run goes through the dyncom interpreter.
 #   EKA2L1_IOS_DEVELOPMENT_TEAM    Apple Development team id (device signing)
 #   EKA2L1_IOS_DEVICE              target device name/udid for `install`
 #   EKA2L1_IOS_ARCHIVE_PATH        .xcarchive output for `archive`
@@ -92,6 +96,7 @@ configure_one() {
         -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
         -DEKA2L1_IOS_DYNARMIC="${jit}" \
+        -DEKA2L1_SANITIZER="${EKA2L1_SANITIZER:-}" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_XCODE_ATTRIBUTE_SKIP_INSTALL=YES
     # SKIP_INSTALL=YES above keeps the dozens of static-lib targets out of the
@@ -120,6 +125,10 @@ build_one() {
         jit_default=ON
     elif [ "${label}" = "device" ] && [ -z "${team}" ]; then
         jit_default=ON
+    fi
+    # Sanitizers cannot instrument JIT-emitted code; force the interpreter.
+    if [ -n "${EKA2L1_SANITIZER:-}" ]; then
+        jit_default=OFF
     fi
     local jit="${EKA2L1_IOS_DYNARMIC:-${jit_default}}"
 

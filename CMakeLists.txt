@@ -25,6 +25,16 @@ option(EKA2L1_DEPLOY_DMG "Deploy EKA2L1 as .dmg" OFF)
 option(EKA2L1_BUILD_PATCH "Enable building Symbian's DLL patches using Symbian SDK" OFF)
 option(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE "Enable support for Discord Rich Presence" OFF)
 
+# Runtime sanitizer for debugging builds: "address" (ASan, memory errors) or
+# "thread" (TSan, data races and lock-order inversions). Empty disables both.
+# They are mutually exclusive -- the shadow memory layouts conflict.
+set(EKA2L1_SANITIZER "" CACHE STRING "Runtime sanitizer to build with: address, thread, or empty")
+set_property(CACHE EKA2L1_SANITIZER PROPERTY STRINGS "" "address" "thread")
+
+if (EKA2L1_SANITIZER AND NOT EKA2L1_SANITIZER MATCHES "^(address|thread)$")
+    message(FATAL_ERROR "EKA2L1_SANITIZER must be 'address', 'thread', or empty (got '${EKA2L1_SANITIZER}')")
+endif()
+
 # Stage-0 iOS build: force-off options that the iOS port does not yet support.
 # These are silently overridden so a user passing -DEKA2L1_BUILD_TESTS=ON for
 # another platform does not have to special-case iOS in their scripts.
@@ -44,7 +54,17 @@ if (EKA2L1_IOS)
     # per-flavor defaults). Availability is still probed at runtime
     # (arm::host_can_jit()); when the probe fails the emulator falls back to
     # the dyncom interpreter.
-    option(EKA2L1_IOS_DYNARMIC "Compile the dynarmic JIT into iOS builds (device: sideload/unsigned IPA only)" ${EKA2L1_IOS_SIMULATOR})
+    # A sanitizer cannot see into JIT-emitted code, and TSan in particular
+    # reports the JIT's own code buffers as races. Default the JIT off when a
+    # sanitizer is on so the run goes through the (fully instrumented) dyncom
+    # interpreter instead.
+    if (EKA2L1_SANITIZER)
+        set(EKA2L1_IOS_DYNARMIC_DEFAULT OFF)
+    else()
+        set(EKA2L1_IOS_DYNARMIC_DEFAULT ${EKA2L1_IOS_SIMULATOR})
+    endif()
+
+    option(EKA2L1_IOS_DYNARMIC "Compile the dynarmic JIT into iOS builds (device: sideload/unsigned IPA only)" ${EKA2L1_IOS_DYNARMIC_DEFAULT})
 
     if (EKA2L1_IOS_DYNARMIC)
         add_compile_definitions(EKA2L1_IOS_DYNARMIC=1)
@@ -107,6 +127,24 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Limit to C-family languages so that swiftc (enabled for the iOS target)
     # does not reject the clang-only flag.
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-Wno-error>)
+endif()
+
+if (EKA2L1_SANITIZER)
+    if (CMAKE_GENERATOR STREQUAL "Xcode")
+        # Let Xcode drive it: the build setting instruments C/ObjC/C++/Swift and
+        # links the runtime in one go, which hand-rolled flags on a mixed-language
+        # target get wrong (swiftc spells the flag -sanitize=, not -fsanitize=).
+        if (EKA2L1_SANITIZER STREQUAL "address")
+            set(CMAKE_XCODE_ATTRIBUTE_ENABLE_ADDRESS_SANITIZER "YES")
+        else()
+            set(CMAKE_XCODE_ATTRIBUTE_ENABLE_THREAD_SANITIZER "YES")
+        endif()
+    else()
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-fsanitize=${EKA2L1_SANITIZER}>)
+        add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-fno-omit-frame-pointer>)
+        add_link_options(-fsanitize=${EKA2L1_SANITIZER})
+    endif()
+    message(STATUS "Sanitizer enabled: ${EKA2L1_SANITIZER}")
 endif()
 
 if (EKA2L1_BUILD_VULKAN_BACKEND)
