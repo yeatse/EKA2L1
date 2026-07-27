@@ -439,6 +439,15 @@ namespace eka2l1 {
         vfs_file->close();
 
         symfile new_vfs_file = ctx->sys->get_io_system()->open_file(new_path_abs, last_mode);
+
+        if (!new_vfs_file) {
+            // Renamed on disk but the host would not open the new path back.
+            // The subsession is left with the closed file rather than a null.
+            LOG_ERROR(SERVICE_EFSRV, "Can't reopen {} after rename", common::ucs2_to_utf8(new_path_abs));
+            ctx->complete(epoc::error_general);
+            return;
+        }
+
         new_vfs_file->seek(last_pos, file_seek_mode::beg);
 
         node->vfs_node = std::move(new_vfs_file);
@@ -617,6 +626,13 @@ namespace eka2l1 {
         }
 
         symfile temp_file = server<fs_server>()->get_temp_file(full_path);
+
+        if (!temp_file) {
+            LOG_ERROR(SERVICE_EFSRV, "Can't create a temp file in {}", common::ucs2_to_utf8(full_path));
+            ctx->complete(epoc::error_general);
+            return;
+        }
+
         full_path = temp_file->file_name();
 
         temp_file->close();

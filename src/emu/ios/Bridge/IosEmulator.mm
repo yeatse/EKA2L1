@@ -471,6 +471,13 @@ namespace eka2l1::ios {
         // rotation on every present to orient accelerometer samples.
         std::atomic<int> host_interface_rotation_deg{0};
 
+        // Whether the booted device has a touch screen, published by
+        // bootDeviceAtIndex:. The emulator screen asks for this while it
+        // appears — on the main thread, without the session lock — and the
+        // launch path may be rebuilding symsys on the control queue at that
+        // very moment, so the answer must not come from walking symsys.
+        std::atomic<bool> device_is_touch_screen{false};
+
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
         // cleared once the process exits (so closeRunningApp no-ops afterwards).
@@ -1364,6 +1371,11 @@ namespace eka2l1::ios {
         return NO;
     }
     _state->conf.device = static_cast<int>(index);
+    // Publish for the main thread, which must not touch symsys itself. Only
+    // update it once the device is known good, so a failed boot keeps the last
+    // answer instead of flipping the emulator screen to the wrong input model.
+    _state->device_is_touch_screen.store(sys->get_symbian_version_use() >= epocver::epoc94,
+        std::memory_order_relaxed);
 
     // Mirror the Android frontend's device-switch behavior: when the
     // configured system language isn't shipped by this device's ROM (or was
@@ -2067,10 +2079,11 @@ namespace eka2l1::ios {
 }
 
 - (BOOL)currentDeviceIsTouchScreen {
-    if (!_state || !_state->symsys) {
+    if (!_state) {
         return NO;
     }
-    return _state->symsys->get_symbian_version_use() >= epocver::epoc94;
+    // Cached at boot time: see emulator::device_is_touch_screen.
+    return _state->device_is_touch_screen.load(std::memory_order_relaxed) ? YES : NO;
 }
 
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop {
@@ -2443,6 +2456,14 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
         return nil;
     }
     std::lock_guard<std::mutex> icon_lock(_state->icon_mutex);
+    // Decoding walks the applist / fbs servers of the booted system. The
+    // frontend runs it off a background queue, so block on the session lock
+    // (never main: a boot holding it dispatch_syncs onto the main queue) to
+    // keep a reboot from freeing symsys under the decode.
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    if (!_state->symsys) {
+        return nil;
+    }
     auto *kern = _state->symsys->get_kernel_system();
     if (!kern) return nil;
     auto *alserv = eka2l1::ios::get_applist_server(kern);
