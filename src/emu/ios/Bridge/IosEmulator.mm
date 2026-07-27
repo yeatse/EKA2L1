@@ -938,72 +938,47 @@ namespace eka2l1::ios {
         [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
-    // The bundle subfolder is "shaders", not "resources": "resources" would
-    // collide with the reserved "Resources" bundle dir on the case-insensitive
-    // build host and break codesign (see src/emu/ios/CMakeLists.txt). The ogl
-    // driver still reads them from data/resources relative to the cwd, so the
-    // staged copy keeps the "resources" name inside the sandbox.
-    NSString *bundleShaders = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"shaders"];
-    NSString *dataShaders = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"resources"];
-    NSString *sourceShaders = [[[@(__FILE__) stringByDeletingLastPathComponent]
-        stringByAppendingPathComponent:@"../../drivers/resources/gles"] stringByStandardizingPath];
-    NSString *shaderSource = [fm fileExistsAtPath:bundleShaders] ? bundleShaders : sourceShaders;
-    if ([fm fileExistsAtPath:shaderSource]) {
-        [fm removeItemAtPath:dataShaders error:nil];
-        [fm copyItemAtPath:shaderSource toPath:dataShaders error:nil];
-    }
-
-    // TinySoundFont loads the configured SF2 bank through the shared relative
-    // path resources/defaultbank.sf2. Keep it alongside the staged shaders in
-    // data/resources after the shader copy above recreates that directory.
-    NSString *bundleSoundFont = [[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"soundfonts"]
-        stringByAppendingPathComponent:@"defaultbank.sf2"];
-    NSString *sourceSoundFont = [[[@(__FILE__) stringByDeletingLastPathComponent]
-        stringByAppendingPathComponent:@"../../drivers/resources/defaultbank.sf2"] stringByStandardizingPath];
-    NSString *soundFontSource = [fm fileExistsAtPath:bundleSoundFont] ? bundleSoundFont : sourceSoundFont;
-    if ([fm fileExistsAtPath:soundFontSource]) {
-        [fm createDirectoryAtPath:dataShaders withIntermediateDirectories:YES attributes:nil error:nil];
-        NSString *dataSoundFont = [dataShaders stringByAppendingPathComponent:@"defaultbank.sf2"];
-        [fm removeItemAtPath:dataSoundFont error:nil];
-        [fm copyItemAtPath:soundFontSource toPath:dataSoundFont error:nil];
-    }
-
-    // Stage the HLE patch DLLs/maps into data/patch, which load_patch_libraries
-    // scans at boot. Prefer the bundled copy (CMake stages src/patch/*/group/*
-    // flat under the .app's "patch/" — see src/emu/ios/CMakeLists.txt); the
-    // __FILE__-relative source tree only resolves on the simulator (same host
-    // filesystem as the build), so on a real device the bundle is the only
-    // source. Without this, the guest boots unpatched: no audio, and apps that
-    // hit an unpatched path (e.g. Snakes -> d_display.ldd) panic and black-screen.
-    NSString *dataPatch = [[documentsPath stringByAppendingPathComponent:@"data"] stringByAppendingPathComponent:@"patch"];
-    NSString *bundlePatch = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"patch"];
-    NSString *sourcePatch = [[[@(__FILE__) stringByDeletingLastPathComponent]
-        stringByAppendingPathComponent:@"../../../patch"] stringByStandardizingPath];
-    BOOL patchFromBundle = [fm fileExistsAtPath:bundlePatch];
-    NSString *patchSource = patchFromBundle ? bundlePatch : sourcePatch;
-    if ([fm fileExistsAtPath:patchSource]) {
-        [fm removeItemAtPath:dataPatch error:nil];
-        [fm createDirectoryAtPath:dataPatch withIntermediateDirectories:YES attributes:nil error:nil];
-        NSDirectoryEnumerator<NSString *> *patchEnum = [fm enumeratorAtPath:patchSource];
-        for (NSString *relative in patchEnum) {
-            // The bundle stages the files flat; the source tree nests them under
-            // each patch project's group/ dir, so only require that for the latter.
-            if (!patchFromBundle && ![relative containsString:@"/group/"]) {
-                continue;
-            }
-            NSString *name = relative.lastPathComponent;
-            if (![name hasSuffix:@".map"] && ![name hasSuffix:@".dll"]) {
-                continue;
-            }
-            NSString *src = [patchSource stringByAppendingPathComponent:relative];
-            NSString *dst = [dataPatch stringByAppendingPathComponent:name];
-            [fm copyItemAtPath:src toPath:dst error:nil];
-        }
-    }
-
     // Run the emulator with cwd = Documents/data so the config / drive paths
     // resolve into the sandbox rather than the (read-only) bundle.
     NSString *dataRoot = [documentsPath stringByAppendingPathComponent:@"data"];
+
+    // The emulator reads its runtime resources through cwd-relative paths:
+    // "resources/*.vert|frag" and "resources/upscale/*.frag" (ogl_shader_module),
+    // "resources/defaultbank.sf2" (player_tsf), and ".//patch//" scanned by
+    // lib_manager::load_patch_libraries. All of those readers are read-only, so
+    // instead of copying ~1MB out of the .app on every launch we point the
+    // sandbox entries at the bundle folders with symlinks. opendir() follows a
+    // symlinked directory, and rebuilding the links on every start keeps them
+    // valid after an app update relocates the bundle.
+    //
+    // The bundle subfolder is "shaders", not "resources": "resources" would
+    // collide with the reserved "Resources" bundle dir on the case-insensitive
+    // build host and break codesign (see src/emu/ios/CMakeLists.txt). Only the
+    // link inside the sandbox carries the "resources" name the drivers expect.
+    //
+    // Without the patch link the guest boots unpatched: no audio, and apps that
+    // hit an unpatched path (e.g. Snakes -> d_display.ldd) panic and black-screen.
+    NSDictionary<NSString *, NSString *> *bundleLinks = @{
+        @"resources": @"shaders",
+        @"patch": @"patch"
+    };
+    for (NSString *linkName in bundleLinks) {
+        NSString *target = [NSBundle.mainBundle.resourcePath
+            stringByAppendingPathComponent:bundleLinks[linkName]];
+        NSString *link = [dataRoot stringByAppendingPathComponent:linkName];
+        // Older builds staged real directories here; drop whatever is present.
+        // NSFileManager does not follow the link, so this only unlinks.
+        [fm removeItemAtPath:link error:nil];
+        if (![fm fileExistsAtPath:target]) {
+            NSLog(@"EKA2L1: bundle resource folder %@ is missing", target);
+            continue;
+        }
+        NSError *linkError = nil;
+        if (![fm createSymbolicLinkAtPath:link withDestinationPath:target error:&linkError]) {
+            NSLog(@"EKA2L1: could not link data/%@ to %@: %@", linkName, target, linkError);
+        }
+    }
+
     chdir(dataRoot.UTF8String);
 
     eka2l1::log::setup_log(nullptr);

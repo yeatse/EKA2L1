@@ -71,13 +71,13 @@ set_source_files_properties(${EKA2L1_IOS_BUNDLE_RESOURCES} PROPERTIES
 set_source_files_properties("${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings" PROPERTIES
     XCODE_LAST_KNOWN_FILE_TYPE "text.json.xcstrings")
 
-# Bundle the GLES shader sources into the .app under "shaders/". The ogl
-# driver loads these at runtime (see ogl_graphics_driver::do_init), and
-# IosEmulator.mm stages them from NSBundle.resourcePath/shaders into the
-# sandbox's data/resources. The __FILE__-relative fallback in that staging
-# only resolves on the simulator (which runs on the build host); on a real
-# device the bundle copy is the only source, so a missing copy here means a
-# null shader FILE* and a crash.
+# Bundle everything the emulator reads through its cwd-relative "resources/"
+# path into the .app under "shaders/": the GLES shader sources loaded by
+# ogl_graphics_driver::do_init, the upscale filter shaders it compiles on
+# demand ("resources//upscale//<name>.frag"), and the default SF2 bank that
+# player_tsf opens as "resources/defaultbank.sf2". IosEmulator.mm symlinks the
+# sandbox's data/resources at this folder, so the bundle is the only source at
+# runtime and a missing copy here means a null shader FILE* and a crash.
 #
 # NB: the bundle subfolder must NOT be named "resources" — the build host's
 # filesystem is case-insensitive, so "resources" collides with the reserved
@@ -85,26 +85,26 @@ set_source_files_properties("${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings" 
 # format unrecognized, invalid, or unsuitable".
 file(GLOB EKA2L1_IOS_SHADER_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/gles/*")
+list(APPEND EKA2L1_IOS_SHADER_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/defaultbank.sf2")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_SHADER_FILES})
 set_source_files_properties(${EKA2L1_IOS_SHADER_FILES} PROPERTIES
     MACOSX_PACKAGE_LOCATION "shaders")
 
-# Bundle the default SoundFont separately from the GLES shader resources. The
-# sandbox staging code copies it back into data/resources/defaultbank.sf2, which
-# is the relative path shared audio config expects after chdir(data).
-set(EKA2L1_IOS_DEFAULT_SOUNDFONT
-    "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/defaultbank.sf2")
-target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_DEFAULT_SOUNDFONT})
-set_source_files_properties(${EKA2L1_IOS_DEFAULT_SOUNDFONT} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "soundfonts")
+# The upscale filters live in their own subdirectory because the driver builds
+# their path as "resources//upscale//<name>.frag".
+file(GLOB EKA2L1_IOS_UPSCALE_FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/upscale/*.frag")
+target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_UPSCALE_FILES})
+set_source_files_properties(${EKA2L1_IOS_UPSCALE_FILES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "shaders/upscale")
 
 # Bundle the prebuilt HLE patch DLLs + .map files into the .app under "patch/".
 # lib_manager::load_patch_libraries (epoc.cpp) scans data/patch at boot to apply
 # ROM/library patches (audio via mediaclientaudiostream, the scdv screen driver,
-# etc.). IosEmulator.mm stages them from NSBundle.resourcePath/patch into the
-# sandbox's data/patch. As with the shaders above, the __FILE__-relative source
-# fallback only resolves on the simulator (which runs on the build host); on a
-# real device the bundle copy is the only source. A missing copy here leaves the
+# etc.); IosEmulator.mm symlinks the sandbox's data/patch at this folder, so as
+# with the shaders above the bundle is the only source at runtime. A missing
+# copy here leaves the
 # guest unpatched — no sound, and apps that hit an unpatched path (e.g. Snakes
 # falling back to d_display.ldd) panic the active scheduler and black-screen.
 # Names are flat and unique, so MACOSX_PACKAGE_LOCATION "patch" stages them
