@@ -40,6 +40,7 @@
 #include <config/app_settings.h>
 #include <config/config.h>
 #include <cpu/arm_factory.h>
+#include <dispatch/dispatcher.h>
 #include <drivers/audio/audio.h>
 #include <drivers/audio/dsp.h>
 #include <drivers/audio/player.h>
@@ -1772,6 +1773,15 @@ namespace eka2l1::ios {
     }
     kern->stop_cores_idling();
     kern->unlock();
+
+    // Killing the process orphans the HLE objects it owned (audio players above all), and
+    // those are destroyed by the emulation loop — which is parked for good once the app list
+    // is back, so an orphaned player would keep playing forever. Destroy them here instead,
+    // now that the kernel lock is released: an audio teardown waits out the render callback
+    // in flight, and that callback needs the kernel lock to finish guest notifications.
+    if (auto *dispatcher = _state->symsys->get_dispatcher()) {
+        dispatcher->flush_pending_teardown();
+    }
 }
 
 - (BOOL)installSisAtPath:(NSString *)sisPath {

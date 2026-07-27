@@ -729,6 +729,12 @@ namespace eka2l1 {
             return 1;
         }
 
+        if (dispatcher_) {
+            // Objects orphaned by a dead process are destroyed here: this thread holds no
+            // kernel lock, so a teardown that waits on an audio render callback can't deadlock.
+            dispatcher_->flush_pending_teardown();
+        }
+
         bool should_step = false;
         bool script_hits_the_feels = false;
 
