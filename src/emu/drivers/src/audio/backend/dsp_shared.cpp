@@ -180,10 +180,18 @@ namespace eka2l1::drivers {
 
         // If the amount of buffer left is deemed to be insufficient (this takes account of current frame count that is needed)
         if (internal_decode_running_out()) {
-            if (!more_requested) {
+            // Claim the request slot before invoking the callback, not after.
+            // The callback wakes the guest thread, which may hand us data --
+            // and clear this flag via write() -- before the call even returns.
+            // Publishing the flag afterwards would overwrite that clear, so no
+            // further data would ever be requested and the stream would starve.
+            if (!more_requested.exchange(true)) {
                 const std::lock_guard<std::mutex> guard(callback_lock_);
-                more_requested = !more_buffer_callback_
-                    || more_buffer_callback_(more_buffer_userdata_);
+                if (more_buffer_callback_ && !more_buffer_callback_(more_buffer_userdata_)) {
+                    // The request did not go through, so nothing will clear the
+                    // flag for us; release it so the next callback can retry.
+                    more_requested = false;
+                }
             }
         }
 

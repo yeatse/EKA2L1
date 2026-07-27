@@ -1127,13 +1127,18 @@ namespace eka2l1::ios {
         }
         {
             std::lock_guard<std::mutex> publish_lock(state->layer_mutex);
+            // Install the surface hook before publishing the driver, under the
+            // same lock. attachLayer: treats a visible driver as "the hook is
+            // ready" and then calls it without holding this lock, so assigning
+            // the std::function afterwards let the main thread observe a
+            // half-constructed callable and jump through its vptr.
+            state->window->surface_change_hook = [state](void *new_surface) {
+                state->graphics_driver->update_surface(new_surface);
+            };
             state->graphics_driver = std::move(graphics_driver);
         }
         state->layer_cv.notify_all();
 
-        state->window->surface_change_hook = [state](void *new_surface) {
-            state->graphics_driver->update_surface(new_surface);
-        };
         state->graphics_driver->set_display_hook([]() {
             // CAEAGLLayer presentation is implicit in gl_context_eagl::
             // swap_buffers; nothing extra to poll here. iOS lifecycle hooks
@@ -1881,6 +1886,7 @@ namespace eka2l1::ios {
     renderLayer = [self angleRenderLayerForHostLayer:layer pixelSize:pixelSize scale:scale];
 #endif
 
+    bool driver_ready = false;
     {
         std::lock_guard<std::mutex> lk(_state->layer_mutex);
         _state->pending_layer = (__bridge void *)renderLayer;
@@ -1889,10 +1895,14 @@ namespace eka2l1::ios {
         _state->pending_scale = static_cast<float>(scale);
         _state->layer_dirty = true;
         _state->layer_cv.notify_all();
+        // Read the driver under the same lock the graphics thread publishes it
+        // (and the surface hook) under. That ordering is what makes the hook
+        // safe to call below without holding the lock.
+        driver_ready = (_state->graphics_driver != nullptr);
     }
     // Once the graphics thread has consumed the first layer, subsequent
     // changes flow through surface_change_hook → driver->update_surface.
-    if (_state->window && _state->graphics_driver) {
+    if (_state->window && driver_ready) {
         _state->window->surface_changed((__bridge void *)renderLayer,
             static_cast<int>(pixelSize.width),
             static_cast<int>(pixelSize.height),
