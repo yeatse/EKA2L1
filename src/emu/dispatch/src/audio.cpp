@@ -394,17 +394,6 @@ namespace eka2l1::dispatch {
         }
     }
 
-    static void complete_audio_notify_if_alive(kernel_system *kern, epoc::notify_info &info) {
-        if (kern == nullptr) {
-            return;
-        }
-
-        kern->lock();
-        complete_audio_notify_if_alive_locked(kern, info);
-
-        kern->unlock();
-    }
-
     BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_notify_any_done, eka2l1::ptr<void> handle, eka2l1::ptr<epoc::request_status> sts) {
         dispatch::dispatcher *dispatcher = sys->get_dispatcher();
         dispatch::dsp_manager &manager = dispatcher->get_dsp_manager();
@@ -420,10 +409,26 @@ namespace eka2l1::dispatch {
         info.sts = sts;
 
         kernel_system *kern = sys->get_kernel_system();
+        const std::uint32_t player_handle = handle.ptr_address();
 
-        if (!eplayer->impl_->notify_any_done([eplayer, kern](std::uint8_t *data) {
+        // The play-done callback runs on the audio backend's render thread, which must never
+        // block on the kernel lock: the guest stops or destroys a player from a dispatch call
+        // that runs under that lock, and the host stop waits for the render callback in flight
+        // to return (AudioOutputUnitStop is synchronous). Blocking here deadlocks the two, and
+        // with them every other thread that wants the kernel lock afterwards - seen on iOS as a
+        // scene-update watchdog kill with the guest inside eaudio_player_play, which stops the
+        // previous stream first. Complete only when the lock happens to be free, and otherwise
+        // let the emulation thread do it.
+        if (!eplayer->impl_->notify_any_done([eplayer, kern, dispatcher, player_handle](std::uint8_t *data) {
+                if (!kern->try_lock()) {
+                    dispatcher->defer_player_notify(player_handle);
+                    return;
+                }
+
                 epoc::notify_info *info = reinterpret_cast<epoc::notify_info *>(data);
-                complete_audio_notify_if_alive(kern, *info);
+                complete_audio_notify_if_alive_locked(kern, *info);
+
+                kern->unlock();
 
                 eplayer->impl_->clear_notify_done();
             },

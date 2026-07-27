@@ -90,6 +90,13 @@ AB_TIMEOUT="${EKA2L1_REG_AB_TIMEOUT:-180}"
 # guest band; idle animations (clouds, sun rays, LOADING pulse) don't come
 # close. Used instead of SCREEN_DIFF_MIN for the Angry Birds assertions.
 AB_DIFF_MIN="${EKA2L1_REG_AB_DIFF_MIN:-150000}"
+# A carousel page change is NOT a full-band transition: the background artwork is
+# identical between episode pages, so only the three cards and the page dots
+# repaint. Measured on an iPhone 16 Pro simulator: a settled episode-select
+# screen with no input scores exactly 0 differing pixels, while real swipes score
+# 29k-63k — an order of magnitude under AB_DIFF_MIN, which used to fail this
+# assertion even though the carousel visibly scrolled.
+AB_SWIPE_DIFF_MIN="${EKA2L1_REG_AB_SWIPE_DIFF_MIN:-8000}"
 A6_ROM="${EKA2L1_REG_A6_ROM:-rm-707}"
 A6_INTRO_TIMEOUT="${EKA2L1_REG_A6_INTRO_TIMEOUT:-20}"
 A6_MOVIE_WAIT="${EKA2L1_REG_A6_MOVIE_WAIT:-75}"
@@ -499,7 +506,7 @@ test_angrybirds() {
     swipe_xy "$(pt "$SCR_W" 0.8)" "$y" "$(pt "$SCR_W" 0.2)" "$y" 0.5
     wait_s 4
     local s_swiped; s_swiped="$(shot ab_4_swiped)"
-    if [ "$(screen_diff_px "$s_episodes" "$s_swiped")" -ge "$AB_DIFF_MIN" ]; then
+    if [ "$(screen_diff_px "$s_episodes" "$s_swiped")" -ge "$AB_SWIPE_DIFF_MIN" ]; then
         check PASS "AngryBirds: carousel swipe scrolls episodes (drag responds)"
     else
         check FAIL "AngryBirds: carousel swipe scrolls episodes (drag responds)"
