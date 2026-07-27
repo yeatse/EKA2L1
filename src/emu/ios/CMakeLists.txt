@@ -71,50 +71,52 @@ set_source_files_properties(${EKA2L1_IOS_BUNDLE_RESOURCES} PROPERTIES
 set_source_files_properties("${EKA2L1_IOS_RESOURCES_DIR}/Localizable.xcstrings" PROPERTIES
     XCODE_LAST_KNOWN_FILE_TYPE "text.json.xcstrings")
 
-# Bundle everything the emulator reads through its cwd-relative "resources/"
-# path into the .app under "shaders/": the GLES shader sources loaded by
-# ogl_graphics_driver::do_init, the upscale filter shaders it compiles on
-# demand ("resources//upscale//<name>.frag"), and the default SF2 bank that
-# player_tsf opens as "resources/defaultbank.sf2". IosEmulator.mm symlinks the
-# sandbox's data/resources at this folder, so the bundle is the only source at
-# runtime and a missing copy here means a null shader FILE* and a crash.
+# The emulator reads its shipped resources through paths relative to the
+# working directory ("resources/..", "patch/.."), which on iOS is the sandbox's
+# data tree. Rather than staging copies there, IosEmulator.mm calls
+# set_runtime_resource_root() with the bundle folder laid out below, so the
+# read-only .app is the only source at runtime — a missing copy here means a
+# null shader FILE* and an unpatched guest, not a silent fallback.
 #
-# NB: the bundle subfolder must NOT be named "resources" — the build host's
-# filesystem is case-insensitive, so "resources" collides with the reserved
+# NB: the root must NOT be named "resources" — the build host's filesystem is
+# case-insensitive, so a top-level "resources" collides with the reserved
 # "Resources" bundle directory and codesign rejects the .app with "bundle
-# format unrecognized, invalid, or unsuitable".
+# format unrecognized, invalid, or unsuitable". One level down inside "emures"
+# the names the emulator expects are free to be used verbatim.
+#
+# emures/resources: the GLES shader sources loaded by ogl_graphics_driver::
+# do_init, plus the default SF2 bank player_tsf opens as
+# "resources/defaultbank.sf2".
 file(GLOB EKA2L1_IOS_SHADER_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/gles/*")
 list(APPEND EKA2L1_IOS_SHADER_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/defaultbank.sf2")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_SHADER_FILES})
 set_source_files_properties(${EKA2L1_IOS_SHADER_FILES} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "shaders")
+    MACOSX_PACKAGE_LOCATION "emures/resources")
 
-# The upscale filters live in their own subdirectory because the driver builds
-# their path as "resources//upscale//<name>.frag".
+# emures/resources/upscale: the upscale filters, which the driver looks up as
+# "resources//upscale//<name>.frag".
 file(GLOB EKA2L1_IOS_UPSCALE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../drivers/resources/upscale/*.frag")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_UPSCALE_FILES})
 set_source_files_properties(${EKA2L1_IOS_UPSCALE_FILES} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "shaders/upscale")
+    MACOSX_PACKAGE_LOCATION "emures/resources/upscale")
 
-# Bundle the prebuilt HLE patch DLLs + .map files into the .app under "patch/".
-# lib_manager::load_patch_libraries (epoc.cpp) scans data/patch at boot to apply
-# ROM/library patches (audio via mediaclientaudiostream, the scdv screen driver,
-# etc.); IosEmulator.mm symlinks the sandbox's data/patch at this folder, so as
-# with the shaders above the bundle is the only source at runtime. A missing
-# copy here leaves the
-# guest unpatched — no sound, and apps that hit an unpatched path (e.g. Snakes
-# falling back to d_display.ldd) panic the active scheduler and black-screen.
-# Names are flat and unique, so MACOSX_PACKAGE_LOCATION "patch" stages them
-# alongside each other, matching the layout load_patch_libraries expects.
+# emures/patch: the prebuilt HLE patch DLLs + .map files that
+# lib_manager::load_patch_libraries (epoc.cpp) scans at boot to apply ROM /
+# library patches (audio via mediaclientaudiostream, the scdv screen driver,
+# etc.). Without them the guest boots unpatched — no sound, and apps that hit an
+# unpatched path (e.g. Snakes falling back to d_display.ldd) panic the active
+# scheduler and black-screen. Names are flat and unique, so a single package
+# location stages them alongside each other, matching the layout
+# load_patch_libraries expects.
 file(GLOB EKA2L1_IOS_PATCH_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*.map"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../patch/*/group/*.dll")
 target_sources(${EKA2L1_IOS_APP} PRIVATE ${EKA2L1_IOS_PATCH_FILES})
 set_source_files_properties(${EKA2L1_IOS_PATCH_FILES} PROPERTIES
-    MACOSX_PACKAGE_LOCATION "patch")
+    MACOSX_PACKAGE_LOCATION "emures/patch")
 
 target_include_directories(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_IOS_BRIDGE_DIR}")
 target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE GLES_SILENCE_DEPRECATION)

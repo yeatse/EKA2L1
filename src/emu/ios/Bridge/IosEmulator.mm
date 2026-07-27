@@ -758,7 +758,9 @@ namespace eka2l1::ios {
         }
 
         auto *io = state->symsys->get_io_system();
-        const std::string patch_dir = eka2l1::add_path(state->documents_root, "data/patch");
+        // Same folder lib_manager::load_patch_libraries scans, which the
+        // frontend redirects into the read-only app bundle at startup.
+        const std::string patch_dir = eka2l1::runtime_resource_path("patch");
         const std::vector<std::tuple<std::u16string, std::string, epocver>> dlls_need_to_copy = {
             { u"Z:\\sys\\bin\\goommonitor.dll", "goommonitor_general.dll", epocver::epoc94 },
             { u"Z:\\sys\\bin\\avkonfep.dll", "avkonfep_general.dll", epocver::epoc93fp1 }
@@ -929,7 +931,11 @@ namespace eka2l1::ios {
     // the host APFS volume (which itself is case-insensitive, so we can
     // only ever have one entry per case-insensitive name on disk). Naming
     // everything lowercase ensures both views agree.
-    NSArray<NSString *> *subdirs = @[@"roms", @"data", @"sis",
+    // Only the emulator's own tree is created here. The import staging folders
+    // (roms/, import_tmp/) are made on demand by ImportRouter, and SIS packages
+    // are installed straight from the picked URL, so neither needs to sit empty
+    // in the user-visible Documents root.
+    NSArray<NSString *> *subdirs = @[@"data",
                                       @"data/drives/c", @"data/drives/d",
                                       @"data/drives/e", @"data/drives/z",
                                       @"data/compat"];
@@ -942,47 +948,43 @@ namespace eka2l1::ios {
     // resolve into the sandbox rather than the (read-only) bundle.
     NSString *dataRoot = [documentsPath stringByAppendingPathComponent:@"data"];
 
-    // The emulator reads its runtime resources through cwd-relative paths:
-    // "resources/*.vert|frag" and "resources/upscale/*.frag" (ogl_shader_module),
+    // The emulator opens its shipped resources through cwd-relative paths:
+    // "resources/*.vert|frag" plus "resources/upscale/*.frag" (ogl_shader_module),
     // "resources/defaultbank.sf2" (player_tsf), and ".//patch//" scanned by
     // lib_manager::load_patch_libraries. All of those readers are read-only, so
-    // instead of copying ~1MB out of the .app on every launch we point the
-    // sandbox entries at the bundle folders with symlinks. opendir() follows a
-    // symlinked directory, and rebuilding the links on every start keeps them
-    // valid after an app update relocates the bundle.
+    // point them at the app bundle instead of staging a copy into the sandbox:
+    // the working directory below stays the writable data tree (config, drives,
+    // logs), and set_runtime_resource_root redirects just the shipped ones.
+    // Documents is user-visible through the Files app, so keeping the resources
+    // out of it also keeps them out of reach of an accidental edit or delete.
     //
-    // The bundle subfolder is "shaders", not "resources": "resources" would
-    // collide with the reserved "Resources" bundle dir on the case-insensitive
-    // build host and break codesign (see src/emu/ios/CMakeLists.txt). Only the
-    // link inside the sandbox carries the "resources" name the drivers expect.
-    //
-    // Without the patch link the guest boots unpatched: no audio, and apps that
-    // hit an unpatched path (e.g. Snakes -> d_display.ldd) panic and black-screen.
-    NSDictionary<NSString *, NSString *> *bundleLinks = @{
-        @"resources": @"shaders",
-        @"patch": @"patch"
-    };
-    for (NSString *linkName in bundleLinks) {
-        NSString *target = [NSBundle.mainBundle.resourcePath
-            stringByAppendingPathComponent:bundleLinks[linkName]];
-        NSString *link = [dataRoot stringByAppendingPathComponent:linkName];
-        // Older builds staged real directories here; drop whatever is present.
-        // NSFileManager does not follow the link, so this only unlinks.
-        [fm removeItemAtPath:link error:nil];
-        if (![fm fileExistsAtPath:target]) {
-            NSLog(@"EKA2L1: bundle resource folder %@ is missing", target);
-            continue;
-        }
-        NSError *linkError = nil;
-        if (![fm createSymbolicLinkAtPath:link withDestinationPath:target error:&linkError]) {
-            NSLog(@"EKA2L1: could not link data/%@ to %@: %@", linkName, target, linkError);
-        }
+    // The bundle subfolder is "emures", not "resources": a top-level "resources"
+    // would collide with the reserved "Resources" bundle dir on the
+    // case-insensitive build host and break codesign, so the names the emulator
+    // expects live one level down (see src/emu/ios/CMakeLists.txt).
+    NSString *bundleResourceRoot = [NSBundle.mainBundle.resourcePath
+        stringByAppendingPathComponent:@"emures"];
+    eka2l1::set_runtime_resource_root(bundleResourceRoot.UTF8String);
+
+    // Builds up to 12d5452ca staged copies (later symlinks) of those resources
+    // into the sandbox. Nothing reads them anymore, so drop the leftovers rather
+    // than leaving ~1MB of dead weight in the user's backed-up Documents.
+    for (NSString *stale in @[@"resources", @"patch"]) {
+        [fm removeItemAtPath:[dataRoot stringByAppendingPathComponent:stale] error:nil];
     }
 
     chdir(dataRoot.UTF8String);
 
     eka2l1::log::setup_log(nullptr);
     LOG_INFO(eka2l1::FRONTEND_CMDLINE, "EKA2L1 iOS v26.7.0 ({}-{})", GIT_BRANCH, GIT_COMMIT_HASH);
+
+    // A bundle missing this folder means the copy-files build phases did not
+    // run: no shaders (null FILE* in the ogl driver) and an unpatched guest.
+    // Say so once here instead of leaving a pile of confusing follow-up errors.
+    if (![fm fileExistsAtPath:bundleResourceRoot]) {
+        LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Bundle resource folder {} is missing!",
+            bundleResourceRoot.UTF8String);
+    }
 
 
     _state->conf.deserialize();
@@ -1046,10 +1048,13 @@ namespace eka2l1::ios {
         _state->conf.audio_master_volume,
         midi_be);
     if (_state->audio_driver) {
+        // The configured paths are the shared "resources/defaultbank.*"
+        // defaults unless the user pointed them somewhere else, so resolve them
+        // against the bundle; an absolute user path passes through untouched.
         _state->audio_driver->set_bank_path(eka2l1::drivers::MIDI_BANK_TYPE_HSB,
-            _state->conf.hsb_bank_path);
+            eka2l1::runtime_resource_path(_state->conf.hsb_bank_path));
         _state->audio_driver->set_bank_path(eka2l1::drivers::MIDI_BANK_TYPE_SF2,
-            _state->conf.sf2_bank_path);
+            eka2l1::runtime_resource_path(_state->conf.sf2_bank_path));
     } else {
         LOG_WARN(eka2l1::FRONTEND_CMDLINE,
             "iOS audio: cubeb_audio_driver instance is null; services will fall back to silence");

@@ -72,7 +72,8 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 
 // Lifecycle ----------------------------------------------------------------
 // Initialise the underlying eka2l1::system using the Documents directory at
-// `documentsPath`. Creates roms/, data/, sis/ subfolders if missing.
+// `documentsPath`. Creates the data/ tree if missing and points the shipped
+// resource lookups (shaders, MIDI bank, HLE patches) at the app bundle.
 - (BOOL)startWithDocumentsPath:(NSString *)documentsPath;
 
 // Tear the system down. Called from the SwiftUI shutdown path.

@@ -1186,7 +1186,7 @@ namespace eka2l1 {
     }
 
     void system_impl::initialize_user_parties() {
-        get_lib_manager()->load_patch_libraries(PATCH_FOLDER_PATH);
+        get_lib_manager()->load_patch_libraries(runtime_resource_path(PATCH_FOLDER_PATH));
         dispatch::libraries::register_functions(kern_.get(), dispatcher_.get());
 
         service::init_services_post_bootup(parent_);
