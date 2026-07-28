@@ -280,8 +280,17 @@ namespace eka2l1::drivers {
             && (static_cast<std::size_t>(dim.x) <= (std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(dim.y) / 4));
         if (can_expand) {
             const std::uint8_t *src = reinterpret_cast<const std::uint8_t *>(data);
-            const std::size_t src_stride = (pixels_per_line != 0) ? pixels_per_line : static_cast<std::size_t>(dim.x);
-            const std::size_t source_end = ((static_cast<std::size_t>(dim.y) - 1) * src_stride + static_cast<std::size_t>(dim.x)) * bytes_pp;
+            const std::size_t src_pixels_per_line = (pixels_per_line != 0)
+                ? pixels_per_line
+                : static_cast<std::size_t>(dim.x);
+            // Match GL_UNPACK_ALIGNMENT=4 used by the normal upload path.
+            // A 24-bpp row can contain padding that cannot be represented by
+            // an integral pixels-per-line value (for example, 246 pixels use
+            // 740 bytes rather than 246 * 3). Advancing by pixels alone makes
+            // every following row start two bytes early.
+            const std::size_t src_row_bytes = ((src_pixels_per_line * bytes_pp) + 3) & ~std::size_t(3);
+            const std::size_t source_end = (static_cast<std::size_t>(dim.y) - 1) * src_row_bytes
+                + static_cast<std::size_t>(dim.x) * bytes_pp;
             if (size && (source_end > size)) {
                 bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), pixels_per_line,
                     data_format, data_type, data, 0, 4);
@@ -291,7 +300,8 @@ namespace eka2l1::drivers {
             expanded_rgba.resize(static_cast<std::size_t>(dim.x) * static_cast<std::size_t>(dim.y) * 4);
             for (int y = 0; y < dim.y; y++) {
                 for (int x = 0; x < dim.x; x++) {
-                    const std::uint8_t *s = src + (static_cast<std::size_t>(y) * src_stride + x) * bytes_pp;
+                    const std::uint8_t *s = src + static_cast<std::size_t>(y) * src_row_bytes
+                        + static_cast<std::size_t>(x) * bytes_pp;
                     std::uint8_t *d = expanded_rgba.data() + (static_cast<std::size_t>(y) * dim.x + x) * 4;
                     if (bmp->bpp == 8) {
                         // Gray / alpha mask: replicate so maskValue.r is coverage.

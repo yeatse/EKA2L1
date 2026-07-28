@@ -45,6 +45,7 @@ namespace eka2l1 {
         feature_id_thai = 1081,
         feature_id_chinese = 1096,
         feature_id_flash_lite_viewer = 1145,
+        feature_id_flash_lite_browser_plugin = 1146,
         feature_id_pen_calibration = 1658,
         feature_id_tactile_feedback = 1718,
         feature_id_app_menu_show_images = 1012
@@ -68,6 +69,13 @@ namespace eka2l1 {
         // (EIKCOCTL 8) / fails to build the Options menu. Real devices treat it as
         // supported. (Ref: same Calculator-LSK issue diagnosed on the wasm build.)
         enable_features.push_back(feature_id_app_menu_show_images);
+
+        // Browser-hosted Flash Lite is a separate platform feature from the
+        // standalone viewer. Report it only when the ROM actually supplies the
+        // Netscape-compatible browser plug-in.
+        if (sys->get_io_system()->exist(u"z:\\sys\\bin\\npflashlite.dll")) {
+            enable_features.push_back(feature_id_flash_lite_browser_plugin);
+        }
 
         // 2. Are we welcoming SVG? Check for OpenVG, cause it should be there if this feature is available
         if (sys->get_io_system()->exist(u"z:\\sys\\bin\\libopenvg.dll")) {
