@@ -8,9 +8,6 @@ struct BTNetFriend: Identifiable, Hashable {
 }
 
 struct SettingsView: View {
-    @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
-    @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
-    @AppStorage(KeypadDefaults.opacityKey) private var keypadOpacity = KeypadDefaults.opacity
     @ObservedObject private var peripheralManager = PeripheralManager.shared
     @State private var mappingTarget: PeripheralManager.Peripheral?
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
@@ -102,26 +99,6 @@ struct SettingsView: View {
                 Text(verbatim: "\(Int(audioMasterVolume))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-            }
-            Section("settings.input") {
-                Toggle("settings.virtualKeypad", isOn: $showVirtualKeypad)
-                if showVirtualKeypad {
-                    Picker("settings.keypadLayout", selection: $keypadLayoutRaw) {
-                        ForEach(KeypadLayout.allCases) { layout in
-                            Text(layout.displayName).tag(layout.rawValue)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("settings.keypadOpacity")
-                            Spacer()
-                            Text(keypadOpacity, format: .percent.precision(.fractionLength(0)))
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        Slider(value: $keypadOpacity, in: KeypadDefaults.opacityRange)
-                    }
-                }
             }
             Section {
                 Picker("settings.netplay.discoveryMode", selection: $btDiscoveryMode) {

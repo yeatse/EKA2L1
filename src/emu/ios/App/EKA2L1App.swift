@@ -7,10 +7,15 @@
 import SwiftUI
 import UIKit
 
-// Supplies the interface-orientation lock. The emulator screen pins the
-// orientation to its keypad layout (see DisplayOrientation) by writing
-// `lockedInterfaceOrientationMask`; UIKit asks this delegate on every rotation,
-// so a physical device turn can't override the layout's orientation.
+// SwiftUI Menu is backed by a UICollectionView on current iOS releases. UIKit's
+// type-selection setup crashes while building that context-menu collection, so
+// provide the no-op hook before any menus are presented.
+extension UICollectionView {
+    @objc func _configureTypeSelectInteractionIfNeeded() {}
+}
+
+// Supplies the emulator screen's orientation policy. It allows every direction
+// by default and narrows to the current direction when the in-game lock is on.
 final class AppOrientationDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {

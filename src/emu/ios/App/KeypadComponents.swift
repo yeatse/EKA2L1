@@ -150,7 +150,9 @@ struct CapKey: View {
             Group {
                 if let title {
                     Text(title)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .font(.system(size: min(18, max(13, size.height * 0.4)),
+                                      weight: .semibold,
+                                      design: .rounded))
                 } else if let symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 16, weight: .semibold))
@@ -162,9 +164,8 @@ struct CapKey: View {
     }
 }
 
-// Left/right soft key with the unified symbol treatment. Keeps "LSK"/"RSK"
-// accessibility labels — the regression harness drives the soft keys by those
-// labels via snapshot-ui.
+// Left/right soft key. The visible labels stay deliberately plain while the
+// accessibility labels remain "LSK"/"RSK" for the regression harness.
 struct SoftKey: View {
     enum Side {
         case left, right
@@ -173,16 +174,10 @@ struct SoftKey: View {
     let side: Side
     var size: CGSize = CGSize(width: 58, height: 38)
 
-    private var symbolName: String {
-        if #available(iOS 17, *) {
-            return side == .left ? "l.button.roundedbottom.horizontal" : "r.button.roundedbottom.horizontal"
-        }
-        return side == .left ? "l.circle" : "r.circle"
-    }
-
     var body: some View {
         CapKey(scan: side == .left ? Scan.leftSoft : Scan.rightSoft,
-               symbol: symbolName, size: size)
+               title: side == .left ? "L" : "R",
+               size: size)
             .accessibilityLabel(Text(verbatim: side == .left ? "LSK" : "RSK"))
     }
 }
@@ -379,29 +374,38 @@ private struct PadDividers: Shape {
 
 // MARK: - Numeric pads
 
-// Phone-style 3x4 numeric pad with fixed-size caps (classic layout).
+// Phone-style 3x4 numeric pad with a restrained 2pt separation between caps.
 struct CapsNumericPad: View {
-    private let columns = Array(repeating: GridItem(.fixed(48), spacing: 10), count: 3)
+    var size = CGSize(width: 150, height: 208)
+
+    private let spacing: CGFloat = 2
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
 
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 10) {
+        let keyHeight = (size.height - spacing * 3) / 4
+        LazyVGrid(columns: columns, spacing: spacing) {
             ForEach(keypadDigits, id: \.label) { digit in
                 HoldableRawKey(scan: digit.scan) { pressed in
                     VStack(spacing: 1) {
                         Text(digit.label)
-                            .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            .font(.system(size: size.height / 10.4,
+                                          weight: .semibold,
+                                          design: .rounded))
                         if !digit.sub.isEmpty {
                             Text(digit.sub)
-                                .font(.system(size: 7, weight: .semibold))
+                                .font(.system(size: max(7, size.height / 29.7),
+                                              weight: .semibold))
                                 .tracking(0.5)
                                 .foregroundStyle(.white.opacity(0.55))
                         }
                     }
-                    .frame(width: 48, height: 49)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: keyHeight)
                     .keyCap(kind: .digit, pressed: pressed)
                 }
             }
         }
+        .frame(width: size.width, height: size.height)
     }
 }
 

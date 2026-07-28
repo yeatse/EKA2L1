@@ -251,6 +251,16 @@
         }
       }
     },
+    "emulator.menu.fullScreen" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full Screen"
+          }
+        }
+      }
+    },
     "emulator.menu.gameSettings" : {
       "localizations" : {
         "en" : {
@@ -271,16 +281,6 @@
         }
       }
     },
-    "emulator.menu.keypadLayout" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keypad Layout"
-          }
-        }
-      }
-    },
     "emulator.menu.keypadSettings" : {
       "localizations" : {
         "en" : {
@@ -291,12 +291,12 @@
         }
       }
     },
-    "emulator.menu.opacityValue %@" : {
+    "emulator.menu.lockOrientation" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Opacity: %@"
+            "value" : "Orientation Lock"
           }
         }
       }
@@ -1143,62 +1143,52 @@
         }
       }
     },
-    "keypad.accessibility.toDirectionPad" : {
+    "keypad.editor.dragHint" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Switch to direction pad"
+            "value" : "Drag to reposition this control"
           }
         }
       }
     },
-    "keypad.accessibility.toNumberPad" : {
+    "keypad.editor.editLayout" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Switch to number pad"
+            "value" : "Edit Keypad Layout"
           }
         }
       }
     },
-    "keypad.layout.classic" : {
+    "keypad.editor.hint" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Portrait"
+            "value" : "Drag controls to adjust the layout"
           }
         }
       }
     },
-    "keypad.layout.compact" : {
+    "keypad.editor.numberPad" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Portrait Compact"
+            "value" : "Number pad"
           }
         }
       }
     },
-    "keypad.layout.fullscreen" : {
+    "keypad.editor.reset" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Full Screen"
-          }
-        }
-      }
-    },
-    "keypad.layout.ngage" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Landscape"
+            "value" : "Reset layout"
           }
         }
       }
@@ -1433,16 +1423,6 @@
         }
       }
     },
-    "settings.input" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Input"
-          }
-        }
-      }
-    },
     "settings.integerScaling" : {
       "localizations" : {
         "en" : {
@@ -1479,16 +1459,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "JIT permission is not active for this process. Enable JIT (debugger or a JIT enabler such as SideStore/StikDebug) and relaunch; otherwise the interpreter is used."
-          }
-        }
-      }
-    },
-    "settings.keypadLayout" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keypad layout"
           }
         }
       }
@@ -1739,16 +1709,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings"
-          }
-        }
-      }
-    },
-    "settings.virtualKeypad" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Virtual keypad"
           }
         }
       }

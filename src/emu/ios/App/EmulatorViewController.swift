@@ -130,13 +130,13 @@ private final class EKA2L1RenderView: UIView {
         }
     }
 
-    // Region (in this view's coordinates) covered by the virtual keypad
+    // Regions (in this view's coordinates) covered by virtual-keypad elements
     // overlay. The render view fills the whole screen and wins touch
     // hit-testing over the keypad drawn above it — so unless it yields here,
     // every keypad tap is swallowed as a guest pointer touch. Decline touches
-    // inside the keypad region so they reach the keys; keep claiming the
+    // inside a keypad region so they reach the keys; keep claiming the
     // exposed game area so guest touch input still works.
-    var keypadHitRegion: CGRect = .null
+    var keypadHitRegions: [CGRect] = []
 
     override class var layerClass: AnyClass {
         CAEAGLLayer.self
@@ -147,7 +147,7 @@ private final class EKA2L1RenderView: UIView {
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        if keypadHitRegion.contains(point) {
+        if keypadHitRegions.contains(where: { $0.contains(point) }) {
             return nil
         }
         return super.hitTest(point, with: event)
@@ -360,11 +360,11 @@ final class EmulatorViewController: UIViewController {
             }
         }
     }
-    // Forwarded to the render view; see EKA2L1RenderView.keypadHitRegion.
-    var keypadHitRegion: CGRect = .null {
+    // Forwarded to the render view; see EKA2L1RenderView.keypadHitRegions.
+    var keypadHitRegions: [CGRect] = [] {
         didSet {
             if isViewLoaded {
-                gameView.keypadHitRegion = keypadHitRegion
+                gameView.keypadHitRegions = keypadHitRegions
             }
         }
     }
@@ -399,13 +399,25 @@ final class EmulatorViewController: UIViewController {
         let renderView = EKA2L1RenderView(frame: UIScreen.main.bounds)
         renderView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         renderView.anchorsDisplayTop = anchorsDisplayTop
-        renderView.keypadHitRegion = keypadHitRegion
+        renderView.keypadHitRegions = keypadHitRegions
         view = renderView
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+    }
+
+    // The render view owns UIPress handling for the guest. Release that capture
+    // while a host panel is visible so the panel and system presentation can
+    // manage responder handling without also forwarding keys to the guest.
+    func setHardwareKeyboardCaptureEnabled(_ enabled: Bool) {
+        guard isViewLoaded else { return }
+        if enabled {
+            gameView.becomeFirstResponder()
+        } else if gameView.isFirstResponder {
+            gameView.resignFirstResponder()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {

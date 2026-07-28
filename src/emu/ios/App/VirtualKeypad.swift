@@ -1,193 +1,302 @@
 import SwiftUI
 import UIKit
 
-// On-screen control layouts the user can pick between in Settings or from the
-// in-game system menu. Persisted as a raw string under
-// @AppStorage("ios.keypadLayout"); the emulator screen reads the same key to
-// decide which keypad to render. New cases must keep their raw value stable so
-// previously-saved preferences keep resolving.
-enum KeypadLayout: String, CaseIterable, Identifiable {
-    // Classic: soft keys + system/clear keys + d-pad on the left, full numeric
-    // pad on the right. Everything visible at once.
-    case full
-    // Modern compact: d-pad/OK plus the corner keys. A toggle swaps the centre
-    // cluster between the d-pad and a numeric pad.
-    case compact
-    // Landscape, N-Gage QD style: d-pad + left soft key + system key down the
-    // left edge, numeric pad + right soft key + clear key down the right edge,
-    // the game picture centred between them.
-    case ngage
-    // Touch devices (S60v5, e.g. the 5230): the guest UI is driven by touch,
-    // so only the system menu key floats in the bottom-right corner.
-    case fullscreen
+// The keypad now has one user-positionable layout instead of a set of fixed
+// portrait/landscape presets. Positions are normalized so they survive changes
+// in screen size; portrait and landscape use separate stored configurations.
+enum KeypadElement: String, CaseIterable, Hashable {
+    case dpad
+    case leftSoft
+    case rightSoft
+    case numeric
+    case menu
+    case clear
 
-    var id: String { rawValue }
-
-    var displayName: String {
+    var title: String {
         switch self {
-        case .full: return String(localized: "keypad.layout.classic")
-        case .compact: return String(localized: "keypad.layout.compact")
-        case .ngage: return String(localized: "keypad.layout.ngage")
-        case .fullscreen: return String(localized: "keypad.layout.fullscreen")
+        case .dpad: return "D-pad"
+        case .leftSoft: return "LSK"
+        case .rightSoft: return "RSK"
+        case .numeric: return String(localized: "keypad.editor.numberPad")
+        case .menu: return String(localized: "emulator.menu")
+        case .clear: return String(localized: "keypad.accessibility.clear")
         }
     }
 
-    static let storageKey = "ios.keypadLayout"
-    // Touch-driven ROMs (S60v5 / Symbian^3+) keep their own preference: their
-    // guest UI is finger-operated, so they default to the fullscreen layout
-    // while keypad-driven ROMs default to the classic key grid.
-    static let touchStorageKey = "ios.keypadLayout.touch"
-    static let `default` = KeypadLayout.full
-    static let touchDefault = KeypadLayout.fullscreen
+    func size(in canvasSize: CGSize) -> CGSize {
+        // Base both orientations on the display's physical short edge so a
+        // rotation never changes the apparent control size. Cap growth on
+        // large displays so the keypad does not become visually dominant.
+        let shortEdge = min(canvasSize.width, canvasSize.height)
+        let majorWidth = min(180, max(150, (shortEdge - 36) / 2))
+        let scale = majorWidth / 150
 
-    static func resolve(_ raw: String) -> KeypadLayout {
-        // The regression harness launches with `-EKA2L1RegressionMode 1`. Pin
-        // the classic layout when it is set so the script's soft-key assertions
-        // don't depend on the developer's saved preference.
-        if UserDefaults.standard.bool(forKey: "EKA2L1RegressionMode") {
-            return .full
-        }
-        return KeypadLayout(rawValue: raw) ?? .default
-    }
-
-    // Testing/debug launch argument, e.g.
-    //   xcrun simctl launch booted com.eka2l1.emulator -LaunchKeypadLayout ngage
-    // Applied once by the emulator screen as the session's starting layout (a
-    // permanent resolve() override would block switching layouts in-session).
-    static func launchArgumentLayout() -> KeypadLayout? {
-        guard let forced = UserDefaults.standard.string(forKey: "LaunchKeypadLayout") else {
-            return nil
-        }
-        return KeypadLayout(rawValue: forced)
-    }
-
-    // Where EmulatorView pins the keypad overlay. Keypads never resize the
-    // game view; they float above it.
-    var overlayAlignment: Alignment {
         switch self {
-        case .full, .compact: return .bottom
-        case .ngage: return .center
-        case .fullscreen: return .bottomTrailing
+        case .dpad:
+            return CGSize(width: majorWidth - 4, height: majorWidth - 4)
+        case .leftSoft, .rightSoft, .menu, .clear:
+            return CGSize(width: 56 * scale, height: 36 * scale)
+        case .numeric:
+            return CGSize(width: majorWidth, height: majorWidth * 190 / 150)
         }
-    }
-
-    // Bottom-keypad layouts top-align the guest picture so the keys cover
-    // letterbox instead of gameplay. Centred layouts keep the picture centred.
-    var prefersTopAnchoredDisplay: Bool {
-        self == .full || self == .compact
-    }
-
-    // Interface orientations the emulator screen permits while this layout is
-    // active. The keypad layouts are drawn for one fixed orientation and pin
-    // it (classic/compact portrait, N-Gage landscape). The fullscreen (touch)
-    // layout carries no keypad furniture, so it lets the user rotate freely —
-    // a landscape guest such as Angry Birds then fills the screen once the
-    // device is turned sideways instead of sitting letterboxed in portrait.
-    var supportedOrientations: UIInterfaceOrientationMask {
-        switch self {
-        case .full, .compact: return .portrait
-        case .ngage: return .landscape
-        case .fullscreen: return .allButUpsideDown
-        }
-    }
-
-    // True when the layout follows the physical device rather than pinning a
-    // single orientation. Free-rotation layouts must not force a rotation on
-    // entry — they leave the current orientation alone and just widen the
-    // allowed set.
-    var allowsFreeRotation: Bool {
-        self == .fullscreen
     }
 }
 
-// What the keypad's system menu key needs from the hosting screen: the layout
-// selection (EmulatorView owns which preference store backs it) and the
-// actions that operate on the emulator session.
+struct NormalizedKeypadPoint: Codable, Equatable {
+    var x: Double
+    var y: Double
+
+    func point(in size: CGSize) -> CGPoint {
+        CGPoint(x: x * size.width, y: y * size.height)
+    }
+
+    static func make(_ point: CGPoint, in size: CGSize) -> NormalizedKeypadPoint {
+        guard size.width > 0, size.height > 0 else {
+            return NormalizedKeypadPoint(x: 0.5, y: 0.5)
+        }
+        return NormalizedKeypadPoint(
+            x: point.x / size.width,
+            y: point.y / size.height
+        )
+    }
+}
+
+struct KeypadLayoutConfiguration: Codable, Equatable {
+    var dpad: NormalizedKeypadPoint
+    var leftSoft: NormalizedKeypadPoint
+    var rightSoft: NormalizedKeypadPoint
+    var numeric: NormalizedKeypadPoint
+    var menu: NormalizedKeypadPoint
+    var clear: NormalizedKeypadPoint
+
+    func point(for element: KeypadElement, in size: CGSize) -> CGPoint {
+        normalizedPoint(for: element).point(in: size)
+    }
+
+    mutating func setPoint(_ point: CGPoint, for element: KeypadElement, in size: CGSize) {
+        let normalized = NormalizedKeypadPoint.make(point, in: size)
+        switch element {
+        case .dpad: dpad = normalized
+        case .leftSoft: leftSoft = normalized
+        case .rightSoft: rightSoft = normalized
+        case .numeric: numeric = normalized
+        case .menu: menu = normalized
+        case .clear: clear = normalized
+        }
+    }
+
+    func encoded() -> String {
+        guard let data = try? JSONEncoder().encode(self) else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func decoded(
+        _ rawValue: String,
+        defaultFor size: CGSize,
+        safeAreaInsets: EdgeInsets = EdgeInsets()
+    ) -> KeypadLayoutConfiguration {
+        if let data = rawValue.data(using: .utf8),
+           let configuration = try? JSONDecoder().decode(KeypadLayoutConfiguration.self, from: data) {
+            return configuration
+        }
+        return classicDefault(in: size, safeAreaInsets: safeAreaInsets)
+    }
+
+    // The reset layout preserves the familiar bottom-centred arrangement:
+    // d-pad and number pad side by side, with the soft/menu keys around the pad.
+    // A small bottom reserve keeps the controls clear of the editor's slider.
+    static func classicDefault(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets = EdgeInsets()
+    ) -> KeypadLayoutConfiguration {
+        let controlSize = CGSize(
+            width: size.width + safeAreaInsets.leading + safeAreaInsets.trailing,
+            height: size.height + safeAreaInsets.top + safeAreaInsets.bottom
+        )
+        let dpadSize = KeypadElement.dpad.size(in: controlSize)
+        let numericSize = KeypadElement.numeric.size(in: controlSize)
+        let softKeySize = KeypadElement.leftSoft.size(in: controlSize)
+        let menuSize = KeypadElement.menu.size(in: controlSize)
+        let clearSize = KeypadElement.clear.size(in: controlSize)
+
+        if size.width > size.height {
+            // N-Gage-style landscape default: navigation in the left hand,
+            // number pad in the right, with the soft keys above each cluster.
+            let fullWidth = size.width + safeAreaInsets.leading + safeAreaInsets.trailing
+            let safeRightEdge = fullWidth - safeAreaInsets.trailing
+            let centerY = safeAreaInsets.top + size.height / 2
+            let dpadCenter = CGPoint(
+                x: safeAreaInsets.leading + 12 + dpadSize.width / 2,
+                y: centerY
+            )
+            let numericCenter = CGPoint(
+                x: safeRightEdge - 12 - numericSize.width / 2,
+                y: centerY
+            )
+            let leftSoft = CGPoint(
+                x: dpadCenter.x,
+                y: dpadCenter.y - dpadSize.height / 2 - 12 - softKeySize.height / 2
+            )
+            let rightSoft = CGPoint(
+                x: numericCenter.x,
+                y: numericCenter.y - numericSize.height / 2 - 12 - softKeySize.height / 2
+            )
+            let menu = CGPoint(
+                x: dpadCenter.x,
+                y: dpadCenter.y + dpadSize.height / 2 + 12 + menuSize.height / 2
+            )
+            let clear = CGPoint(
+                x: numericCenter.x,
+                y: numericCenter.y + numericSize.height / 2 + 12 + clearSize.height / 2
+            )
+
+            return KeypadLayoutConfiguration(
+                dpad: .make(dpadCenter, in: size),
+                leftSoft: .make(leftSoft, in: size),
+                rightSoft: .make(rightSoft, in: size),
+                numeric: .make(numericCenter, in: size),
+                menu: .make(menu, in: size),
+                clear: .make(clear, in: size)
+            )
+        }
+
+        // The d-pad is 4pt narrower than its original slot; put that space
+        // between the two major controls so the outer 12pt margins stay fixed.
+        let gap: CGFloat = 16
+        let totalWidth = dpadSize.width + gap + numericSize.width
+        let leading = max(12, (size.width - totalWidth) / 2)
+        let dpadCenterX = leading + dpadSize.width / 2
+        let numericCenterX = dpadCenterX + dpadSize.width / 2
+            + gap + numericSize.width / 2
+        // GeometryReader reports the safe-area-reduced height here, while the
+        // overlay ignores safe areas. Adding the top inset maps the top of the
+        // bottom safe area into overlay coordinates.
+        let centerY = size.height + safeAreaInsets.top - numericSize.height / 2
+        let cornerOffsetX = dpadSize.width / 2 - softKeySize.width / 2
+        let cornerOffsetY = numericSize.height / 2 - softKeySize.height / 2
+        let leftSoft = CGPoint(x: dpadCenterX - cornerOffsetX, y: centerY - cornerOffsetY)
+        let rightSoft = CGPoint(x: dpadCenterX + cornerOffsetX, y: centerY - cornerOffsetY)
+        let menu = CGPoint(
+            x: dpadCenterX - dpadSize.width / 2 + menuSize.width / 2,
+            y: centerY + numericSize.height / 2 - menuSize.height / 2
+        )
+        let clear = CGPoint(
+            x: dpadCenterX + dpadSize.width / 2 - clearSize.width / 2,
+            y: centerY + numericSize.height / 2 - clearSize.height / 2
+        )
+
+        return KeypadLayoutConfiguration(
+            dpad: .make(CGPoint(x: dpadCenterX, y: centerY), in: size),
+            leftSoft: .make(leftSoft, in: size),
+            rightSoft: .make(rightSoft, in: size),
+            numeric: .make(CGPoint(x: numericCenterX, y: centerY), in: size),
+            menu: .make(menu, in: size),
+            clear: .make(clear, in: size)
+        )
+    }
+
+    private func normalizedPoint(for element: KeypadElement) -> NormalizedKeypadPoint {
+        switch element {
+        case .dpad: return dpad
+        case .leftSoft: return leftSoft
+        case .rightSoft: return rightSoft
+        case .numeric: return numeric
+        case .menu: return menu
+        case .clear: return clear
+        }
+    }
+}
+
+private struct KeypadElementBackdrop: View {
+    let element: KeypadElement
+
+    @ViewBuilder var body: some View {
+        switch element {
+        case .dpad:
+            Circle().fill(.black)
+        case .leftSoft, .rightSoft, .numeric, .menu, .clear:
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.black)
+        }
+    }
+}
+
+enum KeypadDefaults {
+    static let opacityKey = "ios.keypadOpacity"
+    static let opacity = 0.85
+    static let opacityRange: ClosedRange<Double> = 0.1...1.0
+    static let portraitLayoutKey = "ios.keypadPositions.portrait"
+    static let landscapeLayoutKey = "ios.keypadPositions.landscape"
+    static let fullscreenKey = "ios.fullscreenDisplay"
+    static let touchFullscreenKey = "ios.fullscreenDisplay.touch"
+    static let orientationLockKey = "ios.lockGameOrientation"
+
+    // Keep the historical launch argument useful for automated touch tests.
+    // Every former non-fullscreen preset now selects the customizable keypad.
+    static func launchArgumentFullscreen() -> Bool? {
+        guard let value = UserDefaults.standard.string(forKey: "LaunchKeypadLayout") else {
+            return nil
+        }
+        return value == "fullscreen"
+    }
+}
+
+// What the system-menu key needs from the hosting emulator screen.
 struct KeypadMenuActions {
-    var layoutSelection: Binding<String>
-    // Real Window Server screen modes exposed by the mounted device, with the
-    // current per-game selection bound straight through to the emulator.
+    var fullScreen: Binding<Bool>
+    var locksOrientation: Binding<Bool>
+    var editKeypadLayout: () -> Void
     var guestScreenModes: [Int]
     var guestScreenMode: Binding<Int>
-    // Per-game frame-rate cap shown in the Game Settings submenu: 15 / 30 / 60,
-    // or 0 for unlimited.
     var frameLimit: Binding<Int>
-    // Opens the floating opacity slider hosted by EmulatorView. A UIMenu can't
-    // host a live slider, so the menu item just asks the screen to present one.
-    var adjustOpacity: () -> Void
     var saveScreenshot: () -> Void
     var exitGame: () -> Void
 }
 
-// Keypad appearance defaults shared between the layouts and Settings.
-enum KeypadDefaults {
-    static let opacityKey = "ios.keypadOpacity"
-    static let opacity = 0.85
-    // Overlay opacity bounds (fully opaque down to a still-usable minimum, so
-    // the floating menu key can never disappear entirely).
-    static let opacityRange: ClosedRange<Double> = 0.1...1.0
-}
+// MARK: - System menu
 
-// Entry point used by EmulatorView: renders the keypad for the selected layout.
-struct VirtualKeypad: View {
-    let layout: KeypadLayout
-    let actions: KeypadMenuActions
-
-    var body: some View {
-        switch layout {
-        case .full: ClassicKeypad(actions: actions)
-        case .compact: CompactKeypad(actions: actions)
-        case .ngage: NGageKeypad(actions: actions)
-        case .fullscreen: FullscreenKeypad(actions: actions)
-        }
-    }
-}
-
-// MARK: - System menu key
-
-// The "system function" key: opens a native menu with a Keypad Settings and a
-// Game Settings submenu, screenshot and exit. Menu-native controls (Picker) are
-// hosted inline; opacity, which needs a live slider a UIMenu can't host, opens a
-// floating bar owned by EmulatorView instead.
-// Present in every layout so the emulator screen works without a navigation bar.
 struct SystemMenuKey: View {
     let actions: KeypadMenuActions
     var size: CGSize = CGSize(width: 58, height: 38)
 
-    @AppStorage(KeypadDefaults.opacityKey) private var keypadOpacity = KeypadDefaults.opacity
-
     var body: some View {
         Menu {
             Menu {
-                Picker("emulator.menu.keypadLayout", selection: actions.layoutSelection) {
-                    ForEach(KeypadLayout.allCases) { layout in
-                        Text(layout.displayName).tag(layout.rawValue)
+                Toggle("emulator.menu.fullScreen", isOn: actions.fullScreen)
+
+                if !actions.fullScreen.wrappedValue {
+                    Button {
+                        actions.editKeypadLayout()
+                    } label: {
+                        Label("keypad.editor.editLayout", systemImage: "move.3d")
                     }
-                }
-                Divider()
-                Button {
-                    actions.adjustOpacity()
-                } label: {
-                    Label("emulator.menu.opacityValue \(keypadOpacity.formatted(.percent.precision(.fractionLength(0))))",
-                          systemImage: "slider.horizontal.below.rectangle")
                 }
             } label: {
                 Label("emulator.menu.keypadSettings", systemImage: "keyboard")
             }
+
+            Toggle(isOn: actions.locksOrientation) {
+                Label("emulator.menu.lockOrientation", systemImage: "lock.rotation")
+            }
+
             Menu {
                 fpsLimitPicker
+
                 if !actions.guestScreenModes.isEmpty {
                     Divider()
                     guestScreenModePicker
                 }
             } label: {
-                Label("emulator.menu.gameSettings", systemImage: "slider.horizontal.3")
+                Label("emulator.menu.gameSettings",
+                      systemImage: "slider.horizontal.3")
             }
+
             Button {
                 actions.saveScreenshot()
             } label: {
                 Label("emulator.saveScreenshot", systemImage: "camera")
             }
+
             Button(role: .destructive) {
                 actions.exitGame()
             } label: {
@@ -202,10 +311,6 @@ struct SystemMenuKey: View {
         .accessibilityLabel("emulator.menu")
     }
 
-    // 15 / 30 / 60 are numeric units shown verbatim; only "Unlimited" (tag 0,
-    // matching the bridge's unlimited sentinel) is localized. The palette style
-    // renders the options as an inline row inside the menu; it is iOS 17+, so
-    // pre-17 falls back to the default menu picker.
     @ViewBuilder
     private var fpsLimitPicker: some View {
         let picker = Picker("emulator.menu.fpsLimit", selection: actions.frameLimit) {
@@ -236,246 +341,243 @@ struct SystemMenuKey: View {
     }
 }
 
-// MARK: - Classic (original) layout
+// MARK: - Runtime keypad
 
-private struct ClassicKeypad: View {
-    let actions: KeypadMenuActions
+private struct KeypadElementFramesKey: PreferenceKey {
+    static let defaultValue: [KeypadElement: CGRect] = [:]
 
-    // Match the right-hand numeric pad's height (4 rows of 49 + 3 gaps of 10)
-    // so the cluster's top/bottom edges line up with it. The taller cluster
-    // also pushes the corner keys clear of the d-pad, leaving a small vertical
-    // gap instead of touching it.
-    private let clusterSize = CGSize(width: 156, height: 4 * 49 + 3 * 10)
-    private let cornerKeySize = CGSize(width: 52, height: 34)
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            navigationCluster
-            Spacer(minLength: 8)
-            CapsNumericPad()
-        }
-        .frame(maxWidth: .infinity)
-        .keypadSurface()
-    }
-
-    // A large d-pad fills the centre; the four function keys tuck into the
-    // corners, clear of the round pad with a small vertical gap.
-    private var navigationCluster: some View {
-        SlidingDPad(diameter: 148)
-            .frame(width: clusterSize.width, height: clusterSize.height)
-            .overlay(alignment: .topLeading) {
-                SoftKey(side: .left, size: cornerKeySize)
-            }
-            .overlay(alignment: .topTrailing) {
-                SoftKey(side: .right, size: cornerKeySize)
-            }
-            .overlay(alignment: .bottomLeading) {
-                SystemMenuKey(actions: actions, size: cornerKeySize)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                ClearKey(size: cornerKeySize)
-            }
+    static func reduce(value: inout [KeypadElement: CGRect],
+                       nextValue: () -> [KeypadElement: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
-// MARK: - Compact (modern) layout
-
-private struct CompactKeypad: View {
+struct VirtualKeypad: View {
+    let size: CGSize
+    let controlSize: CGSize
+    let safeAreaInsets: EdgeInsets
+    let configuration: KeypadLayoutConfiguration
+    let fullScreen: Bool
     let actions: KeypadMenuActions
-
-    @State private var showNumeric = false
-
-    private let contentHeight: CGFloat = 248
-    private let topRowHeight: CGFloat = 40
-    private let rowSpacing: CGFloat = 8
-    private let cornerKeySize = CGSize(width: 54, height: 40)
-
-    // Height of each number row, sized to exactly fill the space left under the
-    // top row so all four rows reach the bottom of the fixed content height.
-    private var numberKeyHeight: CGFloat {
-        (contentHeight - topRowHeight - 10 - rowSpacing * 3) / 4
-    }
+    let onFramesChange: ([CGRect]) -> Void
 
     var body: some View {
-        Group {
-            if showNumeric {
-                numericMode
-                    .transition(.opacity)
-            } else {
-                directionalMode
-                    .transition(.opacity)
+        ZStack {
+            if !fullScreen {
+                runtimeElement(.dpad) {
+                    SlidingDPad(diameter: KeypadElement.dpad.size(in: controlSize).width)
+                }
+                runtimeElement(.leftSoft) {
+                    SoftKey(side: .left, size: KeypadElement.leftSoft.size(in: controlSize))
+                }
+                runtimeElement(.rightSoft) {
+                    SoftKey(side: .right, size: KeypadElement.rightSoft.size(in: controlSize))
+                }
+                runtimeElement(.numeric) {
+                    CapsNumericPad(size: KeypadElement.numeric.size(in: controlSize))
+                }
+                runtimeElement(.clear) {
+                    ClearKey(size: KeypadElement.clear.size(in: controlSize))
+                }
+            }
+
+            runtimeElement(.menu, usesFullscreenPosition: fullScreen) {
+                SystemMenuKey(actions: actions, size: KeypadElement.menu.size(in: controlSize))
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: contentHeight)
-        .keypadSurface()
-    }
-
-    // Direction-only mode: soft keys pinned to the top corners, a large four-way
-    // pad in the centre, system key / mode toggle in the bottom corners and the
-    // clear key on the trailing edge.
-    private var directionalMode: some View {
-        SlidingDPad(diameter: 188)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topLeading) {
-                SoftKey(side: .left, size: cornerKeySize)
-            }
-            .overlay(alignment: .topTrailing) {
-                SoftKey(side: .right, size: cornerKeySize)
-            }
-            .overlay(alignment: .bottomLeading) {
-                SystemMenuKey(actions: actions, size: cornerKeySize)
-            }
-            .overlay(alignment: .trailing) {
-                ClearKey(size: cornerKeySize)
-            }
-            .overlay(alignment: .bottomTrailing) {
-                modeToggle
-            }
-    }
-
-    // Numeric mode: soft keys plus the centre cluster (system, toggle, clear)
-    // on a top row, then an iOS-dial-style 3x4 pad across the full width.
-    private var numericMode: some View {
-        VStack(spacing: 10) {
-            HStack {
-                SoftKey(side: .left, size: cornerKeySize)
-                Spacer()
-                SystemMenuKey(actions: actions, size: cornerKeySize)
-                modeToggle
-                ClearKey(size: cornerKeySize)
-                Spacer()
-                SoftKey(side: .right, size: cornerKeySize)
-            }
-            .frame(height: topRowHeight)
-            FilledNumericPad(keyHeight: numberKeyHeight, rowSpacing: rowSpacing)
+        .frame(width: size.width, height: size.height)
+        .ignoresSafeArea()
+        .onPreferenceChange(KeypadElementFramesKey.self) { frames in
+            onFramesChange(Array(frames.values))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var modeToggle: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.easeInOut(duration: 0.18)) {
-                showNumeric.toggle()
-            }
-        } label: {
-            Image(systemName: showNumeric ? "dpad.fill" : "square.grid.3x3.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 46, height: 40)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(.white.opacity(0.13))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(.white.opacity(0.16), lineWidth: 1)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private func position(for element: KeypadElement, usesFullscreenPosition: Bool) -> CGPoint {
+        if usesFullscreenPosition {
+            let menuSize = KeypadElement.menu.size(in: controlSize)
+            return CGPoint(
+                x: controlSize.width - safeAreaInsets.trailing - menuSize.width / 2 - 10,
+                y: controlSize.height - safeAreaInsets.bottom - menuSize.height / 2 - 10
+            )
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(showNumeric ? "keypad.accessibility.toDirectionPad" : "keypad.accessibility.toNumberPad"))
+        return configuration.point(for: element, in: size)
     }
 
-}
-
-// MARK: - N-Gage QD style landscape layout
-
-// Whole-screen landscape overlay: the game picture stays centred, the left
-// edge carries LSK / d-pad / system key and the right edge RSK / numeric pad /
-// clear key — mirroring how an N-Gage QD sits in the hands.
-private struct NGageKeypad: View {
-    let actions: KeypadMenuActions
-
-    private let edgeKeySize = CGSize(width: 64, height: 40)
-    private let padColumnWidth: CGFloat = 178
-
-    var body: some View {
-        HStack {
-            VStack(spacing: 12) {
-                SoftKey(side: .left, size: edgeKeySize)
-                Spacer(minLength: 8)
-                SlidingDPad(diameter: 182)
-                Spacer(minLength: 8)
-                SystemMenuKey(actions: actions, size: edgeKeySize)
-            }
-            .frame(width: 190)
-            Spacer(minLength: 0)
-            VStack(spacing: 12) {
-                SoftKey(side: .right, size: edgeKeySize)
-                Spacer(minLength: 8)
-                FilledNumericPad(keyHeight: 42, rowSpacing: 6)
-                    .frame(width: padColumnWidth)
-                Spacer(minLength: 8)
-                ClearKey(size: edgeKeySize)
-            }
-            .frame(width: 190)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func runtimeElement<Content: View>(
+        _ element: KeypadElement,
+        usesFullscreenPosition: Bool = false,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let elementSize = element.size(in: controlSize)
+        return content()
+            .frame(width: elementSize.width, height: elementSize.height)
+            .background(KeypadElementBackdrop(element: element))
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: KeypadElementFramesKey.self,
+                        value: [element: proxy.frame(in: .global)]
+                    )
+                }
+            )
+            .position(position(for: element, usesFullscreenPosition: usesFullscreenPosition))
     }
 }
 
-// MARK: - Fullscreen (touch devices) layout
+// MARK: - Layout editor
 
-// S60v5-class devices are driven through the touch screen itself; only the
-// system menu key floats in the corner so the screen stays clear.
-private struct FullscreenKeypad: View {
-    let actions: KeypadMenuActions
-
-    var body: some View {
-        SystemMenuKey(actions: actions, size: CGSize(width: 46, height: 40))
-    }
-}
-
-// MARK: - Floating opacity slider
-
-// Horizontal bar EmulatorView floats at the bottom-centre while the user tunes
-// the keypad opacity. The slider drives the shared opacity preference directly,
-// so the keypad fades live as it moves; the circular checkmark dismisses it.
-struct OpacitySliderBar: View {
+struct KeypadLayoutEditor: View {
+    let size: CGSize
+    let controlSize: CGSize
+    let safeAreaInsets: EdgeInsets
+    @Binding var configuration: KeypadLayoutConfiguration
     @Binding var opacity: Double
+    let actions: KeypadMenuActions
+    let onReset: () -> Void
     let onDone: () -> Void
 
+    @State private var dragStarts: [KeypadElement: CGPoint] = [:]
+
     var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "keyboard")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
+        ZStack {
+            Color.black.opacity(0.28)
+                .contentShape(Rectangle())
+
+            ForEach(KeypadElement.allCases, id: \.self) { element in
+                draggableElement(element)
+            }
+
+            VStack(spacing: 8) {
+                editorHeader
+                opacityBar
+                    .frame(maxWidth: size.width > size.height ? 300 : .infinity)
+            }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.leading, max(14, safeAreaInsets.leading + 10))
+                .padding(.trailing, max(14, safeAreaInsets.trailing + 10))
+                .padding(.top, max(12, safeAreaInsets.top + 8))
+        }
+        .frame(width: size.width, height: size.height)
+        .ignoresSafeArea()
+    }
+
+    private var editorHeader: some View {
+        HStack(spacing: 12) {
+            editorButton(symbol: "arrow.counterclockwise", label: "keypad.editor.reset") {
+                onReset()
+            }
+
+            Text("keypad.editor.hint")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(.black.opacity(0.68), in: Capsule())
+                .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
+
+            editorButton(symbol: "checkmark", label: "common.done") {
+                onDone()
+            }
+        }
+    }
+
+    private var opacityBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "circle.lefthalf.filled")
+                .foregroundStyle(.white.opacity(0.8))
             Slider(value: $opacity, in: KeypadDefaults.opacityRange)
                 .tint(.white)
-                .frame(minWidth: 180)
             Text(opacity.formatted(.percent.precision(.fractionLength(0))))
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(width: 42, alignment: .trailing)
-            doneButton
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .frame(height: 50)
         .background(.black.opacity(0.72), in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
         .accessibilityLabel("settings.keypadOpacity")
     }
 
-    // Circular checkmark. .circle button-border shape is iOS 17+, so pre-17
-    // falls back to the capsule shape available since iOS 15.
+    private func draggableElement(_ element: KeypadElement) -> some View {
+        let elementSize = element.size(in: controlSize)
+        return ZStack {
+            KeypadElementBackdrop(element: element)
+
+            elementContent(element)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            RoundedRectangle(cornerRadius: element == .dpad ? 28 : 14, style: .continuous)
+                .stroke(
+                    .white.opacity(0.9),
+                    style: StrokeStyle(lineWidth: 2, dash: [7, 5])
+                )
+        }
+        .frame(width: elementSize.width, height: elementSize.height)
+        .opacity(opacity)
+        .contentShape(Rectangle())
+        .position(configuration.point(for: element, in: size))
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    let start = dragStarts[element]
+                        ?? configuration.point(for: element, in: size)
+                    dragStarts[element] = start
+                    let proposed = CGPoint(
+                        x: start.x + value.translation.width,
+                        y: start.y + value.translation.height
+                    )
+                    configuration.setPoint(
+                        proposed,
+                        for: element,
+                        in: size
+                    )
+                }
+                .onEnded { _ in
+                    dragStarts[element] = nil
+                }
+        )
+        .accessibilityLabel(Text(verbatim: element.title))
+        .accessibilityHint("keypad.editor.dragHint")
+        .accessibilityElement(children: .ignore)
+    }
+
     @ViewBuilder
-    private var doneButton: some View {
-        let button = Button {
-            onDone()
-        } label: {
-            Image(systemName: "checkmark")
-                .font(.system(size: 15, weight: .bold))
+    private func elementContent(_ element: KeypadElement) -> some View {
+        let elementSize = element.size(in: controlSize)
+        switch element {
+        case .dpad:
+            SlidingDPad(diameter: elementSize.width)
+        case .leftSoft:
+            SoftKey(side: .left, size: elementSize)
+        case .rightSoft:
+            SoftKey(side: .right, size: elementSize)
+        case .numeric:
+            CapsNumericPad(size: elementSize)
+        case .menu:
+            SystemMenuKey(actions: actions, size: elementSize)
+        case .clear:
+            ClearKey(size: elementSize)
         }
-        .buttonStyle(.borderedProminent)
-        .accessibilityLabel("common.done")
-        if #available(iOS 17, *) {
-            button.buttonBorderShape(.circle)
-        } else {
-            button.buttonBorderShape(.capsule)
+    }
+
+    private func editorButton(
+        symbol: String,
+        label: LocalizedStringKey,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.72), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.18), lineWidth: 1))
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }

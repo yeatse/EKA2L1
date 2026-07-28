@@ -8,9 +8,11 @@ import UIKit
 struct EmulatorView: View {
     let uid: UInt32
 
-    @AppStorage("ios.showVirtualKeypad") private var showVirtualKeypad = true
-    @AppStorage(KeypadLayout.storageKey) private var keypadLayoutRaw = KeypadLayout.default.rawValue
-    @AppStorage(KeypadLayout.touchStorageKey) private var touchKeypadLayoutRaw = KeypadLayout.touchDefault.rawValue
+    @AppStorage(KeypadDefaults.fullscreenKey) private var fullscreenDisplay = false
+    @AppStorage(KeypadDefaults.touchFullscreenKey) private var touchFullscreenDisplay = true
+    @AppStorage(KeypadDefaults.orientationLockKey) private var lockGameOrientation = false
+    @AppStorage(KeypadDefaults.portraitLayoutKey) private var portraitKeypadLayout = ""
+    @AppStorage(KeypadDefaults.landscapeLayoutKey) private var landscapeKeypadLayout = ""
     @AppStorage(KeypadDefaults.opacityKey) private var keypadOpacity = KeypadDefaults.opacity
     @AppStorage("ios.showFPSOverlay") private var showFPSOverlay = true
     @AppStorage("ios.fpsOverlayX") private var fpsOverlayX = -1.0
@@ -31,34 +33,47 @@ struct EmulatorView: View {
     // Whether the booted ROM is touch-driven (S60v5 / Symbian^3+); those use a
     // separate layout preference that defaults to the fullscreen layout.
     @State private var isTouchDevice = false
-    // Screen-space frame of the keypad overlay, handed to the render view so it
-    // yields touches there to the keys drawn above it.
-    @State private var keypadFrame: CGRect = .null
-    // Whether the floating opacity slider is presented (opened from the system
-    // menu's Keypad Settings). Lives here so the bar can sit at the screen's
-    // bottom centre, outside the keypad's own opacity fade.
-    @State private var showOpacitySlider = false
-
+    // Individual screen-space keypad frames. Keeping them separate lets guest
+    // touch input continue in the empty space between customized controls.
+    @State private var keypadHitRegions: [CGRect] = []
+    @State private var screenSize: CGSize = .zero
+    @State private var screenSafeAreaInsets = EdgeInsets()
+    @State private var isEditingKeypad = false
+    @State private var editingLandscape = false
+    @State private var editingKeypadLayout: KeypadLayoutConfiguration?
+    @State private var launchFullscreenOverride: Bool?
     // The -LaunchKeypadLayout testing argument seeds the layout only for the
-    // first emulator screen of the process; later screens use the stored pick.
+    // first emulator screen of the process; later screens use stored settings.
     @MainActor private static var launchLayoutApplied = false
 
-    private var keypadLayout: KeypadLayout {
-        KeypadLayout.resolve(isTouchDevice ? touchKeypadLayoutRaw : keypadLayoutRaw)
+    private var isFullscreen: Bool {
+        if UserDefaults.standard.bool(forKey: "EKA2L1RegressionMode") {
+            return false
+        }
+        return launchFullscreenOverride
+            ?? (isTouchDevice ? touchFullscreenDisplay : fullscreenDisplay)
     }
 
-    // Menu layout picks go to whichever preference backs the current ROM class,
-    // and re-show a hidden keypad — the pick expresses "I want this keypad now".
-    private var layoutSelection: Binding<String> {
+    private var fullscreenSelection: Binding<Bool> {
         Binding(
-            get: { keypadLayout.rawValue },
-            set: { raw in
+            get: { isFullscreen },
+            set: { value in
+                launchFullscreenOverride = nil
                 if isTouchDevice {
-                    touchKeypadLayoutRaw = raw
+                    touchFullscreenDisplay = value
                 } else {
-                    keypadLayoutRaw = raw
+                    fullscreenDisplay = value
                 }
-                showVirtualKeypad = true
+            }
+        )
+    }
+
+    private var orientationLockSelection: Binding<Bool> {
+        Binding(
+            get: { lockGameOrientation },
+            set: { value in
+                lockGameOrientation = value
+                DisplayOrientation.apply(isLocked: value)
             }
         )
     }
@@ -93,13 +108,12 @@ struct EmulatorView: View {
 
     private var menuActions: KeypadMenuActions {
         KeypadMenuActions(
-            layoutSelection: layoutSelection,
+            fullScreen: fullscreenSelection,
+            locksOrientation: orientationLockSelection,
+            editKeypadLayout: { beginEditingKeypadLayout() },
             guestScreenModes: guestScreenModes,
             guestScreenMode: guestScreenModeSelection,
             frameLimit: frameLimitSelection,
-            adjustOpacity: {
-                withAnimation(.easeInOut(duration: 0.22)) { showOpacitySlider = true }
-            },
             saveScreenshot: { saveScreenshot() },
             exitGame: {
                 EKA2L1Bridge.shared.closeRunningApp()
@@ -114,8 +128,10 @@ struct EmulatorView: View {
                 EmulatorControllerView(
                     uid: uid,
                     host: hostProxy,
-                    anchorsDisplayTop: keypadLayout.prefersTopAnchoredDisplay && showVirtualKeypad,
-                    keypadHitRegion: keypadFrame,
+                    anchorsDisplayTop: !isFullscreen,
+                    keypadHitRegions: isEditingKeypad
+                        ? [CGRect(origin: .zero, size: proxy.size)]
+                        : keypadHitRegions,
                     onAppLaunch: { success in
                         guard success else { return }
                         refreshGuestScreenModes()
@@ -130,7 +146,7 @@ struct EmulatorView: View {
                 )
                 .ignoresSafeArea()
 
-                if showFPSOverlay {
+                if showFPSOverlay && !isEditingKeypad {
                     FPSOverlay()
                         .position(
                             x: overlayPosition(in: proxy.size).x,
@@ -164,24 +180,19 @@ struct EmulatorView: View {
                         .accessibilityLabel(Text("emulator.fps.accessibility"))
                 }
             }
-            .overlay(alignment: keypadOverlayAlignment) {
-                keypadOverlay
-                    .background(
-                        GeometryReader { keypadProxy in
-                            Color.clear
-                                .onAppear { updateKeypadFrame(keypadProxy.frame(in: .global)) }
-                                .onChange(of: keypadProxy.frame(in: .global)) { updateKeypadFrame($0) }
-                        }
-                    )
+            .overlay {
+                keypadOverlay(in: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
             }
-            .overlay(alignment: .bottom) {
-                if showOpacitySlider {
-                    OpacitySliderBar(opacity: $keypadOpacity) {
-                        withAnimation(.easeInOut(duration: 0.22)) { showOpacitySlider = false }
-                    }
-                    .padding(12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+            .onAppear {
+                screenSize = proxy.size
+                screenSafeAreaInsets = proxy.safeAreaInsets
+            }
+            .onChange(of: proxy.size) {
+                screenSize = $0
+                screenSafeAreaInsets = proxy.safeAreaInsets
+            }
+            .onChange(of: proxy.safeAreaInsets) {
+                screenSafeAreaInsets = $0
             }
         }
         .background(Color.black.ignoresSafeArea())
@@ -194,14 +205,12 @@ struct EmulatorView: View {
             UIApplication.shared.isIdleTimerDisabled = true
             isTouchDevice = EKA2L1Bridge.shared.currentDeviceIsTouchScreen()
             frameLimit = EKA2L1Bridge.shared.guestFrameLimit(appUID: uid)
-            if !Self.launchLayoutApplied, let forced = KeypadLayout.launchArgumentLayout() {
+            if !Self.launchLayoutApplied,
+               let forced = KeypadDefaults.launchArgumentFullscreen() {
                 Self.launchLayoutApplied = true
-                layoutSelection.wrappedValue = forced.rawValue
+                launchFullscreenOverride = forced
             }
-            DisplayOrientation.apply(keypadLayout)
-        }
-        .onChange(of: keypadLayout) { newLayout in
-            DisplayOrientation.apply(newLayout)
+            DisplayOrientation.apply(isLocked: lockGameOrientation)
         }
         .onDisappear {
             // The emulator screen was popped/dismissed (exit menu item or a
@@ -214,6 +223,7 @@ struct EmulatorView: View {
             EKA2L1Bridge.shared.setAppExitHandler(nil)
             EKA2L1Bridge.shared.closeRunningApp()
             UIApplication.shared.isIdleTimerDisabled = wasIdleTimerDisabled
+            isEditingKeypad = false
             DisplayOrientation.unlock()
         }
         .alert("emulator.guestFatal", isPresented: Binding(
@@ -247,39 +257,114 @@ struct EmulatorView: View {
 
     // MARK: Keypad overlay
 
-    private var keypadOverlayAlignment: Alignment {
-        showVirtualKeypad ? keypadLayout.overlayAlignment : .bottomTrailing
-    }
-
-    // The overlay (full keypad, or just the floating system-menu key when the
-    // keypad is hidden) always intercepts touches within its own frame; the
-    // exposed game area stays available for guest touch. .global matches the
-    // render view's coordinate space (it fills the window).
-    private func updateKeypadFrame(_ frame: CGRect) {
-        if frame != keypadFrame {
-            keypadFrame = frame
-        }
-    }
-
     private func refreshGuestScreenModes() {
         let snapshot = EKA2L1Bridge.shared.guestScreenModeSnapshot()
         guestScreenModes = snapshot.modes
         guestScreenMode = snapshot.current
     }
 
-    @ViewBuilder private var keypadOverlay: some View {
-        Group {
-            if showVirtualKeypad {
-                VirtualKeypad(layout: keypadLayout, actions: menuActions)
-                    .padding(keypadLayout == .ngage ? 0 : 10)
-            } else {
-                // Keypad hidden: keep the system menu key so the screen stays
-                // operable without the navigation bar.
-                SystemMenuKey(actions: menuActions, size: CGSize(width: 46, height: 40))
-                    .padding(10)
-            }
+    @ViewBuilder private func keypadOverlay(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> some View {
+        let controlSize = CGSize(
+            width: size.width + safeAreaInsets.leading + safeAreaInsets.trailing,
+            height: size.height + safeAreaInsets.top + safeAreaInsets.bottom
+        )
+
+        if isEditingKeypad {
+            KeypadLayoutEditor(
+                size: size,
+                controlSize: controlSize,
+                safeAreaInsets: safeAreaInsets,
+                configuration: editingLayoutBinding(
+                    in: size,
+                    safeAreaInsets: safeAreaInsets
+                ),
+                opacity: $keypadOpacity,
+                actions: menuActions,
+                onReset: {
+                    editingKeypadLayout = .classicDefault(
+                        in: size,
+                        safeAreaInsets: safeAreaInsets
+                    )
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                },
+                onDone: finishEditingKeypadLayout
+            )
+        } else {
+            VirtualKeypad(
+                size: size,
+                controlSize: controlSize,
+                safeAreaInsets: safeAreaInsets,
+                configuration: keypadConfiguration(
+                    in: size,
+                    safeAreaInsets: safeAreaInsets
+                ),
+                fullScreen: isFullscreen,
+                actions: menuActions,
+                onFramesChange: { frames in
+                    if frames != keypadHitRegions {
+                        keypadHitRegions = frames
+                    }
+                }
+            )
+            .opacity(keypadOpacity)
         }
-        .opacity(keypadOpacity)
+    }
+
+    private func keypadConfiguration(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> KeypadLayoutConfiguration {
+        let rawValue = size.width > size.height ? landscapeKeypadLayout : portraitKeypadLayout
+        return .decoded(
+            rawValue,
+            defaultFor: size,
+            safeAreaInsets: safeAreaInsets
+        )
+    }
+
+    private func editingLayoutBinding(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) -> Binding<KeypadLayoutConfiguration> {
+        Binding(
+            get: {
+                editingKeypadLayout ?? keypadConfiguration(
+                    in: size,
+                    safeAreaInsets: safeAreaInsets
+                )
+            },
+            set: { editingKeypadLayout = $0 }
+        )
+    }
+
+    private func beginEditingKeypadLayout() {
+        let size = screenSize
+        guard size.width > 0, size.height > 0 else { return }
+        editingLandscape = size.width > size.height
+        editingKeypadLayout = keypadConfiguration(
+            in: size,
+            safeAreaInsets: screenSafeAreaInsets
+        )
+        isEditingKeypad = true
+        hostProxy.viewController?.setHardwareKeyboardCaptureEnabled(false)
+        DisplayOrientation.lockCurrent()
+    }
+
+    private func finishEditingKeypadLayout() {
+        guard let configuration = editingKeypadLayout else { return }
+        if editingLandscape {
+            landscapeKeypadLayout = configuration.encoded()
+        } else {
+            portraitKeypadLayout = configuration.encoded()
+        }
+        editingKeypadLayout = nil
+        isEditingKeypad = false
+        keypadHitRegions = []
+        hostProxy.viewController?.setHardwareKeyboardCaptureEnabled(true)
+        DisplayOrientation.apply(isLocked: lockGameOrientation)
     }
 
     // MARK: Actions
@@ -331,10 +416,10 @@ struct EmulatorView: View {
 
 // MARK: - Orientation
 
-// The interface orientation is pinned to whatever the active keypad layout
-// wants (N-Gage → landscape, everything else → portrait) and locked there, so
-// a physical device rotation can't change it. `AppOrientationDelegate` reads
-// this mask from the (nonisolated) UIKit callback, hence the plain global.
+// The emulator permits every orientation by default. The in-game switch can
+// narrow this to the exact current orientation (including left-vs-right
+// landscape). `AppOrientationDelegate` reads this mask from UIKit's
+// nonisolated callback, hence the plain global.
 nonisolated(unsafe) var lockedInterfaceOrientationMask: UIInterfaceOrientationMask = .portrait
 
 // SwiftUI hosts every screen in system UIHostingControllers we can't subclass,
@@ -367,18 +452,18 @@ nonisolated(unsafe) var lockedInterfaceOrientationMask: UIInterfaceOrientationMa
 // keypad).
 @MainActor
 enum DisplayOrientation {
-    // Apply a layout's permitted orientations. A pinned layout (classic/compact
-    // portrait, N-Gage landscape) rotates to its orientation immediately; the
-    // fullscreen touch layout widens the allowed set and follows the physical
-    // device, so the user can turn a landscape guest sideways to fill the screen.
-    static func apply(_ layout: KeypadLayout) {
-        lockedInterfaceOrientationMask = layout.supportedOrientations
+    static func apply(isLocked: Bool) {
+        lockedInterfaceOrientationMask = isLocked ? currentOrientationMask : .all
         routeOrientationThroughLiveControllers(from: activeScene?.keyWindow?.rootViewController)
         rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        // A free-rotation layout keeps the current orientation and lets the user
-        // turn the device; a pinned layout rotates to its orientation now.
-        guard !layout.allowsFreeRotation else { return }
-        request(landscape: layout.supportedOrientations.contains(.landscape))
+    }
+
+    // Layout editing is tied to one orientation, so freeze the current screen
+    // for the short lifetime of the editor without changing the user's switch.
+    static func lockCurrent() {
+        lockedInterfaceOrientationMask = currentOrientationMask
+        routeOrientationThroughLiveControllers(from: activeScene?.keyWindow?.rootViewController)
+        rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 
     // Release back to portrait when leaving the emulator (home screen is
@@ -411,6 +496,19 @@ enum DisplayOrientation {
 
     private static var rootViewController: UIViewController? {
         activeScene?.keyWindow?.rootViewController
+    }
+
+    private static var currentOrientationMask: UIInterfaceOrientationMask {
+        guard let orientation = activeScene?.interfaceOrientation else {
+            return .portrait
+        }
+        switch orientation {
+        case .portrait: return .portrait
+        case .portraitUpsideDown: return .portraitUpsideDown
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        default: return .portrait
+        }
     }
 }
 
@@ -466,9 +564,9 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
     let uid: UInt32
     let host: EmulatorHostProxy
     let anchorsDisplayTop: Bool
-    // Screen-space region covered by the keypad overlay; the render view yields
+    // Screen-space regions covered by keypad elements; the render view yields
     // touches there so the keys (drawn above it) receive them.
-    let keypadHitRegion: CGRect
+    let keypadHitRegions: [CGRect]
     let onAppLaunch: (Bool) -> Void
     let onAppExit: (String?) -> Void
 
@@ -477,7 +575,7 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
         controller.onAppLaunch = onAppLaunch
         controller.onAppExit = onAppExit
         controller.anchorsDisplayTop = anchorsDisplayTop
-        controller.keypadHitRegion = keypadHitRegion
+        controller.keypadHitRegions = keypadHitRegions
         host.viewController = controller
         return controller
     }
@@ -486,7 +584,7 @@ private struct EmulatorControllerView: UIViewControllerRepresentable {
         uiViewController.onAppLaunch = onAppLaunch
         uiViewController.onAppExit = onAppExit
         uiViewController.anchorsDisplayTop = anchorsDisplayTop
-        uiViewController.keypadHitRegion = keypadHitRegion
+        uiViewController.keypadHitRegions = keypadHitRegions
         host.viewController = uiViewController
     }
 }
