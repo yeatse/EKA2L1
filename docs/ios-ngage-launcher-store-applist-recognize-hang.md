@@ -118,14 +118,55 @@ source byte stride using the same four-byte unpack alignment as the normal GL
 upload path. This is a general fix for every padded 24-bpp FBS bitmap, not a
 Flash-specific exception.
 
+That fixed the diagnostic redraw, but the normal Store path was still black.
+Running the extracted 102,170-byte `frontpage_lg-1.swf` with Ruffle CLI proved
+that the asset itself is complete and renders the expected Store page. The
+remaining failure was in two host contracts exercised while the browser handed
+the local SWF to Flash.
+
+First, Window Server repeatedly returned a zero-area invalid rectangle.
+`region::clip()` had assigned the bounding X coordinate when clipping the top
+edge, and retained rectangles whose intersection had zero width or height.
+When the plug-in resized its child window through zero, that stale rectangle
+kept the window on the redraw queue forever. Region clipping now uses geometric
+intersection, removes empty rectangles, and removes a resized window from the
+redraw queue when no invalid area remains. This follows WSERV's
+`ClipInvalidRegion`/`RemoveFromRedrawQueueIfEmpty` behavior.
+
+Second, the browser copied the SWF through `RFile::Temp`. EKA2L1 returned the
+VFS spelling `c:/system/temp/...` instead of a Symbian path, and file-sharing
+bookkeeping treated slash variants as different keys across open, duplicate,
+rename, and close. Temporary names and sharing keys are now canonicalized to
+Symbian separators, and a subsession rename moves its sharing state to the new
+name.
+
+The decisive defect was the file-server initialization mask:
+
+```cpp
+FLAG_INITED = 0
+```
+
+Because testing a zero mask can never succeed, every new `RFs` connection ran
+`fs_server::init()` again. Initialization deletes stale files from every
+`?:\System\Temp\` directory. Flash creates a new file-server session just after
+the browser has written and closed its renamed temporary SWF, so that repeated
+initialization deleted the live SWF before Flash could open it. Flash reported
+`KErrNotFound`; the browser's error callback synchronously cancelled and
+destroyed its own local-file active object, whose `RunL()` then continued into
+`SetActive()` and panicked with `E32USER-CBase 49`. The apparent active-object
+lifetime bug was therefore secondary.
+
+`FLAG_INITED` is now bit zero (`1 << 0`), so temp-directory cleanup runs once
+when the file server starts, as intended. This is a general file-server fix,
+not an N-Gage exception.
+
 ## Verification
 
-With the Release simulator build on RM-409, four right-direction inputs reach
-the Store tab without an unimplemented AppList opcode, frozen guest, or
-out-of-memory dialog. The local SWF renders the N-Gage Store header and its five
-navigation icons immediately, with correct rows and colors. After waiting 30
-seconds, the left soft key still opens the complete Store Options menu, proving
-that the browser, Flash plug-in, and Launcher event loops remain responsive.
+With the Release simulator build on RM-409, selecting **Get More Games** reaches
+the Store without an unimplemented AppList opcode, frozen guest, out-of-memory
+dialog, or `CBase 49` panic. The local SWF renders **Game of the Week**,
+**Available games**, and **Latest Games**, including the Brain Challenge and
+Dirk Dagger artwork, with correct rows and colors.
 
 The Release iOS regression suite also passes 12/12 both with a fresh install
 and on the immediately repeated run.
