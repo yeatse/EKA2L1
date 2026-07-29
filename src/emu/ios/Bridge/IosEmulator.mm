@@ -28,6 +28,7 @@
 
 #include <sys/stat.h>
 
+#include <common/algorithm.h>
 #include <common/buffer.h>
 #include <common/cvt.h>
 #include <common/fileutils.h>
@@ -798,6 +799,8 @@ namespace eka2l1::ios {
                                fatalDetails:(nullable NSString *)fatalDetails;
 // Synchronous launch body, run off the main thread by launchAppWithUID:completion:.
 - (BOOL)runLaunchAppWithUID:(uint32_t)uid;
+// Uninstall path for apps with no package registry (N-Gage game cards).
+- (BOOL)removeUnpackagedAppWithUID:(uint32_t)uid;
 @end
 
 @implementation EKA2L1Emulator {
@@ -1848,7 +1851,56 @@ namespace eka2l1::ios {
             removed = true;
         }
     }
-    return removed ? YES : NO;
+    if (removed) {
+        return YES;
+    }
+    return [self removeUnpackagedAppWithUID:uid] ? YES : NO;
+}
+
+// Fallback for apps that were never installed through the package manager, the
+// N-Gage game card installer being the usual source: it just copies the card
+// content onto drive E, so there is no SIS registry to uninstall and the
+// package path above finds nothing. Such an app is fully described by its own
+// EKA1 registration folder (<drive>:\System\Apps\<app>\ holds the .aif, .app
+// and the game data), so deleting that folder unregisters it on the next
+// rescan. Shared drops the card makes outside of it (System\Libs,
+// System\Programs) are deliberately left alone — other games link against them.
+- (BOOL)removeUnpackagedAppWithUID:(uint32_t)uid {
+    auto *alserv = eka2l1::ios::get_applist_server(_state->symsys->get_kernel_system());
+    if (!alserv) {
+        return NO;
+    }
+    eka2l1::apa_app_registry *reg = alserv->get_registration(uid);
+    if (!reg || reg->land_drive == drive_z || reg->rsc_path.empty()) {
+        return NO;
+    }
+    const std::u16string rsc_path = reg->rsc_path;
+    const std::u16string app_dir = eka2l1::file_directory(rsc_path, true);
+
+    // Only ever delete a per-app folder. A registration sitting directly in the
+    // Apps root (or anywhere else) is not ours to remove wholesale.
+    const std::string app_dir_utf8 = eka2l1::common::lowercase_string(
+        eka2l1::common::ucs2_to_utf8(app_dir));
+    const std::string apps_root = "\\system\\apps\\";
+    const std::size_t apps_root_pos = app_dir_utf8.find(apps_root);
+    if ((apps_root_pos == std::string::npos)
+        || (app_dir_utf8.find_first_not_of("\\/", apps_root_pos + apps_root.length()) == std::string::npos)) {
+        return NO;
+    }
+
+    auto *io = _state->symsys->get_io_system();
+    std::optional<std::u16string> real_dir = io ? io->get_raw_path(app_dir) : std::nullopt;
+    if (!real_dir || real_dir->empty()) {
+        return NO;
+    }
+    const std::string real_dir_utf8 = eka2l1::common::ucs2_to_utf8(*real_dir);
+    if (!eka2l1::common::exists(real_dir_utf8) || !eka2l1::common::delete_folder(real_dir_utf8)) {
+        return NO;
+    }
+    // Drop the stale registration right away so a launch attempt between here
+    // and the frontend's rescan can't resolve to the deleted app.
+    alserv->delete_registry(rsc_path);
+    return YES;
 }
 
 - (void)attachLayer:(CAEAGLLayer *)layer
