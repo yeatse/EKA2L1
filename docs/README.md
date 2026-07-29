@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-07-30 | [Sky Force Reloaded corrupts the X7 display](./ios-sky-force-reloaded-x7-framebuffer-stride.md) |
 | 2026-07-30 | [Angry Birds Rio's main menu repeatedly starts TZSERVER](./ios-angry-birds-rio-tzserver-retry.md) |
 | 2026-07-29 | [A guest's undefined STRD calls host address 0](./ios-dyncom-null-addressing-mode.md) |
 | 2026-07-29 | [N-Gage Store re-entry jumps to an unmapped function pointer](./ngage-store-codeseg-data-relocation.md) |
