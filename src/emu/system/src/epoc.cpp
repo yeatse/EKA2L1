@@ -138,6 +138,7 @@ namespace eka2l1 {
 
         config::state *conf_;
         config::app_settings *app_settings_;
+        std::string cache_root_;
 
         std::atomic<bool> exit = false;
         std::atomic<bool> paused = false;
@@ -633,6 +634,7 @@ namespace eka2l1 {
         , adriver(param.audio_)
         , conf_(param.conf_)
         , app_settings_(param.settings_)
+        , cache_root_(param.cache_root_)
         , exit(false) {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
@@ -896,7 +898,10 @@ namespace eka2l1 {
         std::string current_dir;
         common::get_current_directory(current_dir);
 
-        const std::string temp_folder = eka2l1::absolute_path("cache/temp/", current_dir);
+        const std::string cache_root = cache_root_.empty()
+            ? eka2l1::absolute_path("cache/", current_dir)
+            : cache_root_;
+        const std::string temp_folder = eka2l1::add_path(cache_root, "temp/");
 
         eka2l1::common::delete_folder(temp_folder);
         eka2l1::common::create_directories(temp_folder);

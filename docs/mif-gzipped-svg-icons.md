@@ -19,8 +19,8 @@ so registration parsing, the `.rsc` and the caption were all fine, and
 That moves the whole question into the icon decoder.
 
 The first useful signal came from the debinarized-SVG cache
-(`data/cache/icons/<firmware>/`): every app whose icon renders has a
-`debinarized_<name>.svg` there, and Worms had none. So the MIF path was being entered
+(`Library/Caches/icons/<firmware>/`): every app whose icon renders has a
+`debinarized_<UID>.svg` there, and Worms had none. So the MIF path was being entered
 and failing, not skipped.
 
 Dumping the MIF by hand explains why:

@@ -35,7 +35,6 @@
 #include <common/language.h>
 #include <common/log.h>
 #include <common/path.h>
-#include <common/pystr.h>
 #include <common/thread.h>
 #include <common/version.h>
 #include <config/app_settings.h>
@@ -224,15 +223,11 @@ namespace eka2l1::ios {
         if (!file_route) return nil;
         eka2l1::common::create_directories(cache_dir);
 
-        const std::string app_name = eka2l1::common::ucs2_to_utf8(
-            reg->mandatory_info.long_caption.to_std_string(nullptr));
-        std::string sanitized = eka2l1::common::pystr(app_name).strip_reserverd().strip().std_str();
-        if (sanitized.empty()) {
-            std::ostringstream uid_name;
-            uid_name << "uid_" << std::hex << std::uppercase << reg->mandatory_info.uid;
-            sanitized = uid_name.str();
-        }
-        const std::string cached_path = cache_dir + "/debinarized_" + sanitized + ".svg";
+        std::ostringstream cached_path_builder;
+        cached_path_builder << cache_dir << "/debinarized_"
+                            << std::hex << std::uppercase << std::setfill('0') << std::setw(8)
+                            << reg->mandatory_info.uid << ".svg";
+        const std::string cached_path = cached_path_builder.str();
         const std::uint64_t mif_last_modified = file_route->last_modify_since_0ad();
 
         std::unique_ptr<lunasvg::Document> document;
@@ -407,6 +402,7 @@ namespace eka2l1::ios {
         config::state conf;
         window_server *winserv = nullptr;
         std::string documents_root;
+        std::string caches_root;
 
         std::atomic<bool> running{false};
         std::atomic<bool> paused{false};
@@ -541,6 +537,7 @@ namespace eka2l1::ios {
         comp.graphics_ = nullptr;
         comp.conf_ = &state->conf;
         comp.settings_ = state->settings.get();
+        comp.cache_root_ = state->caches_root;
         return comp;
     }
 
@@ -923,6 +920,14 @@ namespace eka2l1::ios {
 
     // Build the sandbox layout up front so later steps can rely on it.
     NSFileManager *fm = NSFileManager.defaultManager;
+    NSURL *cachesURL = [fm URLForDirectory:NSCachesDirectory
+                                  inDomain:NSUserDomainMask
+                         appropriateForURL:nil
+                                    create:YES
+                                     error:nil];
+    if (cachesURL) {
+        _state->caches_root = cachesURL.path.UTF8String;
+    }
     // Drive letters mirror Symbian's uppercase convention. iOS app data
     // containers are case-sensitive (despite the host APFS volume being
     // case-insensitive), so rescan_devices()'s "drives/Z/" probe and the
@@ -975,6 +980,9 @@ namespace eka2l1::ios {
     for (NSString *stale in @[@"resources", @"patch"]) {
         [fm removeItemAtPath:[dataRoot stringByAppendingPathComponent:stale] error:nil];
     }
+    // Cache contents are disposable and belong under Library/Caches. Remove
+    // the complete cache tree left in Documents/data by older builds.
+    [fm removeItemAtPath:[dataRoot stringByAppendingPathComponent:@"cache"] error:nil];
 
     chdir(dataRoot.UTF8String);
 
@@ -2518,10 +2526,11 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
     const std::u16string ext = eka2l1::common::lowercase_ucs2_string(
         eka2l1::path_extension(reg->icon_file_path));
 
-    // Key the debinarized-SVG cache by firmware code: the same app UID ships
-    // different icon assets per device (e.g. X7 vs 5320), and the mtime-based
-    // freshness check would otherwise keep serving the previous ROM's icon.
-    std::string cache_dir = eka2l1::add_path(_state->documents_root, "data/cache/icons");
+    // Key the debinarized-SVG cache by firmware code and app UID: the same UID
+    // can ship different assets per device, while different apps may share a
+    // caption. Keep these disposable files in the iOS system cache directory.
+    if (_state->caches_root.empty()) return nil;
+    std::string cache_dir = eka2l1::add_path(_state->caches_root, "icons");
     auto *dvc_mngr = _state->symsys->get_device_manager();
     if (eka2l1::device *crr_dvc = dvc_mngr ? dvc_mngr->get_current() : nullptr) {
         cache_dir = eka2l1::add_path(cache_dir,

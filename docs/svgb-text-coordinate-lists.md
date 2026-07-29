@@ -5,8 +5,8 @@
 `Bloks v1.01(1).sisx` installs cleanly on an N95 (rm-320) — the package registers,
 `applist` finds `Bloks, uid: 0x2004BD3A`, and the app launches — but the home list
 draws the dashed placeholder square instead of an icon. Nothing is logged: the icon
-decoder fails silently, and no `debinarized_Bloks.svg` is left in
-`data/cache/icons/<device>/`, because `decode_mif_icon` deletes a cache file whose
+decoder fails silently, and no `debinarized_2004BD3A.svg` is left in
+`Library/Caches/icons/<device>/`, because `decode_mif_icon` deletes a cache file whose
 conversion didn't produce a loadable document.
 
 ## Narrowing it down
