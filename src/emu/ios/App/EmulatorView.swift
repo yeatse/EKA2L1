@@ -190,9 +190,17 @@ struct EmulatorView: View {
             .onChange(of: proxy.size) {
                 screenSize = $0
                 screenSafeAreaInsets = proxy.safeAreaInsets
+                constrainKeypadLayoutToWindow(
+                    in: $0,
+                    safeAreaInsets: proxy.safeAreaInsets
+                )
             }
             .onChange(of: proxy.safeAreaInsets) {
                 screenSafeAreaInsets = $0
+                constrainKeypadLayoutToWindow(
+                    in: proxy.size,
+                    safeAreaInsets: $0
+                )
             }
         }
         .background(Color.black.ignoresSafeArea())
@@ -365,6 +373,47 @@ struct EmulatorView: View {
         keypadHitRegions = []
         hostProxy.viewController?.setHardwareKeyboardCaptureEnabled(true)
         DisplayOrientation.apply(isLocked: lockGameOrientation)
+    }
+
+    private func constrainKeypadLayoutToWindow(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets
+    ) {
+        guard size.width > 0, size.height > 0 else { return }
+
+        if isEditingKeypad {
+            var configuration = editingKeypadLayout ?? keypadConfiguration(
+                in: size,
+                safeAreaInsets: safeAreaInsets
+            )
+            configuration.constrainElementsToWindow(
+                in: size,
+                safeAreaInsets: safeAreaInsets
+            )
+            editingKeypadLayout = configuration
+            return
+        }
+
+        let isLandscape = size.width > size.height
+        let rawValue = isLandscape ? landscapeKeypadLayout : portraitKeypadLayout
+        var configuration = KeypadLayoutConfiguration.decoded(
+            rawValue,
+            defaultFor: size,
+            safeAreaInsets: safeAreaInsets
+        )
+        configuration.constrainElementsToWindow(
+            in: size,
+            safeAreaInsets: safeAreaInsets
+        )
+        let encoded = configuration.encoded()
+
+        if isLandscape {
+            if encoded != landscapeKeypadLayout {
+                landscapeKeypadLayout = encoded
+            }
+        } else if encoded != portraitKeypadLayout {
+            portraitKeypadLayout = encoded
+        }
     }
 
     // MARK: Actions

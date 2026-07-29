@@ -85,6 +85,36 @@ struct KeypadLayoutConfiguration: Codable, Equatable {
         }
     }
 
+    mutating func constrainElementsToWindow(
+        in size: CGSize,
+        safeAreaInsets: EdgeInsets = EdgeInsets()
+    ) {
+        guard size.width > 0, size.height > 0 else { return }
+
+        let windowSize = CGSize(
+            width: size.width + safeAreaInsets.leading + safeAreaInsets.trailing,
+            height: size.height + safeAreaInsets.top + safeAreaInsets.bottom
+        )
+
+        for element in KeypadElement.allCases {
+            let elementSize = element.size(in: windowSize)
+            let point = point(for: element, in: size)
+            let constrainedPoint = CGPoint(
+                x: constrainedCoordinate(
+                    point.x,
+                    elementLength: elementSize.width,
+                    windowLength: windowSize.width
+                ),
+                y: constrainedCoordinate(
+                    point.y,
+                    elementLength: elementSize.height,
+                    windowLength: windowSize.height
+                )
+            )
+            setPoint(constrainedPoint, for: element, in: size)
+        }
+    }
+
     func encoded() -> String {
         guard let data = try? JSONEncoder().encode(self) else { return "" }
         return String(decoding: data, as: UTF8.self)
@@ -102,9 +132,9 @@ struct KeypadLayoutConfiguration: Codable, Equatable {
         return classicDefault(in: size, safeAreaInsets: safeAreaInsets)
     }
 
-    // The reset layout preserves the familiar bottom-centred arrangement:
-    // d-pad and number pad side by side, with the soft/menu keys around the pad.
-    // A small bottom reserve keeps the controls clear of the editor's slider.
+    // The reset layout preserves the familiar bottom-centred arrangement.
+    // Portrait aligns the tops of the d-pad and number pad, with L/R above and
+    // Menu/Clear filling the shorter d-pad column down to the number-pad bottom.
     static func classicDefault(
         in size: CGSize,
         safeAreaInsets: EdgeInsets = EdgeInsets()
@@ -171,25 +201,33 @@ struct KeypadLayoutConfiguration: Codable, Equatable {
         // GeometryReader reports the safe-area-reduced height here, while the
         // overlay ignores safe areas. Adding the top inset maps the top of the
         // bottom safe area into overlay coordinates.
-        let centerY = size.height + safeAreaInsets.top - numericSize.height / 2
-        let cornerOffsetX = dpadSize.width / 2 - softKeySize.width / 2
-        let cornerOffsetY = numericSize.height / 2 - softKeySize.height / 2
-        let leftSoft = CGPoint(x: dpadCenterX - cornerOffsetX, y: centerY - cornerOffsetY)
-        let rightSoft = CGPoint(x: dpadCenterX + cornerOffsetX, y: centerY - cornerOffsetY)
+        let bottomEdge = size.height + safeAreaInsets.top
+        let topEdge = bottomEdge - numericSize.height
+        let numericCenterY = topEdge + numericSize.height / 2
+        let dpadCenterY = topEdge + dpadSize.height / 2
+        let softCenterY = topEdge - 12 - softKeySize.height / 2
+        let leftSoft = CGPoint(
+            x: dpadCenterX - dpadSize.width / 2 + softKeySize.width / 2,
+            y: softCenterY
+        )
+        let rightSoft = CGPoint(
+            x: numericCenterX + numericSize.width / 2 - softKeySize.width / 2,
+            y: softCenterY
+        )
         let menu = CGPoint(
             x: dpadCenterX - dpadSize.width / 2 + menuSize.width / 2,
-            y: centerY + numericSize.height / 2 - menuSize.height / 2
+            y: bottomEdge - menuSize.height / 2
         )
         let clear = CGPoint(
             x: dpadCenterX + dpadSize.width / 2 - clearSize.width / 2,
-            y: centerY + numericSize.height / 2 - clearSize.height / 2
+            y: bottomEdge - clearSize.height / 2
         )
 
         return KeypadLayoutConfiguration(
-            dpad: .make(CGPoint(x: dpadCenterX, y: centerY), in: size),
+            dpad: .make(CGPoint(x: dpadCenterX, y: dpadCenterY), in: size),
             leftSoft: .make(leftSoft, in: size),
             rightSoft: .make(rightSoft, in: size),
-            numeric: .make(CGPoint(x: numericCenterX, y: centerY), in: size),
+            numeric: .make(CGPoint(x: numericCenterX, y: numericCenterY), in: size),
             menu: .make(menu, in: size),
             clear: .make(clear, in: size)
         )
@@ -204,6 +242,17 @@ struct KeypadLayoutConfiguration: Codable, Equatable {
         case .menu: return menu
         case .clear: return clear
         }
+    }
+
+    private func constrainedCoordinate(
+        _ coordinate: CGFloat,
+        elementLength: CGFloat,
+        windowLength: CGFloat
+    ) -> CGFloat {
+        let minimum = elementLength / 2
+        let maximum = windowLength - elementLength / 2
+        guard minimum <= maximum else { return windowLength / 2 }
+        return min(max(coordinate, minimum), maximum)
     }
 }
 
