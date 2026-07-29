@@ -1195,8 +1195,11 @@ static void LnSWoUB(ImmediateOffset)(ARMul_State *cpu, unsigned int inst, unsign
                 CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 0, 3));                      \
             (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + ls_off_)                    \
                                            : (ls_base_ - ls_off_);                   \
-        } else {                                                                     \
+        } else if (inst_cream->get_addr) {                                           \
             inst_cream->get_addr(cpu, inst_cream->inst, (addr_out));                 \
+        } else {                                                                     \
+            undef_inst = inst_cream->inst;                                           \
+            goto UNDEFINED_ADDRESSING_MODE;                                          \
         }                                                                            \
     } while (0)
 
@@ -1221,8 +1224,11 @@ static void LnSWoUB(ImmediateOffset)(ARMul_State *cpu, unsigned int inst, unsign
                 CHECK_READ_REG15_WA(cpu, BITS(ls_inst_, 0, 3));                      \
             (addr_out) = BIT(ls_inst_, 23) ? (ls_base_ + ls_off_)                    \
                                            : (ls_base_ - ls_off_);                   \
-        } else {                                                                     \
+        } else if (inst_cream->get_addr) {                                           \
             inst_cream->get_addr(cpu, inst_cream->inst, (addr_out));                 \
+        } else {                                                                     \
+            undef_inst = inst_cream->inst;                                           \
+            goto UNDEFINED_ADDRESSING_MODE;                                          \
         }                                                                            \
     } while (0)
 
@@ -2617,6 +2623,7 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 #endif
     arm_inst *inst_base;
     unsigned int addr;
+    unsigned int undef_inst = 0;
 
     std::size_t ptr;
 
@@ -5623,6 +5630,21 @@ YIELD_INST : {
 #include <cpu/dyncom/vfp/vfpinstr.h>
 #undef VFP_INTERPRETER_IMPL
 
+UNDEFINED_ADDRESSING_MODE : {
+    // GetAddressingOp() has no entry for this encoding, so the translator stored
+    // a null addressing function. That means the guest is running an undefined
+    // or unpredictable load/store form (data executed as code, for instance).
+    // Report it as an undefined instruction: calling through the null pointer
+    // would take the host process down instead of the offending guest thread.
+    LOG_ERROR(eka2l1::CPU_DYNCOM, "Undefined load/store addressing mode (instruction 0x{:08X}) at 0x{:08X}",
+        undef_inst, cpu->Reg[15]);
+
+    SAVE_NZCVT;
+    cpu->RaiseException(eka2l1::arm::exception_type_undefined_inst, cpu->Reg[15]);
+    cpu->NumInstrsToExecute = 0;
+
+    return num_instrs;
+}
 END : {
     SAVE_NZCVT;
     cpu->NumInstrsToExecute = 0;
