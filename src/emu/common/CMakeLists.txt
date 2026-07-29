@@ -121,6 +121,10 @@ elseif (EKA2L1_IOS)
     target_link_libraries(common PRIVATE "-framework UIKit" "-framework Foundation")
 endif()
 
+if (APPLE)
+    target_link_libraries(common PRIVATE "-framework CoreFoundation")
+endif()
+
 set(COMMON_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/include")
 file(MAKE_DIRECTORY "${COMMON_GENERATED_INCLUDE_DIR}/common")
 
