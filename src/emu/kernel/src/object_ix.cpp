@@ -137,7 +137,10 @@ namespace eka2l1::kernel {
         if (info.object_ix_index < objects.size()) {
             const object_ix_record &record = objects[info.object_ix_index];
             const std::uint32_t closable_handle = handle & ~0x8000U;
-            if (record.free || (record.associated_handle != closable_handle)) {
+            // EKA1 clients can retain a handle after the emulator has reopened the same
+            // object into that slot with a new instance value. EKA2 relies on the instance
+            // bits to reject stale handles, so keep the stricter check there.
+            if (record.free || (!kern->is_eka1() && (record.associated_handle != closable_handle))) {
                 return nullptr;
             }
 
@@ -156,11 +159,13 @@ namespace eka2l1::kernel {
         if (info.object_ix_index < objects.size()) {
             object_ix_record &record = objects[info.object_ix_index];
 
-            if (record.free || (record.associated_handle != handle) || !record.object) {
+            if (record.free || !record.object
+                || (!kern->is_eka1() && (record.associated_handle != handle))) {
                 return -1;
             }
 
             kernel_obj_ptr obj = record.object;
+            const std::uint32_t associated_handle = record.associated_handle;
             ret_value = obj->decrease_access_count();
             totals--;
 
@@ -169,7 +174,7 @@ namespace eka2l1::kernel {
             record.associated_handle = 0;
 
             // Find the handle in unclosed handle list
-            auto iterator = std::find(handles.begin(), handles.end(), handle);
+            auto iterator = std::find(handles.begin(), handles.end(), associated_handle);
             if (iterator != handles.end()) {
                 handles.erase(iterator);
             }
