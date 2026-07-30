@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-07-30 | [Sky Force stays white on the 6680](./ios-6680-sky-force-window-opcode.md) |
 | 2026-07-30 | [A ScreenPlay stride fix breaks landscape DSA on the 5320](./ios-5320-landscape-dsa-stride-regression.md) |
 | 2026-07-30 | [Talking Tom loses audio and flashes black between actions](./ios-talking-tom-audio-and-frame-composition.md) |
 | 2026-07-30 | [Talking Tom recording corrupts the host heap on iOS](./ios-talking-tom-recording-input-race.md) |
