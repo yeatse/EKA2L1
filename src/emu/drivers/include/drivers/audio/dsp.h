@@ -21,6 +21,7 @@
 
 #include <common/algorithm.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -52,8 +53,8 @@ namespace eka2l1::drivers {
 
     struct dsp_stream {
     protected:
-        std::size_t samples_played_;
-        std::size_t samples_copied_;
+        std::atomic<std::size_t> samples_played_;
+        std::atomic<std::size_t> samples_copied_;
 
         std::uint32_t freq_;
         std::uint32_t channels_;
@@ -72,15 +73,15 @@ namespace eka2l1::drivers {
         explicit dsp_stream();
         virtual ~dsp_stream() = default;
         virtual const std::uint32_t samples_played() const {
-            return static_cast<std::uint32_t>(samples_played_);
+            return static_cast<std::uint32_t>(samples_played_.load(std::memory_order_relaxed));
         }
 
         virtual const std::uint64_t samples_copied() const {
-            return samples_copied_;
+            return samples_copied_.load(std::memory_order_relaxed);
         }
 
         const std::uint64_t bytes_rendered() const {
-            return samples_played_ * channels_ * sizeof(std::uint16_t);
+            return samples_played_.load(std::memory_order_relaxed) * channels_ * sizeof(std::uint16_t);
         }
 
         virtual const four_cc format() const {

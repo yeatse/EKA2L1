@@ -173,7 +173,7 @@ namespace eka2l1::drivers {
 
         std::size_t frame_to_wrote = buffer_.pop(buffer, frame_count * channels_) / channels_;
 
-        samples_copied_ += frame_to_wrote * channels_;
+        samples_copied_.fetch_add(frame_to_wrote * channels_, std::memory_order_relaxed);
 
         std::size_t sample_to_wrote = frame_to_wrote * channels_;
         std::size_t size_to_wrote = frame_to_wrote * channels_ * sizeof(std::int16_t);
@@ -195,7 +195,7 @@ namespace eka2l1::drivers {
             }
         }
 
-        samples_played_ += sample_to_wrote;
+        samples_played_.fetch_add(sample_to_wrote, std::memory_order_relaxed);
         frame_wrote += frame_to_wrote;
 
         if (frame_wrote < frame_count) {
@@ -206,7 +206,7 @@ namespace eka2l1::drivers {
     }
 
     std::uint64_t dsp_output_stream_shared::position() {
-        return samples_played_ * 1000000ULL / freq_;
+        return samples_played_.load(std::memory_order_relaxed) * 1000000ULL / freq_;
     }
 
     std::uint64_t dsp_output_stream_shared::real_time_position() {
@@ -286,11 +286,15 @@ namespace eka2l1::drivers {
         if (stream_ && stream_->is_recording()) {
             bool result = stream_->stop();
 
+            dsp_stream_notification_callback callback;
+            dsp_stream_userdata userdata = nullptr;
             {
                 const std::lock_guard<std::mutex> guard(callback_lock_);
-                if (complete_callback_) {
-                    complete_callback_(complete_userdata_);
-                }
+                callback = complete_callback_;
+                userdata = complete_userdata_;
+            }
+            if (callback) {
+                callback(userdata);
             }
 
             return result;
@@ -310,69 +314,88 @@ namespace eka2l1::drivers {
     }
 
     std::uint64_t dsp_input_stream_shared::position() {
-        return samples_played_ * 1000000ULL / freq_;
+        return samples_played_.load(std::memory_order_relaxed) * 1000000ULL / freq_;
     }
 
     std::size_t dsp_input_stream_shared::record_data_callback(std::int16_t *buffer, std::size_t frames) {
-        if (read_queue_.empty()) {
-            ring_buffer_.push(buffer, frames * channels_);
-            return frames;
-        }
+        input_read_request completed_request{};
+        bool request_completed = false;
 
-        const input_read_request &request = read_queue_.front();
+        {
+            const std::lock_guard<std::mutex> state_guard(input_state_lock_);
+            samples_played_.fetch_add(frames * channels_, std::memory_order_relaxed);
 
-        if (ring_buffer_.size() != 0) {
-            std::uint32_t max_copy = ((read_bytes_ + ring_buffer_.size() * sizeof(std::uint16_t)) >= request.second) ? static_cast<std::uint32_t>(request.second - read_bytes_)
-                : static_cast<std::uint32_t>(ring_buffer_.size() * sizeof(std::uint16_t));
-
-            ring_buffer_.pop(request.first + read_bytes_, max_copy / sizeof(std::uint16_t));
-            read_bytes_ += max_copy;
-        }
-
-        std::size_t bytes_here = frames * channels_ * sizeof(std::int16_t);
-        std::uint32_t bytes_to_copy = 0;
-        std::size_t bytes_left = bytes_here;
-
-        if (read_bytes_ < request.second) {
-            bytes_to_copy = ((read_bytes_ + bytes_here) >= request.second) ? static_cast<std::uint32_t>(request.second - read_bytes_)
-                : static_cast<std::uint32_t>(bytes_here);
-
-            if (bytes_to_copy != 0) {
-                std::memcpy(request.first + read_bytes_, buffer, bytes_to_copy);
+            if (read_queue_.empty()) {
+                ring_buffer_.push(buffer, frames * channels_);
+                return frames;
             }
 
-            bytes_left = bytes_here - bytes_to_copy;
+            const input_read_request &request = read_queue_.front();
+
+            if (ring_buffer_.size() != 0) {
+                const std::uint32_t max_copy = ((read_bytes_ + ring_buffer_.size() * sizeof(std::uint16_t)) >= request.second)
+                    ? static_cast<std::uint32_t>(request.second - read_bytes_)
+                    : static_cast<std::uint32_t>(ring_buffer_.size() * sizeof(std::uint16_t));
+
+                ring_buffer_.pop(request.first + read_bytes_, max_copy / sizeof(std::uint16_t));
+                read_bytes_ += max_copy;
+            }
+
+            const std::size_t bytes_here = frames * channels_ * sizeof(std::int16_t);
+            std::uint32_t bytes_to_copy = 0;
+            std::size_t bytes_left = bytes_here;
+
+            if (read_bytes_ < request.second) {
+                bytes_to_copy = ((read_bytes_ + bytes_here) >= request.second)
+                    ? static_cast<std::uint32_t>(request.second - read_bytes_)
+                    : static_cast<std::uint32_t>(bytes_here);
+
+                if (bytes_to_copy != 0) {
+                    std::memcpy(request.first + read_bytes_, buffer, bytes_to_copy);
+                }
+
+                bytes_left = bytes_here - bytes_to_copy;
+            }
+
+            if (bytes_left > 0) {
+                ring_buffer_.push(buffer + (bytes_to_copy / sizeof(std::int16_t)),
+                    bytes_left / sizeof(std::int16_t));
+            }
+
+            read_bytes_ += bytes_to_copy;
+            if (read_bytes_ >= request.second) {
+                completed_request = request;
+                request_completed = true;
+            }
         }
 
-        if (bytes_left > 0) {
-            ring_buffer_.push(buffer + (bytes_to_copy / sizeof(std::int16_t)), bytes_left / sizeof(std::int16_t)); 
-        }
-
-        if (bytes_to_copy + read_bytes_ >= request.second) {
+        if (request_completed) {
             bool notification_delivered = true;
+            dsp_stream_notification_callback callback;
+            dsp_stream_userdata userdata = nullptr;
             {
                 const std::lock_guard<std::mutex> guard(callback_lock_);
-                if (more_buffer_callback_) {
-                    notification_delivered = more_buffer_callback_(more_buffer_userdata_);
-                }
+                callback = more_buffer_callback_;
+                userdata = more_buffer_userdata_;
+            }
+            if (callback) {
+                notification_delivered = callback(userdata);
             }
 
             if (notification_delivered) {
-                read_bytes_ = 0;
-                read_queue_.pop();
-            } else {
-                // The data is already in the guest buffer. Retain the request
-                // at its completed size so only the notification is retried.
-                read_bytes_ += bytes_to_copy;
+                const std::lock_guard<std::mutex> state_guard(input_state_lock_);
+                if (!read_queue_.empty() && (read_queue_.front() == completed_request)) {
+                    read_bytes_ = 0;
+                    read_queue_.pop();
+                }
             }
-        } else {
-            read_bytes_ += bytes_to_copy;
         }
 
         return frames;
     }
 
     bool dsp_input_stream_shared::read(std::uint8_t *data, const std::uint32_t max_data_size) {
+        const std::lock_guard<std::mutex> state_guard(input_state_lock_);
         read_queue_.push(std::make_pair(data, max_data_size));
         return true;
     }

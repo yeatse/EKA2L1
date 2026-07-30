@@ -46,10 +46,11 @@
 #include <config/config.h>
 
 namespace eka2l1 {
-    static const std::array<std::u16string, 9> RECOG_MIME_TYPES = {
+    static const std::array<std::u16string, 10> RECOG_MIME_TYPES = {
         u"image/png",
         u"image/jpeg",
         u"image/bmp",
+        u"audio/wav",
         u"audio/mpeg",
         u"video/mp4",
         u"text/html",
@@ -1035,6 +1036,13 @@ namespace eka2l1 {
 
         std::uint8_t magic8[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
         stream.read(magic8, 8);
+
+        // RIFF size occupies bytes 4-7, followed by the WAVE form type.
+        if ((memcmp(magic4, "RIFF", 4) == 0) && (memcmp(magic8 + 4, "WAVE", 4) == 0)) {
+            result.type_.type_name_.assign(nullptr, "audio/wav");
+            result.confidence_rating_ = data_recognition_confidence_certain;
+            return result;
+        }
 
         if (memcmp(magic8, "ftypmp42", 8) == 0) {
             result.type_.type_name_.assign(nullptr, "video/mp4");

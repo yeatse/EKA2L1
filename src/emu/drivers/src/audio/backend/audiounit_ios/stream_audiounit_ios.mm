@@ -4,6 +4,7 @@
  */
 
 #import <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
 
 #include <common/log.h>
 #include <drivers/audio/audio.h>
@@ -12,6 +13,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
+#include <vector>
 
 namespace eka2l1::drivers {
     // Forward declaration so the file-local input render callback can ask
@@ -75,7 +78,8 @@ OSStatus input_render_cb(void *inRefCon,
     // EKA2L1's data_callback uses the SAME pointer for input and output, so
     // we render into a scratch we own and pass it through.
     static thread_local std::vector<std::int16_t> scratch;
-    const std::size_t needed = static_cast<std::size_t>(inNumberFrames) * 2; // mono OK too
+    const std::size_t channels = self->channel_count();
+    const std::size_t needed = static_cast<std::size_t>(inNumberFrames) * channels;
 
     AudioUnit unit_handle = eka2l1::drivers::audiounit_ios_stream_handle(self);
     if (!unit_handle) return noErr;
@@ -85,7 +89,7 @@ OSStatus input_render_cb(void *inRefCon,
 
         AudioBufferList list{};
         list.mNumberBuffers = 1;
-        list.mBuffers[0].mNumberChannels = 1;
+        list.mBuffers[0].mNumberChannels = static_cast<UInt32>(channels);
         list.mBuffers[0].mDataByteSize = static_cast<UInt32>(needed * sizeof(std::int16_t));
         list.mBuffers[0].mData = scratch.data();
 
@@ -104,6 +108,11 @@ OSStatus input_render_cb(void *inRefCon,
 
 namespace eka2l1::drivers {
     AudioUnit audiounit_ios_stream_handle(audiounit_ios_stream_base *);
+
+    struct audiounit_ios_input_permission_state {
+        std::mutex mutex;
+        audiounit_ios_input_stream *stream = nullptr;
+    };
 
     audiounit_ios_stream_base::audiounit_ios_stream_base(const std::uint32_t sample_rate,
         const std::uint8_t channels, data_callback callback, bool is_input)
@@ -172,11 +181,25 @@ namespace eka2l1::drivers {
         // recording, leave default (output-only) for playback.
         if (is_input_) {
             UInt32 enableIO = 1;
-            AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO,
+            OSStatus enable_result = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO,
                 kAudioUnitScope_Input, /*inputBus=*/1, &enableIO, sizeof(enableIO));
+            if (enable_result != noErr) {
+                LOG_ERROR(DRIVER_AUD, "AudioUnitSetProperty(EnableIO input) failed: {}",
+                    enable_result);
+                AudioComponentInstanceDispose(unit_);
+                unit_ = nullptr;
+                return false;
+            }
             enableIO = 0;
-            AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO,
+            enable_result = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_EnableIO,
                 kAudioUnitScope_Output, /*outputBus=*/0, &enableIO, sizeof(enableIO));
+            if (enable_result != noErr) {
+                LOG_ERROR(DRIVER_AUD, "AudioUnitSetProperty(DisableIO output) failed: {}",
+                    enable_result);
+                AudioComponentInstanceDispose(unit_);
+                unit_ = nullptr;
+                return false;
+            }
         }
 
         AudioStreamBasicDescription fmt{};
@@ -191,6 +214,7 @@ namespace eka2l1::drivers {
 
         // For output: stream format on bus 0 input scope (data we feed the
         // unit). For input: bus 1 output scope (data we read from the unit).
+        // RemoteIO owns conversion between this client format and hardware.
         AudioUnitElement bus = is_input_ ? 1 : 0;
         AudioUnitScope scope = is_input_ ? kAudioUnitScope_Output : kAudioUnitScope_Input;
         OSStatus r = AudioUnitSetProperty(unit_, kAudioUnitProperty_StreamFormat,
@@ -207,7 +231,7 @@ namespace eka2l1::drivers {
             cb.inputProc = input_render_cb;
             cb.inputProcRefCon = this;
             r = AudioUnitSetProperty(unit_, kAudioOutputUnitProperty_SetInputCallback,
-                kAudioUnitScope_Global, /*bus=*/1, &cb, sizeof(cb));
+                kAudioUnitScope_Global, /*outputBus=*/0, &cb, sizeof(cb));
         } else {
             AURenderCallbackStruct cb{};
             cb.inputProc = output_render_cb;
@@ -347,11 +371,26 @@ namespace eka2l1::drivers {
         const std::uint32_t sample_rate, const std::uint8_t channels, data_callback callback)
         : audio_input_stream(driver, sample_rate, channels)
         , audiounit_ios_stream_base(sample_rate, channels, callback, /*is_input=*/true)
-        , ios_driver_(static_cast<audiounit_ios_audio_driver *>(driver)) {
+        , ios_driver_(static_cast<audiounit_ios_audio_driver *>(driver))
+        , permission_state_(std::make_shared<audiounit_ios_input_permission_state>()) {
+        permission_state_->stream = this;
         ios_driver_->register_stream(this);
     }
 
     audiounit_ios_input_stream::~audiounit_ios_input_stream() {
+        start_requested_.store(false);
+        {
+            const std::lock_guard<std::mutex> guard(permission_state_->mutex);
+            permission_state_->stream = nullptr;
+        }
+        {
+            const std::lock_guard<std::mutex> guard(lifecycle_mutex_);
+            stop_unit();
+            if (input_session_active_) {
+                ios_driver_->deactivate_input_session();
+                input_session_active_ = false;
+            }
+        }
         ios_driver_->unregister_stream(this);
         dispose_unit();
     }
@@ -360,8 +399,82 @@ namespace eka2l1::drivers {
         return driver_ && driver_->suspending();
     }
 
-    bool audiounit_ios_input_stream::start() { return start_unit(); }
-    bool audiounit_ios_input_stream::stop() { return stop_unit(); }
+    bool audiounit_ios_input_stream::start_after_permission_granted() {
+        const std::lock_guard<std::mutex> guard(lifecycle_mutex_);
+        if (!start_requested_.load()) {
+            return true;
+        }
+        if (running_.load()) {
+            return true;
+        }
+
+        if (!input_session_active_ && !ios_driver_->activate_input_session()) {
+            return false;
+        }
+        input_session_active_ = true;
+
+        if (!start_unit()) {
+            ios_driver_->deactivate_input_session();
+            input_session_active_ = false;
+            return false;
+        }
+        return true;
+    }
+
+    bool audiounit_ios_input_stream::start() {
+        start_requested_.store(true);
+
+        switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]) {
+        case AVAuthorizationStatusAuthorized:
+            return start_after_permission_granted();
+
+        case AVAuthorizationStatusNotDetermined: {
+            const std::shared_ptr<audiounit_ios_input_permission_state> state = permission_state_;
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio
+                                    completionHandler:^(BOOL granted) {
+                const std::lock_guard<std::mutex> guard(state->mutex);
+                if (!state->stream) {
+                    return;
+                }
+                if (!granted) {
+                    state->stream->start_requested_.store(false);
+                    LOG_WARN(DRIVER_AUD, "Microphone access was denied");
+                    return;
+                }
+                if (!state->stream->start_after_permission_granted()) {
+                    LOG_ERROR(DRIVER_AUD, "Failed to start audio input after permission grant");
+                }
+            }];
+            return true;
+        }
+
+        case AVAuthorizationStatusDenied:
+        case AVAuthorizationStatusRestricted:
+            start_requested_.store(false);
+            LOG_WARN(DRIVER_AUD, "Microphone access is unavailable");
+            return false;
+
+        default:
+            start_requested_.store(false);
+            LOG_WARN(DRIVER_AUD, "Unknown microphone authorization status");
+            return false;
+        }
+    }
+
+    bool audiounit_ios_input_stream::stop() {
+        start_requested_.store(false);
+        const std::lock_guard<std::mutex> guard(lifecycle_mutex_);
+        const bool stopped = stop_unit();
+        // Route/category changes can alter RemoteIO's hardware side between
+        // recording cycles. Recreate the unit next time instead of retaining
+        // a converter initialized for the previous route.
+        dispose_unit();
+        if (input_session_active_) {
+            ios_driver_->deactivate_input_session();
+            input_session_active_ = false;
+        }
+        return stopped;
+    }
     bool audiounit_ios_input_stream::is_recording() { return running_.load(); }
 
     bool audiounit_ios_input_stream::current_frame_position(std::uint64_t *pos) {

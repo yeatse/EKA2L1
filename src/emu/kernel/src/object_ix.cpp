@@ -135,11 +135,13 @@ namespace eka2l1::kernel {
         handle_inspect_info info = inspect_handle(handle);
 
         if (info.object_ix_index < objects.size()) {
-            if (objects[info.object_ix_index].free) {
+            const object_ix_record &record = objects[info.object_ix_index];
+            const std::uint32_t closable_handle = handle & ~0x8000U;
+            if (record.free || (record.associated_handle != closable_handle)) {
                 return nullptr;
             }
 
-            return objects[info.object_ix_index].object;
+            return record.object;
         }
 
         LOG_WARN(KERNEL, "Can't find object with handle: 0x{:x}", handle);
@@ -152,17 +154,19 @@ namespace eka2l1::kernel {
         int ret_value = 0;
 
         if (info.object_ix_index < objects.size()) {
-            kernel_obj_ptr obj = objects[info.object_ix_index].object;
+            object_ix_record &record = objects[info.object_ix_index];
 
-            if (!obj) {
+            if (record.free || (record.associated_handle != handle) || !record.object) {
                 return -1;
             }
 
+            kernel_obj_ptr obj = record.object;
             ret_value = obj->decrease_access_count();
             totals--;
 
-            objects[info.object_ix_index].free = true;
-            objects[info.object_ix_index].object = nullptr;
+            record.free = true;
+            record.object = nullptr;
+            record.associated_handle = 0;
 
             // Find the handle in unclosed handle list
             auto iterator = std::find(handles.begin(), handles.end(), handle);
@@ -181,8 +185,13 @@ namespace eka2l1::kernel {
             if (index.free == false) {
                 index.object->decrease_access_count();
                 index.free = true;
+                index.object = nullptr;
+                index.associated_handle = 0;
             }
         }
+
+        handles.clear();
+        totals = 0;
     }
 
     bool object_ix::has(kernel_obj_ptr obj) {

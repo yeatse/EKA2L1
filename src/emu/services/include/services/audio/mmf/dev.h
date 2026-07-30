@@ -125,6 +125,7 @@ namespace eka2l1 {
         void copy_fourcc_array(service::ipc_context *ctx);
         void set_config(service::ipc_context *ctx);
         void get_config(service::ipc_context *ctx);
+        void samples_recorded(service::ipc_context *ctx);
         void samples_played(service::ipc_context *ctx);
         void stop(service::ipc_context *ctx);
         void play_init(service::ipc_context *ctx);

@@ -5,6 +5,9 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-07-30 | [Talking Tom loses audio and flashes black between actions](./ios-talking-tom-audio-and-frame-composition.md) |
+| 2026-07-30 | [Talking Tom recording corrupts the host heap on iOS](./ios-talking-tom-recording-input-race.md) |
+| 2026-07-30 | [Talking Tom stays black on X7: incomplete Belle MMF dispatch](./ios-talking-tom-belle-mmf-ipc-stall.md) |
 | 2026-07-30 | [Sky Force Reloaded corrupts the X7 display](./ios-sky-force-reloaded-x7-framebuffer-stride.md) |
 | 2026-07-30 | [Angry Birds Rio's main menu repeatedly starts TZSERVER](./ios-angry-birds-rio-tzserver-retry.md) |
 | 2026-07-29 | [A guest's undefined STRD calls host address 0](./ios-dyncom-null-addressing-mode.md) |

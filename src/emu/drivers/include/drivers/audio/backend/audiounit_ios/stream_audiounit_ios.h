@@ -9,7 +9,8 @@
 
 #include <atomic>
 #include <cstdint>
-#include <vector>
+#include <memory>
+#include <mutex>
 
 #ifdef __OBJC__
 @class NSObject;
@@ -24,6 +25,7 @@ using AudioUnit = struct OpaqueAudioComponentInstance *;
 
 namespace eka2l1::drivers {
     struct audiounit_ios_audio_driver;
+    struct audiounit_ios_input_permission_state;
 
     // Common bits used by output and input AURemoteIO streams.
     struct audiounit_ios_stream_base {
@@ -41,16 +43,15 @@ namespace eka2l1::drivers {
         std::atomic<std::uint64_t> position_frames_{0};
         std::atomic<std::uint64_t> idle_frames_{0};
 
-        // The data_callback contract is signed-16-bit interleaved; the
-        // AURemoteIO buffer points straight at it so no scratch buffer is
-        // needed.
-
     public:
         audiounit_ios_stream_base(const std::uint32_t sample_rate,
             const std::uint8_t channels, data_callback callback, bool is_input);
         virtual ~audiounit_ios_stream_base();
 
         std::size_t call_callback(std::int16_t *buffer, const long frames);
+        std::uint8_t channel_count() const {
+            return channels_;
+        }
 
     protected:
         virtual bool should_idle() = 0;
@@ -113,6 +114,12 @@ namespace eka2l1::drivers {
         bool should_idle() override;
 
     private:
+        bool start_after_permission_granted();
+
         audiounit_ios_audio_driver *ios_driver_;
+        std::shared_ptr<audiounit_ios_input_permission_state> permission_state_;
+        std::atomic<bool> start_requested_{false};
+        std::mutex lifecycle_mutex_;
+        bool input_session_active_ = false;
     };
 }

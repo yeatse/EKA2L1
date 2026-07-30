@@ -197,6 +197,8 @@
     </array>
     <key>NSCameraUsageDescription</key>
     <string>Symbian apps running in the emulator can use the camera for their viewfinder and photo capture features.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Symbian apps running in the emulator can use the microphone for recording and voice features.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Bluetooth Netplay emulates Symbian Bluetooth multiplayer over your local network to find and connect to other EKA2L1 players.</string>
 </dict>

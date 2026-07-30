@@ -93,8 +93,8 @@ namespace eka2l1::drivers {
     }
 
     void dsp_stream::reset_stat() {
-        samples_played_ = 0;
-        samples_copied_ = 0;
+        samples_played_.store(0, std::memory_order_relaxed);
+        samples_copied_.store(0, std::memory_order_relaxed);
     }
 
     void dsp_stream::register_callback(dsp_stream_notification_type nof_type, dsp_stream_notification_callback callback,

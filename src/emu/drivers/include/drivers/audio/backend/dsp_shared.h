@@ -96,7 +96,7 @@ namespace eka2l1::drivers {
         drivers::audio_driver *aud_;
 
         common::ring_buffer<std::uint16_t, RING_BUFFER_MAX_SAMPLE_COUNT> ring_buffer_;
-        std::mutex callback_lock_;
+        std::mutex input_state_lock_;
 
         std::queue<input_read_request> read_queue_;
         std::uint32_t read_bytes_; 

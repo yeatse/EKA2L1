@@ -520,6 +520,9 @@ namespace eka2l1::dispatch {
         eka2l1::vec2 dimension_;
         kernel::uid associated_thread_uid_;
         bool dead_pending_;
+        std::uint32_t presented_full_surface_image_draw_count_;
+        std::uint32_t pending_full_surface_image_draw_count_;
+        bool coverage_drop_deferred_;
 
         float current_scale_;
         egl_context *bounded_context_;

@@ -17,6 +17,7 @@
  *
  */
 
+#include <algorithm>
 #include <limits>
 #include <string.h>
 
@@ -1185,6 +1186,19 @@ namespace gnuVG {
 		auto c2_p = matrix[matrix_select].map_point(Point(x, y + h));
 		auto c3_p = matrix[matrix_select].map_point(Point(x + w, y + h));
 		auto c4_p = matrix[matrix_select].map_point(Point(x + w, y));
+
+		if (current_framebuffer == &screen_buffer) {
+			const VGfloat min_x = std::min({ c1_p.x, c2_p.x, c3_p.x, c4_p.x });
+			const VGfloat max_x = std::max({ c1_p.x, c2_p.x, c3_p.x, c4_p.x });
+			const VGfloat min_y = std::min({ c1_p.y, c2_p.y, c3_p.y, c4_p.y });
+			const VGfloat max_y = std::max({ c1_p.y, c2_p.y, c3_p.y, c4_p.y });
+			constexpr VGfloat coverage_epsilon = 0.5f;
+			if (min_x <= coverage_epsilon && min_y <= coverage_epsilon
+				&& max_x >= buffer_width - coverage_epsilon
+				&& max_y >= buffer_height - coverage_epsilon) {
+				full_surface_image_draw_count++;
+			}
+		}
 
 		Point
 			c1(-1.0, -1.0),

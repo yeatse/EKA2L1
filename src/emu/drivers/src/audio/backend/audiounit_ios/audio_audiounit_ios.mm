@@ -14,28 +14,34 @@
 
 namespace {
 
+bool configure_playback_session() {
+    NSError *error = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    if (![session setCategory:AVAudioSessionCategoryPlayback
+                         mode:AVAudioSessionModeDefault
+                      options:AVAudioSessionCategoryOptionMixWithOthers
+                        error:&error]) {
+        LOG_ERROR(eka2l1::DRIVER_AUD, "AVAudioSession Playback category failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+
+    error = nil;
+    if (![session setActive:YES error:&error]) {
+        LOG_ERROR(eka2l1::DRIVER_AUD, "AVAudioSession playback activation failed: {}",
+            error.localizedDescription.UTF8String ?: "unknown");
+        return false;
+    }
+    return true;
+}
+
 // AVAudioSession is a shared per-process singleton. Configure it on first
 // driver instantiation; nothing tears it down explicitly (services come and
 // go, the session category persists for the app's lifetime).
 void configure_av_audio_session_once() {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        NSError *err = nil;
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-        [session setCategory:AVAudioSessionCategoryPlayback
-                        mode:AVAudioSessionModeDefault
-                     options:AVAudioSessionCategoryOptionMixWithOthers
-                       error:&err];
-        if (err) {
-            LOG_WARN(eka2l1::DRIVER_AUD, "AVAudioSession setCategory failed: {}",
-                err.localizedDescription.UTF8String ?: "unknown");
-            err = nil;
-        }
-        [session setActive:YES error:&err];
-        if (err) {
-            LOG_WARN(eka2l1::DRIVER_AUD, "AVAudioSession setActive failed: {}",
-                err.localizedDescription.UTF8String ?: "unknown");
-        }
+        configure_playback_session();
     });
 }
 
@@ -90,6 +96,51 @@ namespace eka2l1::drivers {
     void audiounit_ios_audio_driver::unregister_stream(audiounit_ios_stream_base *stream) {
         std::lock_guard<std::mutex> guard(streams_mutex_);
         streams_.erase(std::remove(streams_.begin(), streams_.end(), stream), streams_.end());
+    }
+
+    bool audiounit_ios_audio_driver::activate_input_session() {
+        const std::lock_guard<std::mutex> guard(session_mutex_);
+        if (active_input_sessions_ != 0) {
+            ++active_input_sessions_;
+            return true;
+        }
+
+        NSError *error = nil;
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        const AVAudioSessionCategoryOptions options =
+            AVAudioSessionCategoryOptionMixWithOthers |
+            AVAudioSessionCategoryOptionAllowBluetoothHFP |
+            AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+        if (![session setCategory:AVAudioSessionCategoryPlayAndRecord
+                              mode:AVAudioSessionModeDefault
+                           options:options
+                             error:&error]) {
+            LOG_ERROR(DRIVER_AUD, "AVAudioSession PlayAndRecord category failed: {}",
+                error.localizedDescription.UTF8String ?: "unknown");
+            return false;
+        }
+
+        error = nil;
+        if (![session setActive:YES error:&error]) {
+            LOG_ERROR(DRIVER_AUD, "AVAudioSession input activation failed: {}",
+                error.localizedDescription.UTF8String ?: "unknown");
+            configure_playback_session();
+            return false;
+        }
+
+        active_input_sessions_ = 1;
+        return true;
+    }
+
+    void audiounit_ios_audio_driver::deactivate_input_session() {
+        const std::lock_guard<std::mutex> guard(session_mutex_);
+        if (active_input_sessions_ == 0 || --active_input_sessions_ != 0) {
+            return;
+        }
+
+        // Playback is the emulator's steady state. Restoring it after the
+        // final recorder stops follows the user's selected output route.
+        configure_playback_session();
     }
 
     std::unique_ptr<audio_output_stream> audiounit_ios_audio_driver::new_output_stream(

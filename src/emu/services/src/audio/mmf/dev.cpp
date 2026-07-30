@@ -233,7 +233,8 @@ namespace eka2l1 {
         case epoc::mmf_state_playing:
         case epoc::mmf_state_tone_playing:
             stream_ = drivers::new_dsp_out_stream(drv, drivers::dsp_stream_backend::dsp_stream_backend_ffmpeg);
-            stream_->set_properties(8000, 2);
+            stream_->set_properties(freq_enum_to_number(static_cast<epoc::mmf_sample_rate>(conf_.rate_)),
+                static_cast<std::uint8_t>(conf_.channels_));
 
             reinterpret_cast<drivers::dsp_output_stream *>(stream_.get())->volume(volume_ * 10);
 
@@ -269,7 +270,8 @@ namespace eka2l1 {
 
         case epoc::mmf_state_recording:
             stream_ = drivers::new_dsp_in_stream(drv, drivers::dsp_stream_backend::dsp_stream_backend_ffmpeg);
-            stream_->set_properties(8000, 2);
+            stream_->set_properties(freq_enum_to_number(static_cast<epoc::mmf_sample_rate>(conf_.rate_)),
+                static_cast<std::uint8_t>(conf_.channels_));
 
             // Register complete callback
             stream_->register_callback(
@@ -644,6 +646,16 @@ namespace eka2l1 {
     }
 
     void mmf_dev_server_session::samples_played(service::ipc_context *ctx) {
+        ctx->write_data_to_descriptor_argument<std::uint32_t>(2, stream_->samples_played());
+        ctx->complete(epoc::error_none);
+    }
+
+    void mmf_dev_server_session::samples_recorded(service::ipc_context *ctx) {
+        if (!stream_ || !is_recording_stream()) {
+            ctx->complete(epoc::error_not_ready);
+            return;
+        }
+
         ctx->write_data_to_descriptor_argument<std::uint32_t>(2, stream_->samples_played());
         ctx->complete(epoc::error_none);
     }
@@ -1159,16 +1171,56 @@ namespace eka2l1 {
                 set_volume(ctx);
                 break;
 
+            case epoc::mmf_dev_newarch_max_gain:
+                max_gain(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_gain:
+                gain(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_set_gain:
+                set_gain(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_play_balance:
+                play_balance(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_set_play_balance:
+                set_play_balance(ctx);
+                break;
+
             case epoc::mmf_dev_newarch_play_init:
                 play_init(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_record_init:
+                record_init(ctx);
                 break;
 
             case epoc::mmf_dev_newarch_play_data:
                 play_data(ctx);
                 break;
 
+            case epoc::mmf_dev_newarch_record_data:
+                record_data(ctx);
+                break;
+
             case epoc::mmf_dev_newarch_stop:
                 stop(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_set_volume_ramp:
+                set_volume_ramp(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_get_supported_input_data_types:
+                get_supported_input_data_types(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_copy_fourcc_array_data:
+                copy_fourcc_array(ctx);
                 break;
 
             case epoc::mmf_dev_newarch_btbf_data:
@@ -1177,6 +1229,10 @@ namespace eka2l1 {
 
             case epoc::mmf_dev_newarch_samples_played:
                 samples_played(ctx);
+                break;
+
+            case epoc::mmf_dev_newarch_samples_recorded:
+                samples_recorded(ctx);
                 break;
 
             case epoc::mmf_dev_newarch_set_priority_settings:

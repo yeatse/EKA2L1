@@ -49,6 +49,9 @@ namespace eka2l1::dispatch {
         , dimension_(dim)
         , associated_thread_uid_(0)
         , dead_pending_(false)
+        , presented_full_surface_image_draw_count_(0)
+        , pending_full_surface_image_draw_count_(0)
+        , coverage_drop_deferred_(false)
         , current_scale_(1.0f)
         , bounded_context_(nullptr) {
         if (screen) {

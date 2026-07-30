@@ -22,6 +22,8 @@ namespace eka2l1::drivers {
     private:
         std::mutex streams_mutex_;
         std::vector<audiounit_ios_stream_base *> streams_;
+        std::mutex session_mutex_;
+        std::size_t active_input_sessions_ = 0;
 
     public:
         explicit audiounit_ios_audio_driver(const std::uint32_t initial_master_volume = 100,
@@ -41,5 +43,8 @@ namespace eka2l1::drivers {
 
         void register_stream(audiounit_ios_stream_base *stream);
         void unregister_stream(audiounit_ios_stream_base *stream);
+
+        bool activate_input_session();
+        void deactivate_input_session();
     };
 }
