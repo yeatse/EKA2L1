@@ -41,6 +41,7 @@ struct EmulatorView: View {
     @State private var isEditingKeypad = false
     @State private var editingLandscape = false
     @State private var editingKeypadLayout: KeypadLayoutConfiguration?
+    @State private var layoutResetImpacts = 0
     @State private var launchFullscreenOverride: Bool?
     // The -LaunchKeypadLayout testing argument seeds the layout only for the
     // first emulator screen of the process; later screens use stored settings.
@@ -296,10 +297,11 @@ struct EmulatorView: View {
                         in: size,
                         safeAreaInsets: safeAreaInsets
                     )
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    layoutResetImpacts += 1
                 },
                 onDone: finishEditingKeypadLayout
             )
+            .hapticImpact(.medium, trigger: layoutResetImpacts)
         } else {
             VirtualKeypad(
                 size: size,

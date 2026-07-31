@@ -486,6 +486,8 @@ enum PeripheralMappingStore {
 private final class CaptureMonitor: ObservableObject {
     @Published private(set) var deviceConnected = true
     @Published private(set) var capturedToken: String?
+    /// Bumped on every accepted capture; drives the confirmation tap.
+    @Published private(set) var captures = 0
 
     private let peripheral: PeripheralManager.Peripheral
     private var observers: [NSObjectProtocol] = []
@@ -570,7 +572,7 @@ private final class CaptureMonitor: ObservableObject {
         guard capturing else { return }
         capturing = false
         capturedToken = token
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        captures += 1
     }
 
     private nonisolated static func pressedTokens(on gamepad: GCExtendedGamepad,
@@ -634,6 +636,7 @@ struct KeyMappingView: View {
             }
         }
         .navigationTitle(peripheral.name)
+        .hapticImpact(.medium, trigger: monitor.captures)
         .onAppear(perform: monitor.start)
         .onDisappear(perform: monitor.stop)
         .sheet(item: $captureTarget, onDismiss: monitor.cancelCapture) { key in

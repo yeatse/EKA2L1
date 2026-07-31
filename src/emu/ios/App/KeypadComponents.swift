@@ -41,6 +41,7 @@ struct HoldableRawKey<Label: View>: View {
 
     @State private var pressed = false
     @State private var sentDown = false
+    @State private var impacts = 0
 
     var body: some View {
         label(pressed)
@@ -60,13 +61,14 @@ struct HoldableRawKey<Label: View>: View {
                     }
             )
             .onDisappear(perform: release)
+            .hapticImpact(.light, trigger: impacts)
     }
 
     private func press() {
         guard !sentDown else { return }
         sentDown = true
         pressed = true
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        impacts += 1
         EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
     }
 
@@ -207,6 +209,7 @@ struct SlidingDPad: View {
     private let innerRatio: CGFloat = 0.34
 
     @State private var activeScan: UInt32?
+    @State private var impacts = 0
 
     private struct Direction {
         let scan: UInt32
@@ -294,6 +297,7 @@ struct SlidingDPad: View {
         .onDisappear {
             updateActive(nil)
         }
+        .hapticImpact(.light, trigger: impacts)
     }
 
     // Direction under the finger, or nil to keep the current one (finger over
@@ -325,7 +329,7 @@ struct SlidingDPad: View {
             EKA2L1Bridge.shared.submitRawKey(old, pressed: false)
         }
         if let scan {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            impacts += 1
             EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
         }
         activeScan = scan

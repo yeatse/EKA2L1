@@ -82,6 +82,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-06-02 | [Snakes stray-signal freeze](./ios-snakes-stray-signal.md) |
 | 2026-06-02 | [VFS case-sensitive path resolution](./ios-vfs-case-sensitive-path.md) |
 | 2026-06-02 | [S60v5 AVKON FEP / PtiEngine stall](./s60v5-avkon-fep-pti.md) |
+| 2026-07-31 | [Haptics-triggered AudioAnalytics crash](./ios-haptics-audioanalytics-crash.md) |
 
 ## Archived planning docs
 

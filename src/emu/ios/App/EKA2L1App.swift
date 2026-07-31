@@ -38,6 +38,10 @@ struct EKA2L1App: App {
                 EKA2L1Bridge.shared.resume()
             case .inactive, .background:
                 EKA2L1Bridge.shared.pause()
+                // pause() deactivates the audio session, which CoreHaptics
+                // shares; don't keep the iOS 16 fallback's generators alive
+                // across that. SwiftUI handles this itself on iOS 17+.
+                Haptics.release()
             @unknown default:
                 break
             }
