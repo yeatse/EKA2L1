@@ -1401,10 +1401,12 @@ namespace eka2l1 {
             if (use_in_ini) {
                 scr_mode_global = epoc::string_to_display_mode(modes[0]);
 
-                // It seems to be so!!! Since games still use metainfo hacks at the beginning of screen buffer
-                if (kern->is_eka1() && (epoc::get_bpp_from_display_mode(scr_mode_global) > 16)) {
-                    scr_mode_global = epoc::display_mode::color64k;
-                }
+                // Take the mode the device's own wsini.ini declares, whatever its depth. EKA1
+                // screens used to be clamped down to 64K colours here, but the ROM graphics stack
+                // does not know about that clamp: a 6680 declares COLOR16MU and its CFbsDrawDevice
+                // duly writes 32-bit pixels into the direct screen access framebuffer, while the
+                // emulator went on compositing and uploading that memory as 16-bit. The clamp is
+                // what made Sky Force Reloaded's frames come out as garbled double-width columns.
             }
         }
 
