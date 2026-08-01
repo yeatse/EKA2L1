@@ -281,16 +281,6 @@
         }
       }
     },
-    "emulator.menu.keypadSettings" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Keypad Settings"
-          }
-        }
-      }
-    },
     "emulator.menu.lockOrientation" : {
       "localizations" : {
         "en" : {

@@ -308,20 +308,40 @@ struct SystemMenuKey: View {
     let actions: KeypadMenuActions
     var size: CGSize = CGSize(width: 58, height: 38)
 
-    var body: some View {
-        Menu {
-            Menu {
-                Toggle("emulator.menu.fullScreen", isOn: actions.fullScreen)
+    @State private var isShowingMenu = false
 
-                if !actions.fullScreen.wrappedValue {
-                    Button {
-                        actions.editKeypadLayout()
-                    } label: {
-                        Label("keypad.editor.editLayout", systemImage: "move.3d")
-                    }
-                }
+    var body: some View {
+        Button {
+            isShowingMenu = true
+        } label: {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: size.width, height: size.height)
+                .keyCap(kind: .soft, pressed: false)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isShowingMenu, attachmentAnchor: .rect(.bounds)) {
+            menuPopover
+        }
+        .accessibilityLabel("emulator.menu")
+    }
+
+    @ViewBuilder
+    private var menuPopover: some View {
+        if #available(iOS 16.4, *) {
+            menuList
+                .presentationCompactAdaptation(.popover)
+        } else {
+            menuList
+        }
+    }
+
+    private var menuList: some View {
+        List {
+            Button {
+                performAndDismiss(actions.editKeypadLayout)
             } label: {
-                Label("emulator.menu.keypadSettings", systemImage: "keyboard")
+                Label("keypad.editor.editLayout", systemImage: "move.3d")
             }
 
             Toggle(isOn: actions.locksOrientation) {
@@ -341,23 +361,25 @@ struct SystemMenuKey: View {
             }
 
             Button {
-                actions.saveScreenshot()
+                performAndDismiss(actions.saveScreenshot)
             } label: {
                 Label("emulator.saveScreenshot", systemImage: "camera")
             }
 
             Button(role: .destructive) {
-                actions.exitGame()
+                performAndDismiss(actions.exitGame)
             } label: {
                 Label("emulator.exit", systemImage: "xmark.circle")
             }
-        } label: {
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: size.width, height: size.height)
-                .keyCap(kind: .soft, pressed: false)
         }
-        .accessibilityLabel("emulator.menu")
+        .listStyle(.plain)
+        .environment(\.defaultMinListRowHeight, 44)
+        .frame(width: 300, height: 260)
+    }
+
+    private func performAndDismiss(_ action: @escaping () -> Void) {
+        isShowingMenu = false
+        action()
     }
 
     @ViewBuilder
@@ -404,7 +426,6 @@ private struct KeypadElementFramesKey: PreferenceKey {
 struct VirtualKeypad: View {
     let size: CGSize
     let controlSize: CGSize
-    let safeAreaInsets: EdgeInsets
     let configuration: KeypadLayoutConfiguration
     let fullScreen: Bool
     let actions: KeypadMenuActions
@@ -430,7 +451,7 @@ struct VirtualKeypad: View {
                 }
             }
 
-            runtimeElement(.menu, usesFullscreenPosition: fullScreen) {
+            runtimeElement(.menu) {
                 SystemMenuKey(actions: actions, size: KeypadElement.menu.size(in: controlSize))
             }
         }
@@ -441,20 +462,12 @@ struct VirtualKeypad: View {
         }
     }
 
-    private func position(for element: KeypadElement, usesFullscreenPosition: Bool) -> CGPoint {
-        if usesFullscreenPosition {
-            let menuSize = KeypadElement.menu.size(in: controlSize)
-            return CGPoint(
-                x: controlSize.width - safeAreaInsets.trailing - menuSize.width / 2 - 10,
-                y: controlSize.height - safeAreaInsets.bottom - menuSize.height / 2 - 10
-            )
-        }
+    private func position(for element: KeypadElement) -> CGPoint {
         return configuration.point(for: element, in: size)
     }
 
     private func runtimeElement<Content: View>(
         _ element: KeypadElement,
-        usesFullscreenPosition: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
         let elementSize = element.size(in: controlSize)
@@ -469,7 +482,7 @@ struct VirtualKeypad: View {
                     )
                 }
             )
-            .position(position(for: element, usesFullscreenPosition: usesFullscreenPosition))
+            .position(position(for: element))
     }
 }
 
@@ -481,6 +494,7 @@ struct KeypadLayoutEditor: View {
     let safeAreaInsets: EdgeInsets
     @Binding var configuration: KeypadLayoutConfiguration
     @Binding var opacity: Double
+    @Binding var fullScreen: Bool
     let actions: KeypadMenuActions
     let onReset: () -> Void
     let onDone: () -> Void
@@ -492,14 +506,13 @@ struct KeypadLayoutEditor: View {
             Color.black.opacity(0.28)
                 .contentShape(Rectangle())
 
-            ForEach(KeypadElement.allCases, id: \.self) { element in
+            ForEach(editorElements, id: \.self) { element in
                 draggableElement(element)
             }
 
             VStack(spacing: 8) {
                 editorHeader
-                opacityBar
-                    .frame(maxWidth: size.width > size.height ? 300 : .infinity)
+                editorSettings
             }
                 .frame(maxHeight: .infinity, alignment: .top)
                 .padding(.leading, max(14, safeAreaInsets.leading + 10))
@@ -508,6 +521,25 @@ struct KeypadLayoutEditor: View {
         }
         .frame(width: size.width, height: size.height)
         .ignoresSafeArea()
+    }
+
+    private var editorElements: [KeypadElement] {
+        fullScreen ? [.menu] : KeypadElement.allCases
+    }
+
+    private var editorSettings: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                opacityBar
+                    .frame(minWidth: 260, maxWidth: 300)
+                fullScreenToggle
+            }
+
+            VStack(spacing: 8) {
+                opacityBar
+                fullScreenToggle
+            }
+        }
     }
 
     private var editorHeader: some View {
@@ -548,6 +580,18 @@ struct KeypadLayoutEditor: View {
         .background(.black.opacity(0.72), in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
         .accessibilityLabel("settings.keypadOpacity")
+    }
+
+    private var fullScreenToggle: some View {
+        Toggle("emulator.menu.fullScreen", isOn: $fullScreen)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(.white)
+            .tint(.white)
+            .padding(.horizontal, 16)
+            .frame(height: 50)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(.black.opacity(0.72), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.16), lineWidth: 1))
     }
 
     private func draggableElement(_ element: KeypadElement) -> some View {

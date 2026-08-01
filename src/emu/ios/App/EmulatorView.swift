@@ -291,6 +291,7 @@ struct EmulatorView: View {
                     safeAreaInsets: safeAreaInsets
                 ),
                 opacity: $keypadOpacity,
+                fullScreen: fullscreenSelection,
                 actions: menuActions,
                 onReset: {
                     editingKeypadLayout = .classicDefault(
@@ -306,7 +307,6 @@ struct EmulatorView: View {
             VirtualKeypad(
                 size: size,
                 controlSize: controlSize,
-                safeAreaInsets: safeAreaInsets,
                 configuration: keypadConfiguration(
                     in: size,
                     safeAreaInsets: safeAreaInsets
