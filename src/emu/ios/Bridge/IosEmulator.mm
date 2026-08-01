@@ -277,44 +277,6 @@ namespace eka2l1::ios {
         return encode_rgba_to_png(rgba.data(), w, h, side);
     }
 
-    // Symbian icon masks use three format families with different polarities,
-    // told apart by colour depth rather than the has-colour flag:
-    //   * A genuine alpha/soft mask is multi-level palettised grayscale (2-8
-    //     bpp): gray4 / gray16 / gray256, and — on S60v2 ROMs — the occasional
-    //     color256 that still holds gray-valued opacity. Its luminance is the
-    //     alpha directly: white is opaque, black transparent.
-    //   * A binary gray2 mask (1bpp), or a colour bitmap (>= 12bpp) reused as a
-    //     colour-key mask, marks the transparent backdrop in white, so its
-    //     polarity is inverted. Legacy AIF icons commonly use this 1bpp form.
-    // Keying off has-colour instead would misclassify S60v2's color256 masks as
-    // colour-key and invert them, cutting the icon out over its background.
-    static bool mask_is_soft(std::uint32_t bpp) {
-        return bpp > 1 && bpp <= 8;
-    }
-
-    // Composite a Symbian icon mask (converted with make_standard_mask) onto the
-    // main icon's alpha channel.
-    //   * A soft mask maps its gray value straight to alpha (white opaque). The
-    //     mask is gray-valued, so its red channel carries the luminance directly
-    //     and anti-aliased edges are preserved.
-    //   * A colour-key mask instead inverts the pure-white test that
-    //     make_standard_mask left in the alpha channel, so only the white
-    //     backdrop (e.g. a magenta colour key) becomes transparent.
-    // Without this the icon's masked backdrop renders opaque.
-    static void apply_mask_alpha(std::vector<std::uint8_t> &main_rgba,
-                                 const std::vector<std::uint8_t> &mask_rgba,
-                                 std::size_t w, std::size_t h, bool soft) {
-        const std::size_t count = w * h;
-        if (main_rgba.size() < count * 4 || mask_rgba.size() < count * 4) {
-            return;
-        }
-        for (std::size_t i = 0; i < count; ++i) {
-            main_rgba[i * 4 + 3] = soft
-                ? mask_rgba[i * 4 + 0]
-                : static_cast<std::uint8_t>(255 - mask_rgba[i * 4 + 3]);
-        }
-    }
-
     static NSData *decode_mbm_icon(eka2l1::apa_app_registry *reg,
                                    eka2l1::fbs_server *fbsserv,
                                    eka2l1::io_system *io,
@@ -345,8 +307,8 @@ namespace eka2l1::ios {
                 std::vector<std::uint8_t> mask_rgba(w * h * 4);
                 eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
                 if (eka2l1::epoc::convert_to_rgba8888(fbsserv, parser, 1, mask_dst, true)) {
-                    apply_mask_alpha(rgba, mask_rgba, w, h,
-                        mask_is_soft(mask_hdr.bit_per_pixels));
+                    eka2l1::epoc::apply_icon_mask_alpha(rgba.data(), mask_rgba.data(), w, h,
+                        mask_hdr.bit_per_pixels);
                 }
             }
         }
@@ -375,8 +337,8 @@ namespace eka2l1::ios {
                 std::vector<std::uint8_t> mask_rgba(w * h * 4);
                 eka2l1::common::wo_buf_stream mask_dst(mask_rgba.data(), mask_rgba.size());
                 if (eka2l1::epoc::convert_to_rgba8888(fbsserv, mask_bitmap, mask_dst, true)) {
-                    apply_mask_alpha(rgba, mask_rgba, w, h,
-                        mask_is_soft(mask_bitmap->header_.bit_per_pixels));
+                    eka2l1::epoc::apply_icon_mask_alpha(rgba.data(), mask_rgba.data(), w, h,
+                        mask_bitmap->header_.bit_per_pixels);
                 }
             }
         }
