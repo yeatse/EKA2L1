@@ -46,7 +46,12 @@ queue the host read without needing a client request, and the new
 `get_recorded_buffer` fills the buffer description and hands over the chunk handle
 the first time each chunk is used. The old protocol keeps its original path.
 
-## Still open: the cat wedges once it actually hears something
+## Why the cat then wedges once it actually hears something: it is too slow
+
+Short version: with the interpreter, the guest cannot decode the "listening"
+animation fast enough to finish it inside the listening window, and the
+application latches a busy flag that nothing ever clears again. Enabling the
+dynarmic JIT (`ios-use-jit`) makes the whole flow work.
 
 With the loop running, Talking Tom stops drawing. It keeps its own timers running
 and keeps the record cycle going at exactly real time, but it never calls
@@ -112,15 +117,66 @@ forever, from the moment a loud buffer arrives. Everything it asks the emulator
 for, it gets. Whatever gates its draw step is internal state that our recorded
 audio puts it into.
 
-Also ruled out here: the client negotiating 8 kHz **stereo** capture. Advertising
-mono capability makes it negotiate mono, and the wedge is unchanged. (That change
-is worth keeping on its own — a handset microphone is one channel, so offering
-stereo capture let clients pick a configuration no real device would have given
-them.)
+### The application's state machine
 
-Continuing from here means reverse-engineering the game engine: find the call
-site that reaches `hle_dispatch_2` in the `0x70C9xxxx` module and work backwards
-to the branch that skips it.
+Dumping every code segment of the process (name, run address, and the relocated
+bytes) mapped the hot PCs to modules. The "renderer" at `0x70C9E000` turned out to
+be **qjpeg.dll**: Talking Tom's animations are sequences of full-screen JPEG
+frames decoded by Qt's image plugin, so "stops rendering" really means "stops
+advancing its animation".
+
+Tracing file opens from the process showed exactly that. It plays `blink`, `yawn`,
+`sneeze` and friends normally, then on hearing a sound switches to
+`AnimationsBK\listen\` — and stops after `cat_listen0005.jpg`. That directory
+holds twelve frames.
+
+Guest breakpoints pinned the logic down. `register_breakpoint` with a module name
+never resolved for the application's own `.exe`; the `constantaddr` form with the
+absolute address works, and the image loads at `0x70000000` every run.
+
+* `0x70004700` computes `level = peak / 32767.0f` over each recorded buffer.
+* `0x70005398` is `setCapturing(bool)`. The idle loop calls it with false every
+  tick, which also resets the level to zero.
+* `0x700014B0` is `startListening()`: sets `listening = 1` **and `busy = 1`**,
+  preloads the listen frames, connects the animation timer and starts it at 10 ms.
+* `0x70001480` is `stopListening()`, a slot reached through `qt_metacall`: stops
+  the animation timer, clears `listening`, calls `setCapturing(false)`, then calls
+  `0x70001304`.
+* `0x70001304` is "now play back what you said". It returns immediately if
+  `listening != 0` **or if `busy != 0`**.
+* `busy` is only ever cleared by the animation-finished handler at `0x70000A7A`,
+  which also clears `listening` and capture.
+
+So the design assumes the listen animation finishes — and clears `busy` — before
+the listening window closes. The trace showed the opposite:
+
+```
+startListening t=1388840765
+stopListening  t=1388841808          (+1043 ms)
+afterListen: listening=0, playing=1  -> returns, playback never starts
+```
+
+Only five of twelve frames were decoded in that second, about 200 ms per frame.
+`stopListening` stopped the timer mid-animation, so `busy` stayed 1 forever, and
+every later attempt fails the same check — which is why the cat holds the pose and
+never reacts again.
+
+### Confirmed by making the guest faster
+
+Turning on the dynarmic JIT (`ios-use-jit: true`) and repeating the same injected
+burst:
+
+```
+startListening t=1389023867
+stopListening  t=1389031961          (+8094 ms, the full burst)
+afterListen: listening=0, playing=0  -> start playback
+listen frames loaded: 11   (was 5)
+talk   frames loaded: 45   (was 0)
+```
+
+The animation completes, `busy` is cleared, and Tom replays what he heard. So past
+the protocol fix above the recording path was never the problem; the title just
+needs roughly 2.5x more guest throughput than the interpreter delivers here.
 
 ## Verification
 
