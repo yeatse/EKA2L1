@@ -178,6 +178,31 @@ The animation completes, `busy` is cleared, and Tom replays what he heard. So pa
 the protocol fix above the recording path was never the problem; the title just
 needs roughly 2.5x more guest throughput than the interpreter delivers here.
 
+### Where the guest time actually goes
+
+Attributing the PC histogram to code segments, `qjpeg.dll` is **98.4–98.9%** of all
+guest instructions in every window where an animation is playing (five separate
+two-second windows, 1.7M–5.2M samples each). Everything else — euser, qtgui,
+qtcore, the application itself — is under 1% combined.
+
+That makes the JPEG decode by far the highest-leverage thing to accelerate: this
+title only needs about 2.5x, and removing that work would leave almost nothing
+behind. Note what the mechanisms here can and cannot reach:
+
+* The patch-DLL system (`src/patch/*` plus a `.map`) replaces a target DLL's
+  exports **by ordinal**. `qjpeg.dll` exports only the Qt plugin bootstrap
+  (`qt_plugin_instance`, `QT_PLUGIN_VERIFICATION_DATA`); the work is inside
+  `QJpegHandler::read()`, a C++ virtual, with libjpeg linked in statically. So the
+  ordinal route cannot reach the decode — it would mean shipping a whole
+  replacement plugin built against the guest's Qt 4.7 ABI.
+* `register_breakpoint` supports keying on a code segment hash (as the Warhammer
+  40K patches do), which *can* reach libjpeg's internal entry points inside
+  `qjpeg.dll`. That is the cheap way to prototype and measure, at the cost of
+  depending on one build's function addresses and struct offsets.
+* Native S60 titles decode through ICL (`jpegdecoder.dll`) instead, which is a
+  documented Symbian API and a much better long-term HLE target — but Qt titles
+  like this one never go through it.
+
 ## Verification
 
 The Release simulator build passed the default regression suite (12/12: Final
