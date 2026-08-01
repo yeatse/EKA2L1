@@ -76,10 +76,51 @@ Ruled out along the way, all with direct measurements:
 * Kernel-lock contention from the audio thread: the completion callback acquires
   the lock successfully on every sample taken.
 
-Finding this needs guest-side work next — sampling the application thread's PC
-while it is wedged, or checking whether its record observer swallows a leave.
-Note also that the client negotiates 8 kHz **stereo** capture, which a real phone
-would not have delivered from a mono microphone; that is untested as a trigger.
+### What the guest is actually doing
+
+Guest-side instrumentation narrowed this down a lot. Two probes were used: the
+dyncom PC histogram switched to two-second windows (each window cleared after
+its dump, and its index logged so it interleaves with the audio and swap
+counters), and a per-thread histogram of executed system calls taken in
+`lib_manager::call_svc`.
+
+The PC histogram makes the transition exact. Up to the window where the loud
+burst begins, the hot buckets are all in one module around `0x70C9E000` —
+the software renderer. From the next window on, that module disappears entirely
+and the top buckets become `0x700046C0`/`0x70004700` in the application's own
+image, at ~33% of all guest instructions. Disassembled, that code is a peak
+detector: it assembles little-endian 16-bit samples from byte loads, takes the
+absolute value, and keeps a running maximum — the game's voice-activity scan
+over each recorded buffer. It never stops running.
+
+The guest is not spinning and not blocked. Instruction volume falls from about
+5,000,000 PC samples per two-second window while rendering to about 11,000 once
+wedged: it is ~99.8% idle. The SVC histogram shows the engine's main loop still
+running at full rate in that state — a condition-variable handshake with its
+`IdleDetectorThread` about 65 times a second, ~60 timer requests a second,
+`User::WaitForAnyRequest` around 95 times a second, and the DevSound record
+cycle. Only two threads exist in the process, so there is no hidden audio worker
+stuck somewhere.
+
+The single difference between the healthy and wedged histograms is
+`hle_dispatch_2`: several hundred per window while rendering, and **exactly zero**
+afterwards. That SVC is the graphics dispatch entry, so the application is not
+losing its draw calls somewhere in the emulator — it stops issuing them.
+
+So the engine is alive and ticking at frame rate and deliberately draws nothing,
+forever, from the moment a loud buffer arrives. Everything it asks the emulator
+for, it gets. Whatever gates its draw step is internal state that our recorded
+audio puts it into.
+
+Also ruled out here: the client negotiating 8 kHz **stereo** capture. Advertising
+mono capability makes it negotiate mono, and the wedge is unchanged. (That change
+is worth keeping on its own — a handset microphone is one channel, so offering
+stereo capture let clients pick a configuration no real device would have given
+them.)
+
+Continuing from here means reverse-engineering the game engine: find the call
+site that reaches `hle_dispatch_2` in the `0x70C9xxxx` module and work backwards
+to the branch that skips it.
 
 ## Verification
 
