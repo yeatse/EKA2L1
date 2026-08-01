@@ -5,7 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
-| 2026-08-01 | [EKA1 screen mode ini clamp](./eka1-screen-mode-ini-clamp.md) |
+| 2026-08-01 | [EKA1 DSA framebuffer depth (unresolved)](./eka1-dsa-framebuffer-depth.md) |
 | 2026-08-01 | [Debug write command descriptor bound](./debug-command-write-descriptor-bound.md) |
 | 2026-08-01 | [Dragon.World flickers black on every server recomposite](./dragon-world-empty-redraw-black-flicker.md) |
 | 2026-07-30 | [Ashen stops before its first frame after stale-handle validation](./ios-ngage-object-handle-alias-regression.md) |
