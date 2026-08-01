@@ -46,21 +46,40 @@ queue the host read without needing a client request, and the new
 `get_recorded_buffer` fills the buffer description and hands over the chunk handle
 the first time each chunk is used. The old protocol keeps its original path.
 
-## A dead end worth recording
+## Still open: the cat wedges once it actually hears something
 
-With the loop running, Talking Tom froze: no idle animation and no reaction to
-taps. That looked like the fix had starved or deadlocked the guest, but the record
-cycle was still ticking at exactly real time (one 2048-byte buffer every 64 ms),
-so the guest thread was not spinning.
+With the loop running, Talking Tom stops drawing. It keeps its own timers running
+and keeps the record cycle going at exactly real time, but it never calls
+`eglSwapBuffers` again and never recovers, so on screen it looks like a hang.
 
-Replacing the captured samples with digital silence made the cat animate normally
-again, and injecting an eight-second synthetic tone into that silence made it
-switch to its listening/reacting pose. The "freeze" was Talking Tom permanently
-*listening*: the simulator's host microphone is the Mac's input device, and with
-that input gain the room noise floor sat around -40 dBFS, which is above the
-game's trigger threshold. This is a property of the test environment, not of the
-emulator — but it makes a noisy microphone look exactly like a hang, so it is
-worth knowing before chasing a scheduler bug.
+The trigger is the recorded signal level, and only that. Feeding the guest a
+steady -44 dBFS tone instead of the microphone let it render for 90 s (250+
+swaps). Feeding it a -5 dBFS tone stopped rendering within the first 50 frames. A
+staged run — 45 s of digital silence, an 8 s loud tone, then 70 s of digital
+silence again — stopped swapping exactly at the tone and never resumed, so the
+state is not left when the sound stops.
+
+While wedged the guest is not blocked on the emulator. Its timers keep being
+re-armed, and a process-wide IPC trace shows the record cycle
+(`BTBEData` / `RecordData`) as the *only* traffic — no Window Server, no font
+server, nothing. So the application is sitting in an internal state that our data
+puts it into and never leaves.
+
+Ruled out along the way, all with direct measurements:
+
+* The OpenVG coverage-based swap deferral in `egl_swap_buffers_emu`. The wedge
+  happens with zero deferrals, and a run with 31 deferrals (quiet audio) never
+  wedged.
+* Event-rate starvation of the guest's lower-priority active objects: forcing an
+  8x larger record buffer (2 events/s instead of 15) changes nothing.
+* Message queue overflow and lost `NotifyDataAvailable` wakeups.
+* Kernel-lock contention from the audio thread: the completion callback acquires
+  the lock successfully on every sample taken.
+
+Finding this needs guest-side work next — sampling the application thread's PC
+while it is wedged, or checking whether its record observer swallows a leave.
+Note also that the client negotiates 8 kHz **stereo** capture, which a real phone
+would not have delivered from a mono microphone; that is untested as a trigger.
 
 ## Verification
 
