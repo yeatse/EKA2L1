@@ -85,6 +85,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-06-02 | [S60v5 AVKON FEP / PtiEngine stall](./s60v5-avkon-fep-pti.md) |
 | 2026-07-31 | [Haptics-triggered AudioAnalytics crash](./ios-haptics-audioanalytics-crash.md) |
 | 2026-08-01 | [A3F DevSound recording never delivers](./a3f-devsound-recording-never-delivers.md) |
+| 2026-08-01 | [EKA1 GLES HLE patch path](./eka1-gles-hle-patch-path.md) |
 
 ## Archived planning docs
 
