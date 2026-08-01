@@ -259,20 +259,14 @@ struct SlidingDPad: View {
                     .animation(.easeOut(duration: 0.1), value: pressed)
             }
 
-            // Invisible layer owning the ring gesture; contentShape makes the
-            // clear circle hit-testable. Sits above the sector fills but below
-            // OK, so touches starting on OK stay OK.
-            Color.clear
-                .contentShape(Circle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            updateActive(directionScan(at: value.location))
-                        }
-                        .onEnded { _ in
-                            updateActive(nil)
-                        }
-                )
+            // SwiftUI's DragGesture tracks only one touch. Use a UIKit surface
+            // for the ring so a newly pressed finger can take priority while
+            // the previous direction is still held.
+            DPadTouchSurface(innerRatio: innerRatio) { point in
+                directionScan(at: point)
+            } onActiveDirectionChanged: { scan in
+                updateActive(scan)
+            }
 
             HoldableRawKey(scan: Scan.select, hitShape: AnyShape(Circle())) { pressed in
                 Text(verbatim: "OK")
@@ -333,6 +327,124 @@ struct SlidingDPad: View {
             EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
         }
         activeScan = scan
+    }
+}
+
+private struct DPadTouchSurface: UIViewRepresentable {
+    let innerRatio: CGFloat
+    let directionAtPoint: (CGPoint) -> UInt32?
+    let onActiveDirectionChanged: (UInt32?) -> Void
+
+    func makeUIView(context: Context) -> DPadTouchView {
+        let view = DPadTouchView()
+        configure(view)
+        return view
+    }
+
+    func updateUIView(_ view: DPadTouchView, context: Context) {
+        configure(view)
+    }
+
+    static func dismantleUIView(_ view: DPadTouchView, coordinator: ()) {
+        view.reset()
+    }
+
+    private func configure(_ view: DPadTouchView) {
+        view.innerRatio = innerRatio
+        view.directionAtPoint = directionAtPoint
+        view.onActiveDirectionChanged = onActiveDirectionChanged
+    }
+}
+
+private final class DPadTouchView: UIView {
+    var innerRatio: CGFloat = 0.34
+    var directionAtPoint: ((CGPoint) -> UInt32?)?
+    var onActiveDirectionChanged: ((UInt32?) -> Void)?
+
+    private struct HeldDirection {
+        var scan: UInt32
+        let priority: UInt64
+    }
+
+    private var heldDirections: [ObjectIdentifier: HeldDirection] = [:]
+    private var nextPriority: UInt64 = 0
+    private var publishedScan: UInt32?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isMultipleTouchEnabled = true
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+        isMultipleTouchEnabled = true
+    }
+
+    // Own only the annular direction region. This lets the SwiftUI OK button
+    // above the surface receive touches that begin in the centre.
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let radius = min(bounds.width, bounds.height) / 2
+        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+        let distance = hypot(point.x - centre.x, point.y - centre.y)
+        return distance > radius * innerRatio && distance <= radius
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for touch in touches {
+            guard let scan = directionAtPoint?(touch.location(in: self)) else { continue }
+            nextPriority &+= 1
+            heldDirections[ObjectIdentifier(touch)] = HeldDirection(
+                scan: scan,
+                priority: nextPriority
+            )
+        }
+        publishActiveDirection()
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        for touch in touches {
+            let identifier = ObjectIdentifier(touch)
+            guard var held = heldDirections[identifier],
+                  let scan = directionAtPoint?(touch.location(in: self)) else { continue }
+            held.scan = scan
+            heldDirections[identifier] = held
+        }
+        publishActiveDirection()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        remove(touches)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        remove(touches)
+    }
+
+    func reset() {
+        heldDirections.removeAll()
+        publish(nil)
+    }
+
+    private func remove(_ touches: Set<UITouch>) {
+        for touch in touches {
+            heldDirections.removeValue(forKey: ObjectIdentifier(touch))
+        }
+        publishActiveDirection()
+    }
+
+    private func publishActiveDirection() {
+        let scan = heldDirections.values.max { lhs, rhs in
+            lhs.priority < rhs.priority
+        }?.scan
+        publish(scan)
+    }
+
+    private func publish(_ scan: UInt32?) {
+        guard scan != publishedScan else { return }
+        publishedScan = scan
+        onActiveDirectionChanged?(scan)
     }
 }
 
