@@ -96,6 +96,9 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-01 | [EKA1 GLES HLE patch path](./eka1-gles-hle-patch-path.md) |
 | 2026-08-01 | [S60v2 binary colour-key icon mask](./s60v2-binary-colour-key-icon-mask.md) |
 | 2026-08-02 | [Dropped DSP stream buffer-ready notifications](./ios-dsp-stream-buffer-notify-dropped.md) |
+| 2026-08-02 | [NVG path decoding: unsigned coords and swallowed close-subpath](./nvg-path-decoding-signed-coords-and-close-subpath.md) |
+| 2026-08-03 | [NVG extended bitmaps a guest blits itself](./nvg-extended-bitmap-guest-blit.md) |
+| 2026-08-03 | [Avkon note renders without its skin background](./avkon-note-missing-skin-background.md) |
 
 ## Archived planning docs
 
