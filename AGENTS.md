@@ -38,6 +38,39 @@ A bad guest request and a host lifetime race look alike. Validate guest pointers
 defensively, but also prove that stop/close/session teardown cannot race a queued
 host callback.
 
+### Symbian patch DLL builds in UTM
+
+The `Windows XP` VM has S60 3rd FP2 (`abld`) and Belle (`sbs`) plus the checkout
+at `C:\eka2l1`; push every edited source, run the matching GCCE UREL command, poll
+because `utmctl exec` returns early, then validate and install the E32Image (adjust
+patch and target names as needed):
+
+```sh
+UTMCTL=/Applications/UTM.app/Contents/MacOS/utmctl
+VM='Windows XP'
+
+"$UTMCTL" file push "$VM" 'C:\eka2l1\src\patch\mediaclientaudio\src\impl.cpp' < src/patch/mediaclientaudio/src/impl.cpp
+wait_utm_build() {
+  while ! "$UTMCTL" file pull "$VM" 'C:\eka2l1\patch-build-result.txt' 2>/dev/null | tr -d '\r' | rg -q '^(ok|failed)$'; do sleep 3; done
+  test "$("$UTMCTL" file pull "$VM" 'C:\eka2l1\patch-build-result.txt' | tr -d '\r\n ')" = ok
+}
+
+# S60 3rd FP2
+"$UTMCTL" exec "$VM" --cmd cmd.exe /c 'del /q C:\eka2l1\patch-build-result.txt 2>nul & call devices -setdefault @S60_3rd_FP2_SDK_v1.1:com.nokia.s60 > C:\eka2l1\patch-build.log 2>&1 & cd /d C:\eka2l1\src\patch\mediaclientaudio\group\general & call abld reallyclean gcce >> C:\eka2l1\patch-build.log 2>&1 & call bldmake bldfiles >> C:\eka2l1\patch-build.log 2>&1 & call abld build gcce urel >> C:\eka2l1\patch-build.log 2>&1 & if errorlevel 1 (echo failed> C:\eka2l1\patch-build-result.txt) else (echo ok> C:\eka2l1\patch-build-result.txt)'
+wait_utm_build
+"$UTMCTL" file pull "$VM" 'C:\S60\devices\S60_3rd_FP2_SDK_v1.1\epoc32\release\GCCE\urel\mediaclientaudio_general.dll' > /tmp/mediaclientaudio_s60v3.dll
+
+# Symbian Belle
+"$UTMCTL" exec "$VM" --cmd cmd.exe /c 'del /q C:\eka2l1\patch-build-result.txt 2>nul & set "EPOCROOT=\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\" & set "PATH=C:\Perl\bin;C:\Program Files\Common Files\Symbian\tools;C:\Program Files\CodeSourcery\Sourcery G++ Lite\bin;C:\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\epoc32\tools\sbs\bin;%PATH%" & cd /d C:\eka2l1\src\patch\mediaclientaudio\group\general & call sbs -b bld.inf -c armv5_urel_gcce4_4_1 > C:\eka2l1\patch-build.log 2>&1 & if errorlevel 1 (echo failed> C:\eka2l1\patch-build-result.txt) else (echo ok> C:\eka2l1\patch-build-result.txt)'
+wait_utm_build
+"$UTMCTL" file pull "$VM" 'C:\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\epoc32\release\armv5\urel\mediaclientaudio_general.dll' > /tmp/mediaclientaudio_belle.dll
+
+~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py /tmp/mediaclientaudio_s60v3.dll
+~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py /tmp/mediaclientaudio_belle.dll
+PATCH_DLL=/tmp/mediaclientaudio_belle.dll # or /tmp/mediaclientaudio_s60v3.dll
+cp "$PATCH_DLL" src/patch/mediaclientaudio/group/mediaclientaudio_general.dll
+```
+
 ### TestFlight crash symbolication
 
 Map the build to a commit with `gh run list --workflow "iOS TestFlight"`, download
