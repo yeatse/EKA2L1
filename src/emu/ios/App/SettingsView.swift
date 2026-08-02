@@ -114,16 +114,21 @@ struct SettingsView: View {
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 100)
                     }
+                }
+                // Direct IP peers are configured by hand, so the matching
+                // password is only meaningful for the discovery modes that
+                // negotiate it. UPnP only maps ports for the central server.
+                if btDiscoveryMode == 2 || btDiscoveryMode == 3 {
                     TextField("settings.netplay.password", text: $btPassword)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
-                    Toggle("settings.netplay.upnp", isOn: $btUpnp)
                 }
                 if btDiscoveryMode == 3 {
                     TextField("settings.netplay.serverUrl", text: $btServerUrl)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
+                    Toggle("settings.netplay.upnp", isOn: $btUpnp)
                 }
                 if btDiscoveryMode == 1 {
                     ForEach(btFriends) { friendEntry in
