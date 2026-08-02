@@ -131,12 +131,19 @@ sbs -b bld.inf -c arm.v5.urel.gcce4_4_1 ^
 生成纯汇编 export stub，避免 `g++.exe` 无意义地查找安装包中不存在的
 `libstdc++.a`。
 
+Belle SDK 的 `drtaeabi.dso` 导出 227 个 ordinal，排在 `libgcc.a` 之前，因此
+`__aeabi_idiv` / `__aeabi_uidiv`（ordinal 222/223）会被链接成 ROM 导入。所有
+目标固件的 `drtaeabi.dll` 都只有 221 个导出，这两个导入永远解析不了。
+`src/patch/scdv/src/aeabi.cpp` 在 DLL 内部自带这两个 helper，工程自身的目标
+文件先于任何库参与解析，导入不再产生。详见
+[Snakes dies on the N95](./scdv-aeabi-idiv-missing-rom-export.md)。
+
 当前完整构建产物：
 
 - UID：`10000079 10003B19 EE000002`
 - ARMV5 / EKA2 / DEFLATE
 - code link address：`0x8000`
-- code size：`0x6E24`
+- code size：`0x6ECC`
 - exports：31，ordinal 表不变
 
 在 iPhone 16 Pro 模拟器（`26D5FEDA-3BDC-4699-83ED-58B749D676DF`）上运行

@@ -529,12 +529,14 @@ test_asphalt6() {
 
     # The Symbian^3 video client must be patched into EKA2L1's FFmpeg-backed
     # player. Without the versioned v100 DLL, both intro movies consume their
-    # normal time but render black before the title appears.
-    local patch_dll="$(dirname "$LOG")/patch/mediaclientvideo_v100.dll"
-    if [ -f "$patch_dll" ]; then
-        check PASS "Asphalt6: Symbian^3 video patch staged"
+    # normal time but render black before the title appears. Patch DLLs are
+    # read straight out of the app bundle; nothing is staged into the data
+    # container.
+    local app_bundle; app_bundle="$(xcrun simctl get_app_container "$SIM" "$BUNDLE_ID" app 2>/dev/null)"
+    if [ -n "$app_bundle" ] && [ -f "$app_bundle/emures/patch/mediaclientvideo_v100.dll" ]; then
+        check PASS "Asphalt6: Symbian^3 video patch shipped"
     else
-        check FAIL "Asphalt6: Symbian^3 video patch staged"
+        check FAIL "Asphalt6: Symbian^3 video patch shipped"
     fi
 
     # Ignore the brief SwiftUI/app-list frame at launch. Require a moderately

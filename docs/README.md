@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-02 | [Snakes dies on the N95: a screen-driver import no ROM can resolve](./scdv-aeabi-idiv-missing-rom-export.md) |
 | 2026-08-01 | [EKA1 DSA framebuffer depth (unresolved)](./eka1-dsa-framebuffer-depth.md) |
 | 2026-08-01 | [Debug write command descriptor bound](./debug-command-write-descriptor-bound.md) |
 | 2026-08-01 | [Dragon.World flickers black on every server recomposite](./dragon-world-empty-redraw-black-flicker.md) |
