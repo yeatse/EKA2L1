@@ -198,17 +198,17 @@ struct ClearKey: View {
 
 // Circular four-way pad with a centred OK (select), used by every layout.
 // The four direction zones are the ring quadrants split on the diagonals.
-// One drag gesture covers the whole ring: holding a direction and sliding the
-// finger into another quadrant releases the old key and presses the new one,
-// so diagonal corrections don't require lifting the finger. The centre OK is
-// its own key — slides across it keep the current direction (games treat OK
-// as fire, so a transient press while crossing the middle would misfire).
+// Each touch on the ring holds its own direction, so multiple direction keys
+// can remain pressed at once. Sliding a finger into another quadrant changes
+// only that touch's key. The centre OK is its own key — slides across it keep
+// the current direction (games treat OK as fire, so a transient press while
+// crossing the middle would misfire).
 struct SlidingDPad: View {
     var diameter: CGFloat = 130
 
     private let innerRatio: CGFloat = 0.34
 
-    @State private var activeScan: UInt32?
+    @State private var activeScans: Set<UInt32> = []
     @State private var impacts = 0
 
     private struct Direction {
@@ -246,7 +246,7 @@ struct SlidingDPad: View {
                 .overlay(PadDividers(innerRatio: innerRatio).stroke(.white.opacity(0.12), lineWidth: 1))
 
             ForEach(directions, id: \.scan) { dir in
-                let pressed = activeScan == dir.scan
+                let pressed = activeScans.contains(dir.scan)
                 Sector(startAngle: .degrees(dir.sectorStart),
                        endAngle: .degrees(dir.sectorStart + 90),
                        innerRatio: innerRatio)
@@ -260,12 +260,11 @@ struct SlidingDPad: View {
             }
 
             // SwiftUI's DragGesture tracks only one touch. Use a UIKit surface
-            // for the ring so a newly pressed finger can take priority while
-            // the previous direction is still held.
+            // so every held finger can contribute a direction simultaneously.
             DPadTouchSurface(innerRatio: innerRatio) { point in
                 directionScan(at: point)
-            } onActiveDirectionChanged: { scan in
-                updateActive(scan)
+            } onActiveDirectionsChanged: { scans in
+                updateActive(scans)
             }
 
             HoldableRawKey(scan: Scan.select, hitShape: AnyShape(Circle())) { pressed in
@@ -289,21 +288,21 @@ struct SlidingDPad: View {
         }
         .frame(width: diameter, height: diameter)
         .onDisappear {
-            updateActive(nil)
+            updateActive([])
         }
         .hapticImpact(.light, trigger: impacts)
     }
 
-    // Direction under the finger, or nil to keep the current one (finger over
-    // the OK circle mid-slide, or outside the ring — holding past the rim is
-    // common in action games and should not drop the direction).
+    // Direction under the finger, or nil to keep that touch's current one
+    // (finger over the OK circle mid-slide, or outside the ring — holding past
+    // the rim is common in action games and should not drop the direction).
     private func directionScan(at point: CGPoint) -> UInt32? {
         let radius = diameter / 2
         let dx = point.x - radius
         let dy = point.y - radius
         let dist = (dx * dx + dy * dy).squareRoot()
-        if dist <= radius * innerRatio {
-            return activeScan
+        if dist <= radius * innerRatio || dist > radius {
+            return nil
         }
         var degrees = atan2(dy, dx) * 180 / .pi // -180..180, 0° = +x, cw
         if degrees < 0 {
@@ -317,23 +316,25 @@ struct SlidingDPad: View {
         }
     }
 
-    private func updateActive(_ scan: UInt32?) {
-        guard scan != activeScan else { return }
-        if let old = activeScan {
-            EKA2L1Bridge.shared.submitRawKey(old, pressed: false)
+    private func updateActive(_ scans: Set<UInt32>) {
+        guard scans != activeScans else { return }
+
+        for scan in activeScans.subtracting(scans).sorted() {
+            EKA2L1Bridge.shared.submitRawKey(scan, pressed: false)
         }
-        if let scan {
-            impacts += 1
+        let pressedScans = scans.subtracting(activeScans)
+        for scan in pressedScans.sorted() {
             EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
         }
-        activeScan = scan
+        impacts += pressedScans.count
+        activeScans = scans
     }
 }
 
 private struct DPadTouchSurface: UIViewRepresentable {
     let innerRatio: CGFloat
     let directionAtPoint: (CGPoint) -> UInt32?
-    let onActiveDirectionChanged: (UInt32?) -> Void
+    let onActiveDirectionsChanged: (Set<UInt32>) -> Void
 
     func makeUIView(context: Context) -> DPadTouchView {
         let view = DPadTouchView()
@@ -352,23 +353,17 @@ private struct DPadTouchSurface: UIViewRepresentable {
     private func configure(_ view: DPadTouchView) {
         view.innerRatio = innerRatio
         view.directionAtPoint = directionAtPoint
-        view.onActiveDirectionChanged = onActiveDirectionChanged
+        view.onActiveDirectionsChanged = onActiveDirectionsChanged
     }
 }
 
 private final class DPadTouchView: UIView {
     var innerRatio: CGFloat = 0.34
     var directionAtPoint: ((CGPoint) -> UInt32?)?
-    var onActiveDirectionChanged: ((UInt32?) -> Void)?
+    var onActiveDirectionsChanged: ((Set<UInt32>) -> Void)?
 
-    private struct HeldDirection {
-        var scan: UInt32
-        let priority: UInt64
-    }
-
-    private var heldDirections: [ObjectIdentifier: HeldDirection] = [:]
-    private var nextPriority: UInt64 = 0
-    private var publishedScan: UInt32?
+    private var heldDirections: [ObjectIdentifier: UInt32] = [:]
+    private var publishedScans: Set<UInt32> = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -394,24 +389,19 @@ private final class DPadTouchView: UIView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
             guard let scan = directionAtPoint?(touch.location(in: self)) else { continue }
-            nextPriority &+= 1
-            heldDirections[ObjectIdentifier(touch)] = HeldDirection(
-                scan: scan,
-                priority: nextPriority
-            )
+            heldDirections[ObjectIdentifier(touch)] = scan
         }
-        publishActiveDirection()
+        publishActiveDirections()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
             let identifier = ObjectIdentifier(touch)
-            guard var held = heldDirections[identifier],
+            guard heldDirections[identifier] != nil,
                   let scan = directionAtPoint?(touch.location(in: self)) else { continue }
-            held.scan = scan
-            heldDirections[identifier] = held
+            heldDirections[identifier] = scan
         }
-        publishActiveDirection()
+        publishActiveDirections()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -424,27 +414,24 @@ private final class DPadTouchView: UIView {
 
     func reset() {
         heldDirections.removeAll()
-        publish(nil)
+        publish([])
     }
 
     private func remove(_ touches: Set<UITouch>) {
         for touch in touches {
             heldDirections.removeValue(forKey: ObjectIdentifier(touch))
         }
-        publishActiveDirection()
+        publishActiveDirections()
     }
 
-    private func publishActiveDirection() {
-        let scan = heldDirections.values.max { lhs, rhs in
-            lhs.priority < rhs.priority
-        }?.scan
-        publish(scan)
+    private func publishActiveDirections() {
+        publish(Set(heldDirections.values))
     }
 
-    private func publish(_ scan: UInt32?) {
-        guard scan != publishedScan else { return }
-        publishedScan = scan
-        onActiveDirectionChanged?(scan)
+    private func publish(_ scans: Set<UInt32>) {
+        guard scans != publishedScans else { return }
+        publishedScans = scans
+        onActiveDirectionsChanged?(scans)
     }
 }
 
