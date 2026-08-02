@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-02 | [N-Gage Call of Duty: uppercase AIF import + EKA1 clock divide-by-zero](./ngage-call-of-duty-import-and-eka1-clock-div0.md) |
 | 2026-08-02 | [Nokia 5320 Voice Recorder investigation](./5320-voice-recorder-investigation.md) |
 | 2026-08-02 | [Snakes dies on the N95: a screen-driver import no ROM can resolve](./scdv-aeabi-idiv-missing-rom-export.md) |
 | 2026-08-01 | [EKA1 DSA framebuffer depth (unresolved)](./eka1-dsa-framebuffer-depth.md) |
