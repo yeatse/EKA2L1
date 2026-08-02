@@ -95,6 +95,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-01 | [A3F DevSound recording never delivers](./a3f-devsound-recording-never-delivers.md) |
 | 2026-08-01 | [EKA1 GLES HLE patch path](./eka1-gles-hle-patch-path.md) |
 | 2026-08-01 | [S60v2 binary colour-key icon mask](./s60v2-binary-colour-key-icon-mask.md) |
+| 2026-08-02 | [Dropped DSP stream buffer-ready notifications](./ios-dsp-stream-buffer-notify-dropped.md) |
 
 ## Archived planning docs
 
