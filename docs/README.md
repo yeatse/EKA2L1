@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-03 | [Symbian^3 File manager exits itself because the domain manager is missing](./x7-file-manager-domain-manager-exit.md) |
 | 2026-08-02 | [Bluetooth Join outlives its query object, then indexes an empty friend list](./netplay-join-asker-lifetime-and-empty-friends.md) |
 | 2026-08-02 | [Netplay query handlers parse the error path as if it were a datagram](./netplay-query-socket-error-null-buffer.md) |
 | 2026-08-02 | [LAN netplay discovery crashes at startup on every getifaddrs platform](./lan-discovery-ifaddrs-null-deref.md) |
