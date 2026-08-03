@@ -100,6 +100,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-02 | [NVG path decoding: unsigned coords and swallowed close-subpath](./nvg-path-decoding-signed-coords-and-close-subpath.md) |
 | 2026-08-03 | [NVG extended bitmaps a guest blits itself](./nvg-extended-bitmap-guest-blit.md) |
 | 2026-08-03 | [Avkon note renders without its skin background](./avkon-note-missing-skin-background.md) |
+| 2026-08-03 | [A failed chunk allocation still handed the guest a usable handle](./hollow-chunk-null-mem-model.md) |
 
 ## Archived planning docs
 
