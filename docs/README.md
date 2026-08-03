@@ -102,6 +102,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-03 | [NVG extended bitmaps a guest blits itself](./nvg-extended-bitmap-guest-blit.md) |
 | 2026-08-03 | [Avkon note renders without its skin background](./avkon-note-missing-skin-background.md) |
 | 2026-08-03 | [A failed chunk allocation still handed the guest a usable handle](./hollow-chunk-null-mem-model.md) |
+| 2026-08-03 | [Skin frames drawn by an app: the colour plane and the scanline padding](./nvg-skin-frames-colour-plane-and-padding.md) |
 
 ## Archived planning docs
 
