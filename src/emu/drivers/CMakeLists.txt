@@ -140,7 +140,11 @@ elseif (EKA2L1_IOS)
     # provided by the iOS frontend (no SDL2, no shared emu_window.cpp).
     target_sources(drivers PRIVATE
         include/drivers/camera/backend/ios/camera_ios.h
+        include/drivers/camera/backend/ios/camera_pixel_ios.h
+        include/drivers/camera/backend/ios/camera_simulator.h
         src/camera/backend/ios/camera_ios.mm
+        src/camera/backend/ios/camera_pixel_ios.mm
+        src/camera/backend/ios/camera_simulator.mm
         src/sensor/backend/ios/sensor_ios.h
         src/sensor/backend/ios/sensor_ios.mm)
 else()

@@ -24,166 +24,11 @@
 #import <ImageIO/ImageIO.h>
 
 #include <drivers/camera/backend/ios/camera_ios.h>
+#include <drivers/camera/backend/ios/camera_pixel_ios.h>
 
 #include <common/log.h>
 
 #include <algorithm>
-
-namespace eka2l1::drivers::camera {
-    // Formats the backend can synthesize from a BGRA source. Mirrors the
-    // Android backend's advertised set.
-    static const frame_format SUPPORTED_FORMATS[] = {
-        FRAME_FORMAT_ARGB8888, FRAME_FORMAT_JPEG, FRAME_FORMAT_RGB565,
-        FRAME_FORMAT_FBSBMP_COLOR64K, FRAME_FORMAT_FBSBMP_COLOR16M,
-        FRAME_FORMAT_FBSBMP_COLOR16MU, FRAME_FORMAT_EXIF
-    };
-
-    static bool is_supported_format(const frame_format format) {
-        for (const frame_format supported: SUPPORTED_FORMATS) {
-            if (format == supported) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Repack a top-down BGRA buffer into the guest-facing pixel layout. Byte
-    // orders and row alignments follow what the Android backend delivers:
-    // FBS bitmap scanlines are 4-byte aligned, raw RGB565 rows are tight, and
-    // ARGB8888 means R,G,B,A byte order.
-    static bool convert_bgra_to_guest(const std::uint8_t *src, const std::size_t src_stride,
-        const int width, const int height, const frame_format format, std::vector<std::uint8_t> &dest) {
-        switch (format) {
-        case FRAME_FORMAT_FBSBMP_COLOR16MU: {
-            const std::size_t dest_stride = static_cast<std::size_t>(width) * 4;
-            dest.resize(dest_stride * height);
-
-            for (int y = 0; y < height; y++) {
-                const std::uint8_t *src_row = src + y * src_stride;
-                std::uint8_t *dest_row = dest.data() + y * dest_stride;
-
-                for (int x = 0; x < width; x++) {
-                    dest_row[x * 4 + 0] = src_row[x * 4 + 0];
-                    dest_row[x * 4 + 1] = src_row[x * 4 + 1];
-                    dest_row[x * 4 + 2] = src_row[x * 4 + 2];
-                    dest_row[x * 4 + 3] = 0xFF;
-                }
-            }
-
-            return true;
-        }
-
-        case FRAME_FORMAT_ARGB8888: {
-            const std::size_t dest_stride = static_cast<std::size_t>(width) * 4;
-            dest.resize(dest_stride * height);
-
-            for (int y = 0; y < height; y++) {
-                const std::uint8_t *src_row = src + y * src_stride;
-                std::uint8_t *dest_row = dest.data() + y * dest_stride;
-
-                for (int x = 0; x < width; x++) {
-                    dest_row[x * 4 + 0] = src_row[x * 4 + 2];
-                    dest_row[x * 4 + 1] = src_row[x * 4 + 1];
-                    dest_row[x * 4 + 2] = src_row[x * 4 + 0];
-                    dest_row[x * 4 + 3] = 0xFF;
-                }
-            }
-
-            return true;
-        }
-
-        case FRAME_FORMAT_FBSBMP_COLOR16M: {
-            const std::size_t dest_stride = (static_cast<std::size_t>(width) * 3 + 3) / 4 * 4;
-            dest.resize(dest_stride * height);
-
-            for (int y = 0; y < height; y++) {
-                const std::uint8_t *src_row = src + y * src_stride;
-                std::uint8_t *dest_row = dest.data() + y * dest_stride;
-
-                for (int x = 0; x < width; x++) {
-                    dest_row[x * 3 + 0] = src_row[x * 4 + 0];
-                    dest_row[x * 3 + 1] = src_row[x * 4 + 1];
-                    dest_row[x * 3 + 2] = src_row[x * 4 + 2];
-                }
-            }
-
-            return true;
-        }
-
-        case FRAME_FORMAT_FBSBMP_COLOR64K:
-        case FRAME_FORMAT_RGB565: {
-            const std::size_t dest_stride = (format == FRAME_FORMAT_FBSBMP_COLOR64K)
-                ? (static_cast<std::size_t>(width) * 2 + 3) / 4 * 4
-                : static_cast<std::size_t>(width) * 2;
-            dest.resize(dest_stride * height);
-
-            for (int y = 0; y < height; y++) {
-                const std::uint8_t *src_row = src + y * src_stride;
-                std::uint8_t *dest_row = dest.data() + y * dest_stride;
-
-                for (int x = 0; x < width; x++) {
-                    const std::uint16_t pixel = static_cast<std::uint16_t>(
-                        ((src_row[x * 4 + 0] & 0xF8) >> 3) |
-                        ((src_row[x * 4 + 1] & 0xFC) << 3) |
-                        ((src_row[x * 4 + 2] & 0xF8) << 8));
-
-                    dest_row[x * 2 + 0] = static_cast<std::uint8_t>(pixel & 0xFF);
-                    dest_row[x * 2 + 1] = static_cast<std::uint8_t>(pixel >> 8);
-                }
-            }
-
-            return true;
-        }
-
-        default:
-            break;
-        }
-
-        return false;
-    }
-
-    // Draw a CGImage scaled into a top-down BGRX buffer of exactly dw x dh.
-    static bool render_cgimage_to_bgra(CGImageRef image, const int dw, const int dh,
-        std::vector<std::uint8_t> &out) {
-        out.resize(static_cast<std::size_t>(dw) * 4 * dh);
-
-        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-        CGContextRef context = CGBitmapContextCreate(out.data(), dw, dh, 8,
-            static_cast<std::size_t>(dw) * 4, color_space,
-            kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst);
-        CGColorSpaceRelease(color_space);
-
-        if (!context) {
-            return false;
-        }
-
-        CGContextSetInterpolationQuality(context, kCGInterpolationLow);
-        CGContextDrawImage(context, CGRectMake(0, 0, dw, dh), image);
-        CGContextRelease(context);
-
-        return true;
-    }
-
-    static CGImageRef create_cgimage_from_bgra(const std::uint8_t *base, const std::size_t stride,
-        const int width, const int height) {
-        CGDataProviderRef provider = CGDataProviderCreateWithData(nullptr, base,
-            stride * height, nullptr);
-        if (!provider) {
-            return nullptr;
-        }
-
-        CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
-        CGImageRef image = CGImageCreate(width, height, 8, 32, stride, color_space,
-            kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst, provider, nullptr,
-            false, kCGRenderingIntentDefault);
-
-        CGColorSpaceRelease(color_space);
-        CGDataProviderRelease(provider);
-
-        return image;
-    }
-}
 
 using eka2l1::drivers::camera::instance_ios;
 
@@ -616,17 +461,17 @@ using eka2l1::drivers::camera::instance_ios;
     bool converted_ok = false;
 
     if ((source_width == _viewfinderWidth) && (source_height == _viewfinderHeight)) {
-        converted_ok = eka2l1::drivers::camera::convert_bgra_to_guest(base, stride,
+        converted_ok = eka2l1::drivers::camera::ios_convert_bgra_to_guest(base, stride,
             _viewfinderWidth, _viewfinderHeight, _viewfinderFormat, converted);
     } else {
-        CGImageRef source_image = eka2l1::drivers::camera::create_cgimage_from_bgra(base,
+        CGImageRef source_image = eka2l1::drivers::camera::ios_create_cgimage_from_bgra(base,
             stride, source_width, source_height);
 
         if (source_image) {
             std::vector<std::uint8_t> scaled;
-            if (eka2l1::drivers::camera::render_cgimage_to_bgra(source_image, _viewfinderWidth,
+            if (eka2l1::drivers::camera::ios_render_cgimage_to_bgra(source_image, _viewfinderWidth,
                 _viewfinderHeight, scaled)) {
-                converted_ok = eka2l1::drivers::camera::convert_bgra_to_guest(scaled.data(),
+                converted_ok = eka2l1::drivers::camera::ios_convert_bgra_to_guest(scaled.data(),
                     static_cast<std::size_t>(_viewfinderWidth) * 4, _viewfinderWidth,
                     _viewfinderHeight, _viewfinderFormat, converted);
             }
@@ -708,13 +553,13 @@ using eka2l1::drivers::camera::instance_ios;
         // Rescale, then re-encode — same behavior as the Android backend when
         // the sensor output size differs from the requested one.
         std::vector<std::uint8_t> scaled;
-        bool ok = eka2l1::drivers::camera::render_cgimage_to_bgra(image, _captureWidth,
+        bool ok = eka2l1::drivers::camera::ios_render_cgimage_to_bgra(image, _captureWidth,
             _captureHeight, scaled);
         CGImageRelease(image);
 
         CGImageRef scaled_image = nullptr;
         if (ok) {
-            scaled_image = eka2l1::drivers::camera::create_cgimage_from_bgra(scaled.data(),
+            scaled_image = eka2l1::drivers::camera::ios_create_cgimage_from_bgra(scaled.data(),
                 static_cast<std::size_t>(_captureWidth) * 4, _captureWidth, _captureHeight);
         }
 
@@ -750,12 +595,12 @@ using eka2l1::drivers::camera::instance_ios;
     }
 
     std::vector<std::uint8_t> bgra;
-    const bool render_ok = eka2l1::drivers::camera::render_cgimage_to_bgra(image, _captureWidth,
+    const bool render_ok = eka2l1::drivers::camera::ios_render_cgimage_to_bgra(image, _captureWidth,
         _captureHeight, bgra);
     CGImageRelease(image);
 
     std::vector<std::uint8_t> converted;
-    if (render_ok && eka2l1::drivers::camera::convert_bgra_to_guest(bgra.data(),
+    if (render_ok && eka2l1::drivers::camera::ios_convert_bgra_to_guest(bgra.data(),
         static_cast<std::size_t>(_captureWidth) * 4, _captureWidth, _captureHeight,
         format, converted)) {
         [self deliverCaptureBytes:converted.data() size:converted.size() error:0];
@@ -909,7 +754,7 @@ namespace eka2l1::drivers::camera {
     }
 
     std::vector<frame_format> instance_ios::supported_frame_formats() {
-        return std::vector<frame_format>(std::begin(SUPPORTED_FORMATS), std::end(SUPPORTED_FORMATS));
+        return std::vector<frame_format>(std::begin(IOS_SUPPORTED_FORMATS), std::end(IOS_SUPPORTED_FORMATS));
     }
 
     std::vector<eka2l1::vec2> instance_ios::supported_output_image_sizes(const frame_format frame_format) {
@@ -948,7 +793,7 @@ namespace eka2l1::drivers::camera {
         result.options_supported_ = CAPTURE_OPTION_ALL;
         result.supported_image_formats_ = 0;
 
-        for (const frame_format format: SUPPORTED_FORMATS) {
+        for (const frame_format format: IOS_SUPPORTED_FORMATS) {
             result.supported_image_formats_ |= static_cast<std::uint32_t>(format);
         }
 
@@ -976,7 +821,7 @@ namespace eka2l1::drivers::camera {
             return;
         }
 
-        if (!is_supported_format(format)) {
+        if (!ios_is_supported_format(format)) {
             LOG_ERROR(DRIVER_CAM, "Viewfinder format {} is not supported!", static_cast<int>(format));
             return;
         }
@@ -1054,7 +899,7 @@ namespace eka2l1::drivers::camera {
             }
         }
 
-        if (!is_supported_format(format)) {
+        if (!ios_is_supported_format(format)) {
             LOG_ERROR(DRIVER_CAM, "Image capture format {} is not supported!", static_cast<int>(format));
             callback(nullptr, 0, -1);
             return;

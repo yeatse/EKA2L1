@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 EKA2L1 Team.
+ * Copyright (c) 2026 EKA2L1 Team.
  *
  * This file is part of EKA2L1 project.
  *
@@ -20,19 +20,22 @@
 #pragma once
 
 #include <drivers/camera/camera.h>
-#include <cstdint>
+#include <drivers/camera/camera_collection.h>
+
 #include <memory>
 
 namespace eka2l1::drivers::camera {
-    class collection {
+    // Test-pattern camera for the iOS simulator, which has no AVCaptureDevice
+    // at all: without it CCamera::CamerasAvailable() reports 0 and no guest
+    // ever exercises the ECam path. Exposes the same back/front pair a real
+    // device does and feeds synthesized frames through the shared iOS pixel
+    // conversion, so everything downstream of the frame source is the code a
+    // real device runs.
+    //
+    // Never selected on device builds — see get_collection().
+    class collection_simulator : public collection {
     public:
-        // The collection is owned through a unique_ptr<collection>, so deleting
-        // a backend through the base pointer needs this to be virtual.
-        virtual ~collection() = default;
-
-        virtual std::uint32_t count() const = 0;
-        virtual std::unique_ptr<instance> make_camera(const std::uint32_t camera_index) = 0;
+        std::uint32_t count() const override;
+        std::unique_ptr<instance> make_camera(const std::uint32_t camera_index) override;
     };
-
-    collection *get_collection();
 }
