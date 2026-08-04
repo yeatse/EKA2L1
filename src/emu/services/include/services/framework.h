@@ -55,7 +55,12 @@ namespace eka2l1::service {
                     return lhs->id < rhs;
                 });
 
-            if (result == objs.end()) {
+            // lower_bound stops at the first object with a greater or equal id, so an id
+            // that does not exist - a handle the client already closed, or the zero handle
+            // a command uses to say "no bitmap" - otherwise resolves to an unrelated live
+            // object, reinterpreted as a T. Callers only test for null, so that object is
+            // then read through the wrong type.
+            if ((result == objs.end()) || ((*result)->id != id)) {
                 return nullptr;
             }
 

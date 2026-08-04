@@ -1037,7 +1037,7 @@ namespace eka2l1 {
         return no_failure;
     }
 
-    std::size_t fbs_server::readable_bytes_from(const std::uint8_t *ptr, const std::size_t fallback) const {
+    std::size_t fbs_server::readable_bytes_from(const std::uint8_t *ptr) const {
         // Membership is tested against the whole reserved range so a pointer past
         // the committed end still resolves to this chunk (and clamps to zero)
         // instead of falling through with an unbounded size.
@@ -1051,7 +1051,12 @@ namespace eka2l1 {
             return (ptr < committed_end) ? static_cast<std::size_t>(committed_end - ptr) : 0;
         }
 
-        return fallback;
+        // Pixels always come out of one of the two chunks above, whatever the
+        // bitmap's age or format: even a bitmap read straight from a ROM MBM is
+        // decompressed into them (load_data_to_rom). A pointer that lands outside
+        // both was computed from a header field that no longer describes reality,
+        // and following it walks host memory the emulator does not own.
+        return 0;
     }
 
     bool fbs_server::is_large_bitmap(const std::uint32_t compressed_size) const {

@@ -810,22 +810,47 @@ namespace eka2l1 {
         return msgs_[handle - 1].get();
     }
 
+    static bool destroy_object_in_container(std::vector<kernel_obj_unq_ptr> &container, kernel_obj_ptr obj) {
+        auto locate = [&]() {
+            return std::lower_bound(container.begin(), container.end(), obj, [](const auto &lhs, const auto &rhs) {
+                return lhs->unique_id() < rhs->unique_id();
+            });
+        };
+
+        auto res = locate();
+
+        // lower_bound lands on the first object with a greater or equal uid, so an object
+        // that is not (or no longer) in this container resolves to an unrelated live one.
+        // Destroying and erasing that one leaves everybody still referencing it with a
+        // dangling pointer, which is only paid for much later.
+        if ((res == container.end()) || (res->get() != obj)) {
+            return false;
+        }
+
+        obj->destroy();
+
+        // destroy() can destroy other objects of the same type: a codeseg drops the
+        // references it holds on its dependencies, a thread releases its owner. Each of
+        // those erases an element of this very vector, so the iterator taken above may now
+        // address a different - live - object. Locate the slot again before erasing it.
+        res = locate();
+
+        if ((res != container.end()) && (res->get() == obj)) {
+            container.erase(res);
+        }
+
+        return true;
+    }
+
     bool kernel_system::destroy(kernel_obj_ptr obj) {
         if (!obj || wiping_) {
             return true;
         }
 
         switch (obj->get_object_type()) {
-#define OBJECT_SEARCH(obj_type, obj_map)                                                                         \
-    case kernel::object_type::obj_type: {                                                                        \
-        auto res = std::lower_bound(obj_map.begin(), obj_map.end(), obj, [&](const auto &lhs, const auto &rhs) { \
-            return lhs->unique_id() < rhs->unique_id();                                                          \
-        });                                                                                                      \
-        if (res == obj_map.end())                                                                                \
-            return false;                                                                                        \
-        (*res)->destroy();                                                                                       \
-        obj_map.erase(res);                                                                                      \
-        return true;                                                                                             \
+#define OBJECT_SEARCH(obj_type, obj_map)              \
+    case kernel::object_type::obj_type: {             \
+        return destroy_object_in_container(obj_map, obj); \
     }
 
             OBJECT_SEARCH(mutex, mutexes_)

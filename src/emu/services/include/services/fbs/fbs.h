@@ -499,10 +499,12 @@ namespace eka2l1 {
          * claim more data than the backing chunk actually commits. Use this to bound
          * host-side reads of bitmap data.
          *
-         * @returns Bytes readable up to the containing chunk's committed end, or
-         *          the given fallback if the pointer belongs to neither chunk.
+         * @returns Bytes readable up to the containing chunk's committed end, or zero
+         *          if the pointer belongs to neither chunk. All bitmap pixels are
+         *          allocated from one of the two, so a pointer that is in neither is
+         *          not something the host may read at all.
          */
-        std::size_t readable_bytes_from(const std::uint8_t *ptr, const std::size_t fallback) const;
+        std::size_t readable_bytes_from(const std::uint8_t *ptr) const;
 
         template <typename T>
         void destroy_bitmap_font(T *bitmapfont);
