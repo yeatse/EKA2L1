@@ -105,6 +105,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-03 | [Skin frames drawn by an app: the colour plane and the scanline padding](./nvg-skin-frames-colour-plane-and-padding.md) |
 | 2026-08-03 | [Symbian^3 Camera exits at launch: a shredded central repository value](./x7-camera-quoted-cenrep-and-accessory-mode.md) |
 | 2026-08-03 | [A camera for the iOS simulator, and the ECam buffer bug it exposed](./ios-simulator-camera-and-ecam-buffer.md) |
+| 2026-08-04 | [Attaching to a flexible chunk was mistaken for owning it](./flexible-chunk-attach-lifetime.md) |
 
 ## Archived planning docs
 
