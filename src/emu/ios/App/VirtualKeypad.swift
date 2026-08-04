@@ -308,78 +308,52 @@ struct SystemMenuKey: View {
     let actions: KeypadMenuActions
     var size: CGSize = CGSize(width: 58, height: 38)
 
-    @State private var isShowingMenu = false
-
     var body: some View {
-        Button {
-            isShowingMenu = true
+        Menu {
+            menuContent
         } label: {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: size.width, height: size.height)
                 .keyCap(kind: .soft, pressed: false)
         }
-        .buttonStyle(.plain)
-        .popover(isPresented: $isShowingMenu, attachmentAnchor: .rect(.bounds)) {
-            menuPopover
-        }
         .accessibilityLabel("emulator.menu")
     }
 
     @ViewBuilder
-    private var menuPopover: some View {
-        if #available(iOS 16.4, *) {
-            menuList
-                .presentationCompactAdaptation(.popover)
-        } else {
-            menuList
+    private var menuContent: some View {
+        Button {
+            actions.editKeypadLayout()
+        } label: {
+            Label("keypad.editor.editLayout", systemImage: "move.3d")
         }
-    }
 
-    private var menuList: some View {
-        List {
-            Button {
-                performAndDismiss(actions.editKeypadLayout)
-            } label: {
-                Label("keypad.editor.editLayout", systemImage: "move.3d")
-            }
-
-            Toggle(isOn: actions.locksOrientation) {
-                Label("emulator.menu.lockOrientation", systemImage: "lock.rotation")
-            }
-
-            Menu {
-                fpsLimitPicker
-
-                if !actions.guestScreenModes.isEmpty {
-                    Divider()
-                    guestScreenModePicker
-                }
-            } label: {
-                Label("emulator.menu.gameSettings",
-                      systemImage: "slider.horizontal.3")
-            }
-
-            Button {
-                performAndDismiss(actions.saveScreenshot)
-            } label: {
-                Label("emulator.saveScreenshot", systemImage: "camera")
-            }
-
-            Button(role: .destructive) {
-                performAndDismiss(actions.exitGame)
-            } label: {
-                Label("emulator.exit", systemImage: "xmark.circle")
-            }
+        Toggle(isOn: actions.locksOrientation) {
+            Label("emulator.menu.lockOrientation", systemImage: "lock.rotation")
         }
-        .listStyle(.plain)
-        .environment(\.defaultMinListRowHeight, 44)
-        .frame(width: 300, height: 260)
-    }
 
-    private func performAndDismiss(_ action: @escaping () -> Void) {
-        isShowingMenu = false
-        action()
+        Menu {
+            fpsLimitPicker
+
+            if !actions.guestScreenModes.isEmpty {
+                Divider()
+                guestScreenModePicker
+            }
+        } label: {
+            Label("emulator.menu.gameSettings", systemImage: "slider.horizontal.3")
+        }
+
+        Button {
+            actions.saveScreenshot()
+        } label: {
+            Label("emulator.saveScreenshot", systemImage: "camera")
+        }
+
+        Button(role: .destructive) {
+            actions.exitGame()
+        } label: {
+            Label("emulator.exit", systemImage: "xmark.circle")
+        }
     }
 
     @ViewBuilder
