@@ -20,8 +20,8 @@ import UIKit
 // edit wins) and each guest key holds at most one binding.
 //
 // Host tokens: controller buttons use HostButton raw values; keyboard keys
-// use "kb.<HID usage>". HID usage is the shared currency between capture
-// (GameController's GCKeyCode) and runtime input (UIKit's UIKeyboardHIDUsage).
+// use "kb.<HID usage>", the raw value GCKeyCode carries at both capture and
+// runtime input time.
 
 // Every bindable controller button on an extended gamepad. The left
 // thumbstick is deliberately not listed: it aliases the d-pad tokens at both
@@ -207,10 +207,9 @@ enum GuestKeys {
 // MARK: - Connected peripherals
 
 // Tracks connected input peripherals and which one is active. Lives for the
-// whole app so runtime input (ControllerInputBridge, the render view's key
-// presses) and the Settings UI observe one source of truth. All state is
-// main-thread confined: notifications are observed on .main and SwiftUI
-// actions run on main.
+// whole app so runtime input (PeripheralInputBridge) and the Settings UI
+// observe one source of truth. All state is main-thread confined:
+// notifications are observed on .main and SwiftUI actions run on main.
 final class PeripheralManager: ObservableObject, @unchecked Sendable {
     struct Peripheral: Identifiable, Equatable {
         enum Kind {

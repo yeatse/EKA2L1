@@ -2,7 +2,7 @@ import GameController
 import QuartzCore
 import UIKit
 
-private final class ControllerInputBridge: @unchecked Sendable {
+private final class PeripheralInputBridge: @unchecked Sendable {
     private let threshold: Float = 0.45
     private let lock = NSLock()
     private var activeScansByToken: [String: UInt32] = [:]
@@ -12,8 +12,14 @@ private final class ControllerInputBridge: @unchecked Sendable {
     // that is the only time the active selection can move while the emulator
     // screen is up, since Settings is not reachable then.
     private var mapping: [String: UInt32] = [:]
+    // Hardware-keyboard binding, keyed by HID usage. Loaded on start().
+    private var keyboardMapping: [Int: UInt32] = [:]
+    // Cleared while a host panel is up (see setKeyboardEnabled). Survives
+    // start()/stop() so a panel open across a re-appear stays in control.
+    private var keyboardEnabled = true
 
     func start() {
+        keyboardMapping = PeripheralMappingStore.keyboardScanMapping()
         // Touch the manager first so its connect/disconnect observers are
         // registered ahead of ours and refresh() reads updated state.
         refresh()
@@ -31,7 +37,19 @@ private final class ControllerInputBridge: @unchecked Sendable {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         GCController.controllers().forEach { $0.extendedGamepad?.valueChangedHandler = nil }
+        GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = nil
         releaseAll()
+    }
+
+    // GameController delivers key events app-wide rather than through the
+    // responder chain, so guest key input has to be suspended explicitly while
+    // a host panel is visible instead of by dropping first-responder status.
+    func setKeyboardEnabled(_ enabled: Bool) {
+        guard enabled != keyboardEnabled else { return }
+        keyboardEnabled = enabled
+        if !enabled {
+            releaseKeyboard()
+        }
     }
 
     private func refresh() {
@@ -45,6 +63,9 @@ private final class ControllerInputBridge: @unchecked Sendable {
         if let controller = PeripheralManager.shared.activeController,
            let gamepad = controller.extendedGamepad {
             handleAll(gamepad, from: controller)
+        }
+        GCKeyboard.coalesced?.keyboardInput?.keyChangedHandler = { [weak self] _, _, keyCode, pressed in
+            self?.handleKey(usage: Int(keyCode.rawValue), pressed: pressed)
         }
     }
 
@@ -79,10 +100,55 @@ private final class ControllerInputBridge: @unchecked Sendable {
                      pressed: gamepad.leftThumbstick.xAxis.value > threshold)
     }
 
+    // Hardware keyboard. Only presses are gated: a key held across a suspend
+    // or an active-peripheral switch is released by releaseKeyboard() /
+    // releaseAll(), and its release must still be forwarded if it arrives
+    // later, so it cannot stay stuck down in the guest.
+    private func handleKey(usage: Int, pressed: Bool) {
+        if pressed, !keyboardEnabled || !PeripheralManager.shared.keyboardCanDrive {
+            return
+        }
+        updateInput(token: KeyboardKey.token(forUsage: usage),
+                    scan: scanCode(forUsage: usage), pressed: pressed)
+    }
+
+    // Map a hardware-keyboard HID usage to an EPOC standard scan code (see
+    // services/window/keys.h `std_scan_code`). The user mapping wins; keys it
+    // doesn't cover fall back to text-style input that is not part of the
+    // bindable guest key list: letters use their uppercase ASCII value as the
+    // scan code (the EPOC convention, needed for multitap text entry), plus
+    // space/tab, the keypad * and ISO # glyphs, and the Esc/Enter conveniences.
+    private func scanCode(forUsage usage: Int) -> UInt32 {
+        if let mapped = keyboardMapping[usage] {
+            return mapped
+        }
+        switch usage {
+        case 0x04...0x1D:           // a-z -> uppercase ASCII == std scan code
+            return UInt32(0x41 + usage - 0x04)
+        case 0x2B:                  // tab
+            return 0x02             // std_key_tab
+        case 0x2C:                  // space
+            return 0x05             // std_key_space
+        case 0x29:                  // escape
+            return 0xA5             // std_key_device_1 (right soft key / back)
+        case 0x32:                  // non-US # (a bare key only on ISO layouts)
+            return 0x7F
+        case 0x55:                  // keypad *
+            return 0x2A
+        case 0x58:                  // keypad enter
+            return 0xA7             // std_key_device_3 (select / OK)
+        default:
+            return 0
+        }
+    }
+
     // `token` keys the press state (d-pad and left stick track separately),
     // `mappingToken` keys the user mapping (both share one direction entry).
     private func updateButton(token: String, mappingToken: String? = nil, pressed: Bool) {
-        let scan = mapping[mappingToken ?? token] ?? 0
+        updateInput(token: token, scan: mapping[mappingToken ?? token] ?? 0, pressed: pressed)
+    }
+
+    private func updateInput(token: String, scan: UInt32, pressed: Bool) {
         let event: (UInt32, Bool)?
         lock.lock()
         let wasPressed = activeScansByToken[token] != nil
@@ -104,12 +170,20 @@ private final class ControllerInputBridge: @unchecked Sendable {
     }
 
     private func releaseAll() {
+        release { _ in true }
+    }
+
+    private func releaseKeyboard() {
+        release(where: KeyboardKey.isKeyboardToken)
+    }
+
+    private func release(where matches: (String) -> Bool) {
         lock.lock()
-        let activeScans = Array(activeScansByToken.values)
-        activeScansByToken.removeAll()
+        let released = activeScansByToken.filter { matches($0.key) }
+        released.keys.forEach { activeScansByToken.removeValue(forKey: $0) }
         lock.unlock()
 
-        for scan in activeScans {
+        for scan in released.values {
             EKA2L1Bridge.submitRawKey(scan, pressed: false)
         }
     }
@@ -165,15 +239,6 @@ private final class EKA2L1RenderView: UIView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    override var canBecomeFirstResponder: Bool {
-        true
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        becomeFirstResponder()
     }
 
     override func layoutSubviews() {
@@ -262,72 +327,6 @@ private final class EKA2L1RenderView: UIView {
         }
     }
 
-    // User-edited keyboard binding (Settings > Button mapping), keyed by HID
-    // usage. Set by the hosting controller on every appear.
-    var keyboardScanMapping: [Int: UInt32] = [:]
-
-    // Map a hardware-keyboard press to an EPOC standard scan code (see
-    // services/window/keys.h `std_scan_code`). The user mapping wins; keys it
-    // doesn't cover fall back to text-style input that is not part of the
-    // bindable guest key list: letters use their uppercase ASCII value as the
-    // scan code (the EPOC convention, needed for multitap text entry), plus
-    // space/tab, the keypad * and # glyphs, and the Esc/Enter conveniences.
-    private func scanCode(for press: UIPress) -> UInt32 {
-        guard let key = press.key else { return 0 }
-        if let mapped = keyboardScanMapping[key.keyCode.rawValue] {
-            return mapped
-        }
-
-        let chars = key.charactersIgnoringModifiers.lowercased()
-        if chars.count == 1, let scalar = chars.unicodeScalars.first {
-            switch scalar.value {
-            case 97...122:          // a-z -> uppercase ASCII == std scan code
-                return UInt32(scalar.value) - 0x20
-            case 42:                // *
-                return 0x2a
-            case 35:                // #
-                return 0x7f
-            default:
-                break
-            }
-        }
-
-        switch key.keyCode {
-        case .keypadEnter:
-            return 0xA7             // std_key_device_3 (select / OK)
-        case .keyboardSpacebar:
-            return 0x05             // std_key_space
-        case .keyboardTab:
-            return 0x02             // std_key_tab
-        case .keyboardEscape:
-            return 0xA5             // std_key_device_1 (right soft key / back)
-        default:
-            return 0
-        }
-    }
-
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        // The keyboard only drives the guest while it is the active
-        // peripheral (or nothing is). Releases below stay ungated so a key
-        // held across an active-peripheral switch cannot stick down.
-        guard PeripheralManager.shared.keyboardCanDrive else { return }
-        for press in presses {
-            let scan = scanCode(for: press)
-            if scan != 0 {
-                EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
-            }
-        }
-    }
-
-    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        for press in presses {
-            let scan = scanCode(for: press)
-            if scan != 0 {
-                EKA2L1Bridge.shared.submitRawKey(scan, pressed: false)
-            }
-        }
-    }
-
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         dispatchTouches(touches)
     }
@@ -369,7 +368,7 @@ final class EmulatorViewController: UIViewController {
         }
     }
     private var launched = false
-    private let controllerInput = ControllerInputBridge()
+    private let peripheralInput = PeripheralInputBridge()
     private var gameView: EKA2L1RenderView {
         view as! EKA2L1RenderView
     }
@@ -408,24 +407,17 @@ final class EmulatorViewController: UIViewController {
         view.backgroundColor = .black
     }
 
-    // The render view owns UIPress handling for the guest. Release that capture
-    // while a host panel is visible so the panel and system presentation can
-    // manage responder handling without also forwarding keys to the guest.
+    // Suspend guest keyboard input while a host panel is visible, so the panel
+    // handles the hardware keyboard on its own.
     func setHardwareKeyboardCaptureEnabled(_ enabled: Bool) {
-        guard isViewLoaded else { return }
-        if enabled {
-            gameView.becomeFirstResponder()
-        } else if gameView.isFirstResponder {
-            gameView.resignFirstResponder()
-        }
+        peripheralInput.setKeyboardEnabled(enabled)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         gameView.setNeedsLayout()
         gameView.layoutIfNeeded()
-        gameView.keyboardScanMapping = PeripheralMappingStore.keyboardScanMapping()
-        controllerInput.start()
+        peripheralInput.start()
         EKA2L1Bridge.shared.resume()
         // Launch once: viewDidAppear can re-fire (e.g. returning frontmost),
         // and re-launching would spawn a second guest instance.
@@ -442,7 +434,7 @@ final class EmulatorViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        controllerInput.stop()
+        peripheralInput.stop()
         EKA2L1Bridge.shared.detachLayer()
     }
 
