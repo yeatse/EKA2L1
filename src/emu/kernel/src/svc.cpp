@@ -1955,6 +1955,63 @@ namespace eka2l1::epoc {
         return epoc::error_none;
     }
 
+    // A ROM system daemon and the global object it publishes once it is up.
+    struct startup_daemon_entry {
+        const char *start_object_name;
+        const char16_t *executable;
+    };
+
+    // EKA2L1 never runs the ROM's boot startup sequence (on S60 that is the System Starter,
+    // z:\sys\bin\startup.exe), so system daemons exist only once some application demands one.
+    // An application that probes for a daemon's start object therefore sits through its own
+    // timeout on every launch: the Clock polls ClkNitzMdlStartSemaphore six times a second
+    // apart before giving up and starting the NITZ module itself. Start the daemon the moment
+    // its start object is looked up, which is what the missing boot sequence would have done
+    // long before the application asked.
+    static const startup_daemon_entry STARTUP_DAEMONS[] = {
+        { "ClkNitzMdlStartSemaphore", u"ClkNitzMdls.exe" }
+    };
+
+    static void start_missing_startup_daemon(kernel_system *kern, const std::string &missing_object_name) {
+        const char16_t *executable = nullptr;
+
+        for (const startup_daemon_entry &entry : STARTUP_DAEMONS) {
+            if (common::compare_ignore_case(missing_object_name.c_str(), entry.start_object_name) == 0) {
+                executable = entry.executable;
+                break;
+            }
+        }
+
+        if (!executable) {
+            return;
+        }
+
+        const std::u16string exe_name = executable;
+
+        // The daemon publishes its start object a moment after it is spawned, so a probe that
+        // lands in that window must not spawn a second copy.
+        for (auto &process_obj : kern->get_process_list()) {
+            kernel::process *candidate = reinterpret_cast<kernel::process *>(process_obj.get());
+
+            if ((candidate->get_exit_type() == kernel::entity_exit_type::pending)
+                && (common::compare_ignore_case(eka2l1::filename(candidate->get_exe_path(), true), exe_name) == 0)) {
+                return;
+            }
+        }
+
+        process_ptr daemon = kern->spawn_new_process(exe_name, u"", 0, 0);
+
+        if (!daemon) {
+            LOG_WARN(KERNEL, "System daemon {} is not present in this ROM", common::ucs2_to_utf8(exe_name));
+            return;
+        }
+
+        // Warn level on purpose: the normal-use log preset pins Kernel at warn, and a process
+        // the guest never asked for is worth seeing in a bug report.
+        LOG_WARN(KERNEL, "Starting system daemon {} in place of the ROM boot sequence", common::ucs2_to_utf8(exe_name));
+        daemon->run();
+    }
+
     BRIDGE_FUNC(std::int32_t, handle_open_object, std::int32_t obj_type, eka2l1::ptr<epoc::desc8> name_des, std::int32_t owner) {
         process_ptr pr = kern->crr_process();
         std::string obj_name = name_des.get(pr)->to_std_string(pr);
@@ -1965,6 +2022,8 @@ namespace eka2l1::epoc {
 
         if (!obj) {
             LOG_ERROR(KERNEL, "Can't open object: {}", obj_name);
+            start_missing_startup_daemon(kern, obj_name);
+
             return epoc::error_not_found;
         }
 
