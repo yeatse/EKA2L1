@@ -382,6 +382,7 @@ namespace eka2l1 {
 
         void load_fonts(eka2l1::io_system *io);
         void load_custom_fonts(const std::string &storage);
+        void load_linked_fonts(eka2l1::io_system *io);
 
         std::atomic<service::uid> connection_id_counter{ 0x1234 }; // Easier to debug
 
@@ -392,9 +393,10 @@ namespace eka2l1 {
 
     protected:
         void load_fonts_from_directory(eka2l1::io_system *io, eka2l1::directory *dir);
+        void load_linked_fonts_from_directory(eka2l1::io_system *io, const std::u16string &fonts_folder_path);
         void initialize_server();
 
-        bool add_font(common::ro_stream &stream, const std::string &name);
+        bool add_font(common::ro_stream &stream, const std::string &name, const bool user_font = false);
         bool add_single_font(eka2l1::io_system *io, const std::u16string &path);
 
     public:

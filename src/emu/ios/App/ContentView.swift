@@ -29,12 +29,12 @@ private let ngage2Types: [UTType] = {
     return v
 }()
 
-// Guest fonts. fbs_server::add_font only recognises .ttf (FreeType) and .gdr
-// (Symbian bitmap fonts), so anything else would be copied in and then
-// silently ignored — keep the picker to those two. Resolving by extension
-// gives .ttf the system UTI and .gdr, which nothing declares, the dynamic type
-// LaunchServices derives from the extension, which the picked files carry too.
-private let fontTypes: [UTType] = ["ttf", "gdr"].compactMap {
+// Guest fonts. A TrueType font serves every device: the font store backs the
+// device's own faces with it, converting its glyphs to the monochrome format
+// where the device only understands that one. Symbian's own .gdr bitmap fonts
+// are deliberately not offered — they would only ever suit the devices whose
+// fonts are already .gdr, and only at the sizes they happen to carry.
+private let fontTypes: [UTType] = ["ttf"].compactMap {
     UTType(filenameExtension: $0)
 }
 
@@ -42,7 +42,7 @@ private enum HomeImportTarget {
     case sis
     case ngage    // classic N-Gage game card folder (installed onto E:)
     case ngage2   // N-Gage 2.0 .n-gage package (staged into E:\n-gage)
-    case font     // .ttf / .gdr copied into the user font folder
+    case font     // .ttf copied into the user font folder
 }
 
 // iOS 16 fallback for ContentUnavailableView (which is iOS 17+). Mimics its
@@ -823,7 +823,7 @@ struct ContentView: View {
         case .failure(let err):
             banner = String(localized: "home.banner.importFailed \(err.localizedDescription)")
         case .success(let urls):
-            let fonts = urls.filter { ["ttf", "gdr"].contains($0.pathExtension.lowercased()) }
+            let fonts = urls.filter { $0.pathExtension.lowercased() == "ttf" }
             guard !fonts.isEmpty else {
                 banner = String(localized: "home.fonts.unsupported")
                 return
