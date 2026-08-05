@@ -394,6 +394,88 @@ namespace eka2l1 {
             return pass;
         }
 
+        // Resolve a file description target to the drive the package installs on.
+        // A leading '!' means "the drive the user picked".
+        static std::u16string resolve_file_target(const std::u16string &target, const drive_number drive) {
+            std::u16string file_path = target;
+
+            if (!file_path.empty() && (file_path[0] == '!')) {
+                file_path[0] = drive_to_char16(drive);
+            }
+
+            return file_path;
+        }
+
+        // Secure ID of an installed executable, 0 when the file is not one (or is
+        // not there yet). For a well-behaved app this is its UID3, which is what
+        // lets a package be traced back to the app it installs.
+        static epoc::uid read_executable_sid(io_system *io, const std::u16string &target) {
+            symfile exe_file = io->open_file(target, READ_MODE | BIN_MODE);
+            if (!exe_file) {
+                return 0;
+            }
+
+            eka2l1::ro_file_stream exe_stream(exe_file.get());
+
+            loader::e32img_header header;
+            loader::e32img_header_extended extended_header;
+            std::uint32_t uncomp_size = 0;
+            epocver ver_used = epocver::eka1;
+
+            extended_header.info.secure_id = 0;
+
+            if (loader::parse_e32img_header(reinterpret_cast<common::ro_stream *>(&exe_stream), header, extended_header,
+                    uncomp_size, ver_used)
+                != 0) {
+                return 0;
+            }
+
+            return extended_header.info.secure_id;
+        }
+
+        // Record a file the package owns, so that uninstalling it later deletes
+        // the file back. Also folds the file's drive into the package's drive mask.
+        static void register_file_description(io_system *io, const loader::sis_file_des *file_des, const std::u16string &file_path,
+            package::object &parent) {
+            if (!file_path.empty() && (file_path[0] != '!')) {
+                // Some packages carry entries whose target does not start
+                // with a drive letter (e.g. empty targets on FILENULL/
+                // FILETEXT records); feeding those to char16_to_drive
+                // asserts on debug builds and corrupts the drive mask on
+                // release ones, so only accept real drive letters.
+                const char16_t drive_char = std::towlower(file_path[0]);
+                if ((drive_char >= u'a') && (drive_char <= u'z')) {
+                    parent.drives |= 1 << (char16_to_drive(file_path[0]) - drive_a);
+                } else {
+                    LOG_WARN(PACKAGE, "File target does not start with a drive letter, ignoring for drive mask: {}",
+                        common::ucs2_to_utf8(file_path));
+                }
+            }
+
+            package::file_description desc;
+            desc.index = file_des->idx;
+            desc.mime_type = file_des->mime_type.unicode_string;
+            desc.hash.algorithm = static_cast<std::uint32_t>(file_des->hash.hash_method);
+            desc.hash.data.resize(file_des->hash.hash_data.raw_data.size());
+
+            std::memcpy(desc.hash.data.data(), file_des->hash.hash_data.raw_data.data(), desc.hash.data.size());
+            desc.operation = static_cast<std::int32_t>(file_des->op);
+            desc.operation_options = static_cast<std::int32_t>(file_des->op_op);
+            desc.uncompressed_length = file_des->len;
+            desc.target = file_path;
+            desc.sid = 0;
+
+            if (!file_des->caps.raw_data.empty()) {
+                // It's an EXE file, so also gather the SID. This only succeeds for a
+                // file that is already on the drive (a stub SIS describing the ROM);
+                // for a real install the file does not exist until extraction, and
+                // resolve_missing_executable_sids picks it up afterwards.
+                desc.sid = read_executable_sid(io, desc.target);
+            }
+
+            parent.file_descriptions.push_back(std::move(desc));
+        }
+
         static bool fill_controller_registeration(io_system *io, loader::sis_controller *ctrl, package::object &parent, manager::controller_info &controller_info, const drive_number drive, const bool stub) {
             controller_info.data_ = reinterpret_cast<std::uint8_t *>(ctrl->raw_data.data());
             controller_info.size_ = ctrl->raw_data.size();
@@ -424,61 +506,7 @@ namespace eka2l1 {
 
             for (std::size_t i = 0; i < ctrl->install_block.files.fields.size(); i++) {
                 const loader::sis_file_des *file_des = reinterpret_cast<loader::sis_file_des *>(ctrl->install_block.files.fields[i].get());
-                std::u16string file_path = file_des->target.unicode_string;
-
-                if (!file_path.empty() && (file_path[0] == '!')) {
-                    file_path[0] = drive_to_char16(drive);
-                } else if (!file_path.empty()) {
-                    // Some packages carry entries whose target does not start
-                    // with a drive letter (e.g. empty targets on FILENULL/
-                    // FILETEXT records); feeding those to char16_to_drive
-                    // asserts on debug builds and corrupts the drive mask on
-                    // release ones, so only accept real drive letters.
-                    const char16_t drive_char = std::towlower(file_path[0]);
-                    if ((drive_char >= u'a') && (drive_char <= u'z')) {
-                        parent.drives |= 1 << (char16_to_drive(file_path[0]) - drive_a);
-                    } else {
-                        LOG_WARN(PACKAGE, "File target does not start with a drive letter, ignoring for drive mask: {}",
-                            common::ucs2_to_utf8(file_path));
-                    }
-                }
-
-                // If we are really going to install this
-                package::file_description desc;
-                desc.index = file_des->idx;
-                desc.mime_type = file_des->mime_type.unicode_string;
-                desc.hash.algorithm = static_cast<std::uint32_t>(file_des->hash.hash_method);
-                desc.hash.data.resize(file_des->hash.hash_data.raw_data.size());
-
-                std::memcpy(desc.hash.data.data(), file_des->hash.hash_data.raw_data.data(), desc.hash.data.size());
-                desc.operation = static_cast<std::int32_t>(file_des->op);
-                desc.operation_options = static_cast<std::int32_t>(file_des->op_op);
-                desc.uncompressed_length = file_des->len;
-                desc.target = file_path;
-                desc.sid = 0;
-
-                if (!file_des->caps.raw_data.empty()) {
-                    // It's an EXE file, so also gather the SID
-                    symfile exe_file = io->open_file(desc.target, READ_MODE | BIN_MODE);
-                    if (exe_file) {
-                        eka2l1::ro_file_stream exe_stream(exe_file.get());
-
-                        loader::e32img_header header;
-                        loader::e32img_header_extended extended_header;
-                        std::uint32_t uncomp_size = 0;
-                        epocver ver_used = epocver::eka1;
-
-                        extended_header.info.secure_id = 0;
-
-                        if (loader::parse_e32img_header(reinterpret_cast<common::ro_stream *>(&exe_stream), header, extended_header,
-                                uncomp_size, ver_used)
-                            == 0) {
-                            desc.sid = extended_header.info.secure_id;
-                        }
-                    }
-                }
-
-                parent.file_descriptions.push_back(std::move(desc));
+                register_file_description(io, file_des, resolve_file_target(file_des->target.unicode_string, drive), parent);
             }
 
             for (auto &vendor_name_field : ctrl->info.vendor_names.fields) {
@@ -548,7 +576,8 @@ namespace eka2l1 {
             return result;
         }
 
-        bool ss_interpreter::interpret(sis_install_block &install_block, sis_registry_tree &parent_tree, std::uint16_t crr_blck_idx) {
+        bool ss_interpreter::interpret(sis_install_block &install_block, sis_registry_tree &parent_tree, std::uint16_t crr_blck_idx,
+            const bool register_files) {
             // Process file
             for (auto &wrap_file : install_block.files.fields) {
                 sis_file_des *file = reinterpret_cast<sis_file_des *>(wrap_file.get());
@@ -556,6 +585,17 @@ namespace eka2l1 {
                 std::string install_path = "";
 
                 if (file->target.unicode_string.length() > 0) {
+                    // SWI validates every target it plans and fails the install on a
+                    // bad one. Skipping just the offending entry is the softer call:
+                    // a package that names a path it has no business naming should not
+                    // get it, but one entry we read differently than SWI would should
+                    // not cost the user the whole installation.
+                    if (!package::is_valid_target_path(resolve_file_target(file->target.unicode_string, install_drive))) {
+                        LOG_ERROR(PACKAGE, "SIS names an invalid install target, skipping it: {}",
+                            common::ucs2_to_utf8(file->target.unicode_string));
+                        continue;
+                    }
+
                     install_path = get_install_path(file->target.unicode_string, install_drive);
                     if (common::is_platform_case_sensitive()) {
                         install_path = common::lowercase_string(install_path);
@@ -567,6 +607,16 @@ namespace eka2l1 {
                         return false;
                     }
                     raw_path = common::ucs2_to_utf8(*raw_path_opt);
+                }
+
+                // Registering before the operation switch mirrors what
+                // fill_controller_registeration does for the controller's own block:
+                // every entry the block owns is recorded, including the ones that
+                // only matter at uninstall time (FILENULL). Entries a text prompt
+                // asked to skip are not installed, so they are not ours to record.
+                if (register_files && !skip_next_file) {
+                    register_file_description(io, file, resolve_file_target(file->target.unicode_string, install_drive),
+                        parent_tree.package_info);
                 }
 
                 switch (file->op) {
@@ -667,14 +717,16 @@ namespace eka2l1 {
                 sis_if *if_stmt = reinterpret_cast<sis_if *>(wrap_if_statement.get());
                 auto result = condition_passed(&if_stmt->expr);
 
+                // Files below a conditional are not part of the controller's own
+                // install block, so this is the only chance to register them.
                 if (result) {
-                    interpret(if_stmt->install_block, parent_tree, crr_blck_idx);
+                    interpret(if_stmt->install_block, parent_tree, crr_blck_idx, true);
                 } else {
                     for (auto &wrap_else_branch : if_stmt->else_if.fields) {
                         sis_else_if *else_branch = reinterpret_cast<sis_else_if *>(wrap_else_branch.get());
 
                         if (condition_passed(&else_branch->expr)) {
-                            interpret(else_branch->install_block, parent_tree, crr_blck_idx);
+                            interpret(else_branch->install_block, parent_tree, crr_blck_idx, true);
                             break;
                         }
                     }
@@ -682,6 +734,30 @@ namespace eka2l1 {
             }
 
             return true;
+        }
+
+        // Executables get their SID read at registration time, which happens before
+        // the files are extracted, so the read fails and the SID stays 0. Now that
+        // the files are on the drive, resolve the ones still missing: an app's UID3
+        // is its executable's SID, and that is the only thing tying a package to the
+        // app it installs (package UIDs need not match, and often do not).
+        static void resolve_missing_executable_sids(io_system *io, sis_registry_tree &tree) {
+            for (package::file_description &desc : tree.package_info.file_descriptions) {
+                if (desc.sid || desc.target.empty()) {
+                    continue;
+                }
+
+                const std::u16string extension = common::lowercase_ucs2_string(eka2l1::path_extension(desc.target));
+                if ((extension != u".exe") && (extension != u".dll")) {
+                    continue;
+                }
+
+                desc.sid = read_executable_sid(io, desc.target);
+            }
+
+            for (sis_registry_tree &embed : tree.embeds) {
+                resolve_missing_executable_sids(io, embed);
+            }
         }
 
         static void fill_embeds_to_package_info(sis_registry_tree &self) {
@@ -743,7 +819,9 @@ namespace eka2l1 {
                 }
             }
 
+            resolve_missing_executable_sids(io, *trees);
             fill_embeds_to_package_info(*trees);
+
             return trees;
         }
     }

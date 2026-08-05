@@ -17,12 +17,51 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <common/algorithm.h>
 #include <common/chunkyseri.h>
 #include <package/registry.h>
 
 #include <utils/des.h>
 
+#include <cwctype>
+
 namespace eka2l1::package {
+    bool is_valid_target_path(const std::u16string &target) {
+        static constexpr std::size_t MAX_TARGET_LENGTH = 0x100;
+        if (target.empty() || (target.length() > MAX_TARGET_LENGTH)) {
+            return false;
+        }
+
+        // A drive letter, then the root: anything else is not a path a package
+        // is allowed to name.
+        if ((target.length() < 3) || !std::iswalpha(target[0]) || (target[1] != u':')
+            || ((target[2] != u'\\') && (target[2] != u'/'))) {
+            return false;
+        }
+
+        if ((target.find(u"\\\\", 2) != std::u16string::npos) || (target.find(u"//", 2) != std::u16string::npos)) {
+            return false;
+        }
+
+        if (target.find(u"..\\") != std::u16string::npos) {
+            return false;
+        }
+
+        // Executables are looked up by name all over the system; a non-ASCII one
+        // is a mismatch waiting to happen, so SWI rejects it outright.
+        const std::u16string target_lower = common::lowercase_ucs2_string(target);
+        if (target_lower.find(u":\\sys\\bin") != std::u16string::npos) {
+            const std::size_t name_start = target.find_last_of(u"\\/");
+            for (std::size_t i = (name_start == std::u16string::npos) ? 0 : name_start; i < target.length(); i++) {
+                if (target[i] > 0x7F) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     void package::do_state(common::chunkyseri &seri) {
         seri.absorb(uid);
         epoc::absorb_des_string(package_name, seri, true);

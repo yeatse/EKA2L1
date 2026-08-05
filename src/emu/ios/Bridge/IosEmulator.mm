@@ -759,6 +759,8 @@ namespace eka2l1::ios {
 - (BOOL)runLaunchAppWithUID:(uint32_t)uid;
 // Uninstall path for apps with no package registry (N-Gage game cards).
 - (BOOL)removeUnpackagedAppWithUID:(uint32_t)uid;
+// Post-uninstall cleanup for a registration the package did not own.
+- (void)dropLeftoverRegistrationOf:(eka2l1::apa_app_registry *)reg;
 @end
 
 @implementation EKA2L1Emulator {
@@ -1723,25 +1725,72 @@ namespace eka2l1::ios {
     if (!manager) {
         return NO;
     }
-    // App UID3 == package UID for single-app SIS packages. Remove the base
-    // install (index 0) plus any augmentations sharing the UID so nothing is
-    // left dangling. ROM apps have no package entry, so this is a no-op for
-    // them (matching the frontend only offering uninstall on installed apps).
+    auto *alserv = eka2l1::ios::get_applist_server(_state->symsys->get_kernel_system());
+    eka2l1::apa_app_registry *reg = alserv ? alserv->get_registration(uid) : nullptr;
+
+    // App UID3 == package UID for most single-app SIS packages, but Symbian does
+    // not require it (Opera Mobile registers app 0x2002AA96 from package
+    // 0x2002AA97). When the UID finds nothing, ask which package owns the app's
+    // executable: by its secure ID, which is the app UID3, or — for registries
+    // written before those were resolved — by the binary's path. ROM apps belong
+    // to no package, so every lookup comes up empty for them and the unpackaged
+    // path below takes over.
+    std::uint32_t package_uid = uid;
+    if (!manager->package(uid, 0) && manager->augmentations(uid).empty()) {
+        eka2l1::package::object *owner = manager->package_owning_executable(uid);
+        if (!owner && reg) {
+            owner = manager->package_owning_file(reg->mandatory_info.app_path.to_std_string(nullptr));
+        }
+        if (owner) {
+            package_uid = owner->uid;
+        }
+    }
+
+    // Remove the base install (index 0) plus any augmentations sharing the UID so
+    // nothing is left dangling.
     bool removed = false;
-    for (eka2l1::package::object *aug : manager->augmentations(uid)) {
+    for (eka2l1::package::object *aug : manager->augmentations(package_uid)) {
         if (aug && manager->uninstall_package(*aug)) {
             removed = true;
         }
     }
-    if (eka2l1::package::object *base = manager->package(uid, 0)) {
+    if (eka2l1::package::object *base = manager->package(package_uid, 0)) {
         if (manager->uninstall_package(*base)) {
             removed = true;
         }
     }
     if (removed) {
+        [self dropLeftoverRegistrationOf:reg];
         return YES;
     }
     return [self removeUnpackagedAppWithUID:uid] ? YES : NO;
+}
+
+// A package installed before conditional install blocks were registered (or one
+// whose registration resource its script writes itself) can leave the app's
+// _reg.rsc on disk after uninstall, which keeps a launchable-looking entry in the
+// app list pointing at binaries that are gone. Drop that leftover, but only when
+// the package really did take the app binary away.
+- (void)dropLeftoverRegistrationOf:(eka2l1::apa_app_registry *)reg {
+    if (!reg || reg->rsc_path.empty()) {
+        return;
+    }
+    auto *io = _state->symsys->get_io_system();
+    if (!io || !io->exist(reg->rsc_path)) {
+        return;
+    }
+    const std::u16string app_path = reg->mandatory_info.app_path.to_std_string(nullptr);
+    if (app_path.empty() || io->exist(app_path)) {
+        return;
+    }
+
+    const std::u16string rsc_path = reg->rsc_path;
+    io->delete_entry(rsc_path);
+
+    auto *alserv = eka2l1::ios::get_applist_server(_state->symsys->get_kernel_system());
+    if (alserv) {
+        alserv->delete_registry(rsc_path);
+    }
 }
 
 // Fallback for apps that were never installed through the package manager, the

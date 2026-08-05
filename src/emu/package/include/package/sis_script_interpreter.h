@@ -101,7 +101,13 @@ namespace eka2l1 {
             int gasp_true_form_of_integral_expression(const sis_expression &expr);
 
         protected:
-            bool interpret(sis_install_block &install_block, sis_registry_tree &parent_tree, std::uint16_t crr_blck_idx = 0);
+            // register_files tells whether the files in this block still need to be
+            // added to the package's file list. The controller's own install block is
+            // already registered by fill_controller_registeration, but blocks nested
+            // in conditionals are not — without registering them, uninstalling the
+            // package leaves those files (registration resources included) behind.
+            bool interpret(sis_install_block &install_block, sis_registry_tree &parent_tree, std::uint16_t crr_blck_idx = 0,
+                const bool register_files = false);
             bool interpret(sis_controller *controller, sis_registry_tree &tree, const std::uint16_t base_data_idx);
 
             /**

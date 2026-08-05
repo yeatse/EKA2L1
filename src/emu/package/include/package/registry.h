@@ -96,6 +96,16 @@ namespace eka2l1::package {
         void do_state(common::chunkyseri &seri);
     };
 
+    /**
+     * @brief Whether a package may install to, or remove, this path.
+     *
+     * Mirrors the checks SWI runs over every file description it plans
+     * (SecurityCheckUtil::CheckFileName): a full drive-qualified path, no doubled
+     * separators, no parent-directory escape, and an ASCII-only name under
+     * \\sys\\bin. A package that names anything else is not to be trusted with it.
+     */
+    bool is_valid_target_path(const std::u16string &target);
+
     struct file_description {
         std::u16string target;
         std::u16string mime_type;

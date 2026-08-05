@@ -223,6 +223,68 @@ namespace eka2l1 {
             return nullptr;
         }
 
+        package::object *packages::package_owning_executable(const uid secure_id) {
+            if (!secure_id) {
+                return nullptr;
+            }
+
+            for (auto &[pkg_uid, obj] : objects_) {
+                for (const package::file_description &desc : obj.file_descriptions) {
+                    if (desc.sid == secure_id) {
+                        return &obj;
+                    }
+                }
+            }
+
+            return nullptr;
+        }
+
+        package::object *packages::package_owning_file(const std::u16string &file_path) {
+            if (file_path.empty()) {
+                return nullptr;
+            }
+
+            for (auto &[pkg_uid, obj] : objects_) {
+                for (const package::file_description &desc : obj.file_descriptions) {
+                    if (common::compare_ignore_case(desc.target, file_path) == 0) {
+                        return &obj;
+                    }
+                }
+            }
+
+            // No exact hit. The directory a caller knows an app binary by does not
+            // have to be the one the package installed it to: applist rebuilds an
+            // app path from the registration as <drive>:\system\programs\<name>.exe
+            // (or <drive>:\<name>.exe), while the package holds the real
+            // <drive>:\sys\bin\<name>.exe. Fall back to the drive and file name,
+            // and only answer when exactly one package claims that name — sharing
+            // it means the file alone cannot say who owns the app.
+            const std::u16string filename = eka2l1::filename(file_path);
+            if (filename.empty() || (file_path.length() < 2) || (file_path[1] != u':')) {
+                return nullptr;
+            }
+
+            package::object *only_match = nullptr;
+
+            for (auto &[pkg_uid, obj] : objects_) {
+                for (const package::file_description &desc : obj.file_descriptions) {
+                    if (desc.target.empty() || (std::towlower(desc.target[0]) != std::towlower(file_path[0]))
+                        || (common::compare_ignore_case(eka2l1::filename(desc.target), filename) != 0)) {
+                        continue;
+                    }
+
+                    if (only_match && (only_match != &obj)) {
+                        return nullptr;
+                    }
+
+                    only_match = &obj;
+                    break;
+                }
+            }
+
+            return only_match;
+        }
+
         package::object *packages::package(const uid app_uid, const std::u16string package_name, const std::u16string vendor_name) {
             auto ite_range = objects_.equal_range(app_uid);
             for (auto ite = ite_range.first; ite != ite_range.second; ite++) {
@@ -452,13 +514,18 @@ namespace eka2l1 {
                 return false;
             }
 
+            // pkg usually references the object stored in objects_, which the erase
+            // below destroys. Take what is still needed off it first.
+            const uid pkg_uid = pkg.uid;
+            const std::int32_t pkg_index = pkg.index;
+
             // Delete registry file
-            const std::u16string vpath = get_virtual_registry_regfile(residing_, pkg.uid, pkg.index);
+            sys->delete_entry(get_virtual_registry_regfile(residing_, pkg_uid, pkg_index));
 
             // Delete associated controllers
             for (std::size_t i = 0; i < pkg.controller_infos.size(); i++) {
-                const std::u16string ctrl_path = add_path(get_virtual_registry_folder(residing_, pkg.uid),
-                    fmt::format(package::CONTROLLER_FILE_FORMAT, pkg.index, pkg.controller_infos[i].offset));
+                const std::u16string ctrl_path = add_path(get_virtual_registry_folder(residing_, pkg_uid),
+                    fmt::format(package::CONTROLLER_FILE_FORMAT, pkg_index, pkg.controller_infos[i].offset));
 
                 sys->delete_entry(ctrl_path);
             }
@@ -466,14 +533,39 @@ namespace eka2l1 {
             // Remove the object
             objects_.erase(pkg_ite);
 
-            if (objects_.find(pkg.uid) == objects_.end()) {
-                std::u16string the_reg_path = get_virtual_registry_folder(residing_, pkg.uid);
+            if (objects_.find(pkg_uid) == objects_.end()) {
+                std::u16string the_reg_path = get_virtual_registry_folder(residing_, pkg_uid);
                 if (std::optional<std::u16string> real_reg_path = sys->get_raw_path(the_reg_path)) {
                     common::delete_folder(common::ucs2_to_utf8(real_reg_path.value()));
                 }
             }
 
             return true;
+        }
+
+        // Whether a package's file belongs to the ROM, which no uninstall may touch.
+        static bool is_rom_target(const std::u16string &target) {
+            return !target.empty() && (std::towlower(target[0]) == drive_to_char16(drive_z));
+        }
+
+        // The private data directory an executable with this secure ID owns, on a
+        // given drive: "<drive>:\private\<sid>\".
+        static std::u16string private_directory_of(const epoc::uid sid, const drive_number drive) {
+            return std::u16string(1, drive_to_char16(drive)) + common::utf8_to_ucs2(fmt::format(":\\private\\{:08x}\\", sid));
+        }
+
+        void packages::remove_private_directories(const epoc::uid sid) {
+            for (drive_number drv = drive_a; drv <= drive_z; drv++) {
+                std::optional<drive> drive_entry = sys->get_drive_entry(drv);
+                if (!drive_entry || (drive_entry->attribute & io_attrib_write_protected) || (drv == drive_z)) {
+                    continue;
+                }
+
+                const std::u16string private_path = private_directory_of(sid, drv);
+                if (std::optional<std::u16string> real_path = sys->get_raw_path(private_path)) {
+                    common::delete_folder(common::ucs2_to_utf8(real_path.value()));
+                }
+            }
         }
 
         bool packages::uninstall_package(package::object &pkg) {
@@ -493,14 +585,78 @@ namespace eka2l1 {
                 return false;
             }
 
-            // Delete files as requested by objects
-            for (const package::file_description &desc : pkg.file_descriptions) {
-                if ((desc.operation == static_cast<int>(loader::ss_op::install)) || (desc.operation == static_cast<int>(loader::ss_op::null))) {
-                    sys->delete_entry(desc.target);
+            // A package that lives in the ROM, or that declares itself non-removable,
+            // is not ours to take apart — SWI's uninstall planner refuses both with
+            // KErrNotSupported. Removing the registration alone would also just have
+            // the ROM stub register it again on the next boot.
+            if (pkg.in_rom || !pkg.is_removable) {
+                LOG_ERROR(PACKAGE, "Refusing to uninstall package 0x{:X}: it is {}", pkg.uid,
+                    pkg.in_rom ? "in ROM" : "marked non-removable");
+                return false;
+            }
+
+            // Uninstalling a package uninstalls what it embedded. Note the embedded
+            // packages before touching the registry: removing them erases entries of
+            // objects_, and pkg lives in there too.
+            std::vector<std::pair<uid, std::int32_t>> embedded;
+            for (const package::package &embed : pkg.embedded_packages) {
+                if (embed.uid != pkg.uid) {
+                    embedded.emplace_back(embed.uid, embed.index);
                 }
             }
 
-            return remove_registeration(pkg);
+            // Delete files as requested by objects. An undefined operation installs
+            // the file just like an explicit install does (that is how the script
+            // interpreter treats it, and packages do ship entries like that — Opera
+            // Mobile's UI resources among them), so it has to be removed too. A file
+            // in the ROM is never removed, matching CProcessor::RemoveFileL.
+            std::vector<epoc::uid> sids_removed;
+
+            for (const package::file_description &desc : pkg.file_descriptions) {
+                if ((desc.operation != static_cast<int>(loader::ss_op::install))
+                    && (desc.operation != static_cast<int>(loader::ss_op::null))
+                    && (desc.operation != static_cast<int>(loader::ss_op::undefined))) {
+                    continue;
+                }
+
+                if (is_rom_target(desc.target)) {
+                    continue;
+                }
+
+                if (!package::is_valid_target_path(desc.target)) {
+                    LOG_ERROR(PACKAGE, "Package 0x{:X} claims an invalid target, not removing: {}", pkg.uid,
+                        common::ucs2_to_utf8(desc.target));
+                    continue;
+                }
+
+                sys->delete_entry(desc.target);
+
+                // An executable taking its private data directory with it, unless the
+                // one being removed only eclipsed a ROM executable of the same name —
+                // that one is still there and still owns the directory.
+                if (desc.sid) {
+                    std::u16string rom_twin = desc.target;
+                    rom_twin[0] = drive_to_char16(drive_z);
+
+                    if (!sys->exist(rom_twin)) {
+                        sids_removed.push_back(desc.sid);
+                    }
+                }
+            }
+
+            for (const epoc::uid sid : sids_removed) {
+                remove_private_directories(sid);
+            }
+
+            const bool result = remove_registeration(pkg);
+
+            for (const auto &[embed_uid, embed_index] : embedded) {
+                if (package::object *embed_obj = package(embed_uid, embed_index)) {
+                    uninstall_package(*embed_obj);
+                }
+            }
+
+            return result;
         }
 
         bool packages::installed(uid app_uid) {
@@ -516,11 +672,39 @@ namespace eka2l1 {
             return false;
         }
 
+        void packages::remove_stale_files(package::object &installed, const package::object &replacement) {
+            for (const package::file_description &desc : installed.file_descriptions) {
+                // FILENULL owns no file to begin with, and the ROM is off limits.
+                if ((desc.operation == static_cast<int>(loader::ss_op::null)) || is_rom_target(desc.target)
+                    || !package::is_valid_target_path(desc.target)) {
+                    continue;
+                }
+
+                bool still_owned = false;
+                for (const package::file_description &new_desc : replacement.file_descriptions) {
+                    if (common::compare_ignore_case(new_desc.target, desc.target) == 0) {
+                        still_owned = true;
+                        break;
+                    }
+                }
+
+                if (!still_owned) {
+                    sys->delete_entry(desc.target);
+                }
+            }
+        }
+
         void packages::traverse_tree_and_add_packages(loader::sis_registry_tree &tree) {
-            // TODO: We should ask for user permission first! This is also not correct
-            // Just remove that registeration, not the files...
+            // TODO: We should ask for user permission first!
             if (installed(tree.package_info.uid)) {
                 package::object *obj = package(tree.package_info.uid);
+
+                // SWI plans an upgrade by removing the installed version's files
+                // first (CInstallationPlanner::ProcessFilesToRemoveL) and laying the
+                // new ones down after. Here the new files are already written, so
+                // only what the new version no longer carries may go — deleting by
+                // the old list wholesale would take the just-installed files with it.
+                remove_stale_files(*obj, tree.package_info);
                 remove_registeration(*obj);
             }
 
