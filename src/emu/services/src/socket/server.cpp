@@ -66,10 +66,25 @@ namespace eka2l1 {
         return nullptr;
     }
 
-    epoc::socket::protocol *socket_server::find_protocol_by_name(const std::u16string &name) {
+    epoc::socket::protocol *socket_server::find_protocol_by_name(const std::u16string &name,
+        epoc::socket::protocol_name_binding *binding) {
         for (auto &pr : protocols_) {
             if (common::compare_ignore_case(pr->name(), name) == 0) {
                 return pr.get();
+            }
+        }
+
+        // The stack's own name is only how the emulator groups things. Clients ask for the
+        // transport by name ("tcp", "udp", ...), so let a stack claim those too.
+        for (auto &pr : protocols_) {
+            for (const epoc::socket::protocol_name_binding &candidate : pr->name_bindings()) {
+                if (common::compare_ignore_case(candidate.name_, name) == 0) {
+                    if (binding) {
+                        *binding = candidate;
+                    }
+
+                    return pr.get();
+                }
             }
         }
 
@@ -263,17 +278,19 @@ namespace eka2l1 {
         ctx->complete(epoc::error_none);
     }
 
-    static void fill_protocol_description(epoc::socket::protocol *pr, protocol_description &des) {
-        // NOTE: On emulator some protocols are merged for feasable implementation
-        // TODO: Make them separable for this fill
-        des.addr_fam_ = pr->family_ids()[0];
-        des.protocol_ = pr->supported_ids()[0];
+    static void fill_protocol_description(epoc::socket::protocol *pr, protocol_description &des,
+        const epoc::socket::protocol_name_binding *binding) {
+        // NOTE: On emulator some protocols are merged for feasable implementation. A binding tells
+        // which transport of the stack the client actually asked for; without one all we can say
+        // is "the first thing this stack supports".
+        des.addr_fam_ = binding ? binding->family_ : pr->family_ids()[0];
+        des.protocol_ = binding ? binding->protocol_ : pr->supported_ids()[0];
+        des.sock_type_ = binding ? binding->sock_type_ : epoc::socket::socket_type_undefined;
         des.ver_ = pr->ver();
         des.bord_ = pr->get_byte_order();
-        //des.sock_type_ = pr->sock_type();
         des.message_size_ = pr->message_size();
 
-        des.name_.assign(nullptr, pr->name());
+        des.name_.assign(nullptr, binding ? binding->name_ : pr->name());
 
         // TODO: From this
         des.service_info_ = 0;
@@ -288,7 +305,10 @@ namespace eka2l1 {
             return;
         }
 
-        epoc::socket::protocol *result_pr = server<socket_server>()->find_protocol_by_name(protocol_name.value());
+        epoc::socket::protocol_name_binding binding;
+        binding.name_.clear();
+
+        epoc::socket::protocol *result_pr = server<socket_server>()->find_protocol_by_name(protocol_name.value(), &binding);
         if (!result_pr) {
             LOG_WARN(SERVICE_ESOCK, "Can't find protocol named {}", common::ucs2_to_utf8(protocol_name.value()));
             ctx->complete(epoc::error_not_found);
@@ -297,7 +317,7 @@ namespace eka2l1 {
         }
 
         protocol_description description_to_return;
-        fill_protocol_description(result_pr, description_to_return);
+        fill_protocol_description(result_pr, description_to_return, binding.name_.empty() ? nullptr : &binding);
 
         ctx->write_data_to_descriptor_argument<protocol_description>(0, description_to_return);
         ctx->complete(epoc::error_none);

@@ -36,6 +36,21 @@ namespace eka2l1::epoc::socket {
         byte_order_others = 2
     };
 
+    /**
+     * \brief One of the names a protocol stack answers to.
+     *
+     * ESOCK exposes each transport of a stack as its own named protocol, and clients open a
+     * socket by looking a name up first (RSocketServ::FindProtocol) and then opening with the
+     * triple the lookup returned. The emulator implements a whole stack in a single protocol
+     * object, so a stack instead lists the names it covers and what each one resolves to.
+     */
+    struct protocol_name_binding {
+        std::u16string name_;
+        std::uint32_t family_;
+        socket_type sock_type_;
+        std::uint32_t protocol_;
+    };
+
     struct protocol {
     private:
         enum {
@@ -59,6 +74,12 @@ namespace eka2l1::epoc::socket {
 
         /// Get IDs of the protocol in the family
         virtual std::vector<std::uint32_t> supported_ids() const = 0;
+
+        /// Get the individual protocol names clients may look this stack up by
+        virtual std::vector<protocol_name_binding> name_bindings() const {
+            return {};
+        }
+
         virtual epoc::version ver() const = 0;
         virtual byte_order get_byte_order() const = 0;
 

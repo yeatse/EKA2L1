@@ -83,6 +83,9 @@ namespace eka2l1 {
     protected:
         void rescan_drives(eka2l1::io_system *io);
 
+        int load_repo_file(eka2l1::io_system *io, device_manager *mngr, central_repo *repo, const std::uint32_t key,
+            bool scan_org_only);
+
         int load_repo_adv(eka2l1::io_system *io, device_manager *mngr, central_repo *repo, const std::uint32_t key,
             bool scan_org_only = false);
 

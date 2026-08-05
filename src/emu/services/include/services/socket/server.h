@@ -309,7 +309,8 @@ namespace eka2l1 {
         void connect(service::ipc_context &context) override;
 
         epoc::socket::protocol *find_protocol(const std::uint32_t addr_family, const std::uint32_t protocol_id);
-        epoc::socket::protocol *find_protocol_by_name(const std::u16string &name);
+        epoc::socket::protocol *find_protocol_by_name(const std::u16string &name,
+            epoc::socket::protocol_name_binding *binding = nullptr);
         epoc::socket::connect_agent *get_connect_agent(const std::u16string &name);
 
         bool add_protocol(std::unique_ptr<epoc::socket::protocol> &pr);

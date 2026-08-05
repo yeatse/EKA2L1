@@ -27,6 +27,7 @@
 #include <services/centralrepo/centralrepo.h>
 #include <services/centralrepo/cre.h>
 #include <services/context.h>
+#include <services/internet/commsdat.h>
 #include <system/devices.h>
 #include <system/epoc.h>
 
@@ -344,6 +345,19 @@ namespace eka2l1 {
     }
 
     int central_repo_server::load_repo_adv(eka2l1::io_system *io, device_manager *mngr, central_repo *repo, const std::uint32_t key,
+        bool scan_org_only) {
+        const int result = load_repo_file(io, mngr, repo, key, scan_org_only);
+
+        if (result == 0) {
+            // CommsDat ships without any access point on a retail ROM. Give the emulated phone one
+            // now, before any client gets to look at the repository.
+            epoc::internet::provision_default_access_point(*repo);
+        }
+
+        return result;
+    }
+
+    int central_repo_server::load_repo_file(eka2l1::io_system *io, device_manager *mngr, central_repo *repo, const std::uint32_t key,
         bool scan_org_only) {
         bool is_first_repo = first_repo;
         first_repo ? (first_repo = false) : 0;

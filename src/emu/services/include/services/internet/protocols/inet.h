@@ -333,6 +333,17 @@ namespace eka2l1::epoc::internet {
             return { INET_UDP_PROTOCOL_ID, INET_TCP_PROTOCOL_ID };
         }
 
+        virtual std::vector<epoc::socket::protocol_name_binding> name_bindings() const override {
+            return {
+                { u"tcp", INET_ADDRESS_FAMILY, epoc::socket::socket_type_stream, INET_TCP_PROTOCOL_ID },
+                { u"udp", INET_ADDRESS_FAMILY, epoc::socket::socket_type_datagram, INET_UDP_PROTOCOL_ID },
+                { u"icmp", INET_ADDRESS_FAMILY, epoc::socket::socket_type_datagram, INET_ICMP_PROTCOL_ID },
+                { u"tcp6", INET6_ADDRESS_FAMILY, epoc::socket::socket_type_stream, INET_TCP_PROTOCOL_ID },
+                { u"udp6", INET6_ADDRESS_FAMILY, epoc::socket::socket_type_datagram, INET_UDP_PROTOCOL_ID },
+                { u"icmp6", INET6_ADDRESS_FAMILY, epoc::socket::socket_type_datagram, INET_ICMP_PROTCOL_ID }
+            };
+        }
+
         virtual epoc::version ver() const override {
             epoc::version v;
             v.major = 0;

@@ -94,6 +94,14 @@ namespace eka2l1::epoc::socket {
                     progress_notify(ctx);
                     break;
 
+                case socket_cn_start:
+                case socket_cn_stop:
+                    // Sockets are bridged straight to the host, which is either already online or
+                    // not - there is no interface for the guest to bring up or tear down. Report
+                    // the connection as established so clients move on to the actual transfer.
+                    ctx->complete(epoc::error_none);
+                    break;
+
                 default:
                     LOG_ERROR(SERVICE_ESOCK, "Unimplemented socket connection opcode: {}", ctx->msg->function);
                     ctx->complete(epoc::error_none);
