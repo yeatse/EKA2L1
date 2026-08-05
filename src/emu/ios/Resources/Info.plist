@@ -77,17 +77,15 @@
     <true/>
     <key>LSSupportsOpeningDocumentsInPlace</key>
     <true/>
-    <!-- Stage 3.5: register the file types EKA2L1 can accept from the Files
-         app / "Open in" / "Share to". The UTI tree is:
+    <!-- Register the file types EKA2L1 can accept from the Files app /
+         "Open in" / "Share to". The UTI tree is:
            public.data → com.eka2l1.sis (.sis)
                        → com.eka2l1.sisx (.sisx)
                        → com.eka2l1.ngage (.n-gage, N-Gage 2.0 game package)
-           public.font → public.truetype-ttf-font (.ttf)
-                       → public.opentype-font (.otf)
-           public.archive → public.zip-archive (.zip, used for ROM bundles)
          The exported declarations let other apps know our identifiers; the
          document-types entry says "we open these" so iOS surfaces EKA2L1 in
-         the Share / Open-in sheet. -->
+         the Share / Open-in sheet. Device ROMs and RPKGs are not listed: they
+         are picked explicitly inside the device importer. -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -113,31 +111,6 @@
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.eka2l1.ngage</string>
-            </array>
-        </dict>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>ROM bundle (zip)</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>public.zip-archive</string>
-            </array>
-        </dict>
-        <dict>
-            <key>CFBundleTypeName</key>
-            <string>Font (TrueType / OpenType)</string>
-            <key>CFBundleTypeRole</key>
-            <string>Viewer</string>
-            <key>LSHandlerRank</key>
-            <string>Alternate</string>
-            <key>LSItemContentTypes</key>
-            <array>
-                <string>public.truetype-ttf-font</string>
-                <string>public.opentype-font</string>
             </array>
         </dict>
     </array>

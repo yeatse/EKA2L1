@@ -74,7 +74,6 @@
 #include <vfs/vfs.h>
 
 #include <lunasvg.h>
-#include <miniz.h>
 
 @implementation EKA2L1AppEntry
 @end
@@ -779,88 +778,6 @@ namespace eka2l1::ios {
     // Last successful rescanApps result, returned as-is when a system rebuild
     // holds session_mutex (rescanApps must not block the main thread).
     NSArray<EKA2L1AppEntry *> *_lastAppList;
-}
-
-+ (BOOL)unzipArchiveAtPath:(NSString *)zipPath
-               toDirectory:(NSString *)destination
-                     error:(NSError **)error {
-    auto fail = ^BOOL(NSString *message) {
-        if (error) {
-            *error = [NSError errorWithDomain:@"EKA2L1ZipImport"
-                                         code:1
-                                     userInfo:@{NSLocalizedDescriptionKey: message}];
-        }
-        return NO;
-    };
-
-    NSFileManager *fm = NSFileManager.defaultManager;
-    NSURL *destURL = [NSURL fileURLWithPath:destination].URLByStandardizingPath;
-    NSString *destPath = destURL.path;
-    NSString *destPrefix = [destPath hasSuffix:@"/"] ? destPath : [destPath stringByAppendingString:@"/"];
-
-    NSError *dirError = nil;
-    if (![fm createDirectoryAtURL:destURL withIntermediateDirectories:YES attributes:nil error:&dirError]) {
-        return fail(dirError.localizedDescription ?: @"Could not create destination directory.");
-    }
-
-    mz_zip_archive zip {};
-    if (!mz_zip_reader_init_file(&zip, zipPath.fileSystemRepresentation, 0)) {
-        return fail(@"Could not open zip archive.");
-    }
-
-    BOOL ok = YES;
-    NSString *failure = nil;
-    const mz_uint count = mz_zip_reader_get_num_files(&zip);
-    for (mz_uint i = 0; i < count; ++i) {
-        mz_zip_archive_file_stat stat {};
-        if (!mz_zip_reader_file_stat(&zip, i, &stat)) {
-            ok = NO;
-            failure = @"Could not read zip entry metadata.";
-            break;
-        }
-
-        NSString *entryName = [NSString stringWithUTF8String:stat.m_filename];
-        if (entryName.length == 0
-            || [entryName hasPrefix:@"/"]
-            || [entryName containsString:@"../"]
-            || [entryName containsString:@"..\\"]) {
-            ok = NO;
-            failure = @"Zip archive contains an unsafe path.";
-            break;
-        }
-
-        NSString *outPath = [[destination stringByAppendingPathComponent:entryName] stringByStandardizingPath];
-        if (![outPath isEqualToString:destPath] && ![outPath hasPrefix:destPrefix]) {
-            ok = NO;
-            failure = @"Zip archive contains an unsafe path.";
-            break;
-        }
-
-        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
-            if (![fm createDirectoryAtPath:outPath withIntermediateDirectories:YES attributes:nil error:&dirError]) {
-                ok = NO;
-                failure = dirError.localizedDescription ?: @"Could not create directory from zip.";
-                break;
-            }
-            continue;
-        }
-
-        NSString *parent = outPath.stringByDeletingLastPathComponent;
-        if (![fm createDirectoryAtPath:parent withIntermediateDirectories:YES attributes:nil error:&dirError]) {
-            ok = NO;
-            failure = dirError.localizedDescription ?: @"Could not create parent directory from zip.";
-            break;
-        }
-
-        if (!mz_zip_reader_extract_to_file(&zip, i, outPath.fileSystemRepresentation, 0)) {
-            ok = NO;
-            failure = @"Could not extract zip entry.";
-            break;
-        }
-    }
-
-    mz_zip_reader_end(&zip);
-    return ok ? YES : fail(failure ?: @"Could not extract zip archive.");
 }
 
 + (instancetype)shared {

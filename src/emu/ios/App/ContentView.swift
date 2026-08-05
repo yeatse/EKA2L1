@@ -29,10 +29,20 @@ private let ngage2Types: [UTType] = {
     return v
 }()
 
+// Guest fonts. fbs_server::add_font only recognises .ttf (FreeType) and .gdr
+// (Symbian bitmap fonts), so anything else would be copied in and then
+// silently ignored — keep the picker to those two. Resolving by extension
+// gives .ttf the system UTI and .gdr, which nothing declares, the dynamic type
+// LaunchServices derives from the extension, which the picked files carry too.
+private let fontTypes: [UTType] = ["ttf", "gdr"].compactMap {
+    UTType(filenameExtension: $0)
+}
+
 private enum HomeImportTarget {
     case sis
     case ngage    // classic N-Gage game card folder (installed onto E:)
     case ngage2   // N-Gage 2.0 .n-gage package (staged into E:\n-gage)
+    case font     // .ttf / .gdr copied into the user font folder
 }
 
 // iOS 16 fallback for ContentUnavailableView (which is iOS 17+). Mimics its
@@ -129,12 +139,14 @@ struct ContentView: View {
             return [.folder]
         case .ngage2:
             return ngage2Types
+        case .font:
+            return fontTypes
         }
     }
 
     private var homeImporterAllowsMultipleSelection: Bool {
-        // Folder-based classic N-Gage install picks a single game card; SIS and
-        // .n-gage packages can be batch-imported.
+        // Folder-based classic N-Gage install picks a single game card; SIS
+        // packages, .n-gage packages and fonts can be batch-imported.
         homeImportTarget != .ngage
     }
 
@@ -401,6 +413,17 @@ struct ContentView: View {
                         Text("home.installNGage2.subtitle")
                         Image(systemName: "arrow.down.doc")
                     }
+
+                    Divider()
+
+                    Button {
+                        homeImportTarget = .font
+                        showingHomeImporter = true
+                    } label: {
+                        Text("home.installFonts")
+                        Text("home.installFonts.subtitle")
+                        Image(systemName: "textformat")
+                    }
                 }
                 .disabled(switching)
 
@@ -448,8 +471,8 @@ struct ContentView: View {
 
     // Drains system-opened files once the emulator is up. SIS packages are
     // auto-installed onto the current device; .n-gage packages are staged onto
-    // the E drive (both mirror the "+" importer); other registered types
-    // (fonts, ROM zips) are staged by ImportRouter.
+    // the E drive (both mirror the "+" importer). Those are the only types
+    // Info.plist registers, so anything else is ignored.
     private func processPendingOpenURLs() {
         guard booted, !pendingOpenURLs.isEmpty else { return }
         let urls = pendingOpenURLs
@@ -457,12 +480,7 @@ struct ContentView: View {
 
         let sisURLs = urls.filter { ["sis", "sisx"].contains($0.pathExtension.lowercased()) }
         let ngage2URLs = urls.filter { $0.pathExtension.lowercased() == "n-gage" }
-        let otherURLs = urls.filter { !sisURLs.contains($0) && !ngage2URLs.contains($0) }
 
-        if !otherURLs.isEmpty {
-            banner = ImportRouter.shared.ingest(urls: otherURLs)
-            refresh()
-        }
         if !ngage2URLs.isEmpty {
             handleNGage2Import(.success(ngage2URLs))
         }
@@ -679,6 +697,8 @@ struct ContentView: View {
             handleNGageImport(result)
         case .ngage2:
             handleNGage2Import(result)
+        case .font:
+            handleFontImport(result)
         }
     }
 
@@ -782,6 +802,59 @@ struct ContentView: View {
                 DispatchQueue.main.async {
                     switching = false
                     banner = String(localized: "home.ngage2.imported \(imported)")
+                }
+            }
+        }
+    }
+
+    // User font folder, scanned by fbs_server::load_custom_fonts. It sits next
+    // to the drives rather than inside one, so a font is shared by every
+    // installed device and survives a device reinstall (which rewrites its Z
+    // drive). `data` is the emulator storage root on iOS.
+    private static func fontInstallDir() -> String {
+        (documentsRoot() as NSString).appendingPathComponent("data/fonts")
+    }
+
+    // Fonts are only read when the font store is built (fbs_server's
+    // constructor), so an import while a device is booted needs a reboot to
+    // take effect — the banner says so.
+    private func handleFontImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let err):
+            banner = String(localized: "home.banner.importFailed \(err.localizedDescription)")
+        case .success(let urls):
+            let fonts = urls.filter { ["ttf", "gdr"].contains($0.pathExtension.lowercased()) }
+            guard !fonts.isEmpty else {
+                banner = String(localized: "home.fonts.unsupported")
+                return
+            }
+            switching = true
+            banner = String(localized: "home.fonts.importing \(fonts.count)")
+            DispatchQueue.global(qos: .userInitiated).async {
+                let dir = Self.fontInstallDir()
+                let fm = FileManager.default
+                var imported = 0
+                var failure: String?
+                for url in fonts {
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    do {
+                        try fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                        let dst = (dir as NSString).appendingPathComponent(url.lastPathComponent)
+                        if fm.fileExists(atPath: dst) { try fm.removeItem(atPath: dst) }
+                        try fm.copyItem(at: url, to: URL(fileURLWithPath: dst))
+                        imported += 1
+                    } catch {
+                        failure = error.localizedDescription
+                    }
+                }
+                DispatchQueue.main.async {
+                    switching = false
+                    if let failure, imported == 0 {
+                        banner = String(localized: "home.banner.importFailed \(failure)")
+                    } else {
+                        banner = String(localized: "home.fonts.imported \(imported)")
+                    }
                 }
             }
         }

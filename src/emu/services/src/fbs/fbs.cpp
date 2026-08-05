@@ -422,6 +422,12 @@ namespace eka2l1 {
         // Probably also indicates that font aren't loaded yet
         load_fonts(sys->get_io_system());
 
+        // User-imported fonts are stored outside the guest drives, so they need
+        // a separate pass. They are appended after the ROM set, and
+        // seek_the_open_font takes the first exact face-name match, so an
+        // imported font never displaces a ROM one — it only adds coverage.
+        load_custom_fonts(sys->get_config()->storage);
+
         fs_server = kern->get_by_name<service::server>(epoc::fs::get_server_name_through_epocver(
             kern->get_epoc_version()));
 

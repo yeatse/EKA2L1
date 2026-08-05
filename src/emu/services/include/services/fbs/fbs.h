@@ -319,6 +319,10 @@ namespace std {
 namespace eka2l1 {
     class io_system;
 
+    namespace common {
+        class ro_stream;
+    }
+
     enum fbs_load_data_err {
         fbs_load_data_err_none,
         fbs_load_data_err_out_of_mem,
@@ -377,6 +381,7 @@ namespace eka2l1 {
         epoc::font_store persistent_font_store;
 
         void load_fonts(eka2l1::io_system *io);
+        void load_custom_fonts(const std::string &storage);
 
         std::atomic<service::uid> connection_id_counter{ 0x1234 }; // Easier to debug
 
@@ -389,6 +394,7 @@ namespace eka2l1 {
         void load_fonts_from_directory(eka2l1::io_system *io, eka2l1::directory *dir);
         void initialize_server();
 
+        bool add_font(common::ro_stream &stream, const std::string &name);
         bool add_single_font(eka2l1::io_system *io, const std::u16string &path);
 
     public:

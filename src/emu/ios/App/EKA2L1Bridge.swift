@@ -131,10 +131,6 @@ final class EKA2L1Bridge {
         EKA2L1Emulator.shared().rescanDevices()
     }
 
-    nonisolated static func unzipArchive(atPath path: String, toDirectory destination: String) throws {
-        try EKA2L1Emulator.unzipArchive(atPath: path, toDirectory: destination)
-    }
-
     func rescanApps() -> [EKA2L1AppItem] {
         emulator.rescanApps().map {
             EKA2L1AppItem(uid: $0.uid, name: $0.name, system: $0.system)

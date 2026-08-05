@@ -505,6 +505,60 @@
         }
       }
     },
+    "home.fonts.imported %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installed %lld font. Restart the device to use it."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installed %lld fonts. Restart the device to use them."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "home.fonts.importing %lld" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installing %lld font…"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Installing %lld fonts…"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "home.fonts.unsupported" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No supported font selected. Pick a .ttf or .gdr file."
+          }
+        }
+      }
+    },
     "home.hideSystemApps" : {
       "localizations" : {
         "en" : {
@@ -520,7 +574,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Install Games"
+            "value" : "Install"
           }
         }
       }
@@ -531,6 +585,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Install SIS/SISX Package"
+          }
+        }
+      }
+    },
+    "home.installFonts" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install Fonts"
+          }
+        }
+      }
+    },
+    "home.installFonts.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "TTF or GDR files"
           }
         }
       }
@@ -925,70 +999,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "ROM file"
-          }
-        }
-      }
-    },
-    "import.router.imported %lld" : {
-      "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Imported %lld item."
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "Imported %lld items."
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "import.router.importedSkipped %lld %lld %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Imported %#@imported@; %2$lld skipped: %3$@"
-          },
-          "substitutions" : {
-            "imported" : {
-              "argNum" : 1,
-              "formatSpecifier" : "lld",
-              "variations" : {
-                "plural" : {
-                  "one" : {
-                    "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "%arg item"
-                    }
-                  },
-                  "other" : {
-                    "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "%arg items"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "import.router.unsupportedType %@" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "unsupported file type .%@"
           }
         }
       }

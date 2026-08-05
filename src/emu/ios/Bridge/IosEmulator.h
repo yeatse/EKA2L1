@@ -65,11 +65,6 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 
 + (instancetype)shared;
 
-+ (BOOL)unzipArchiveAtPath:(NSString *)zipPath
-               toDirectory:(NSString *)destination
-                     error:(NSError * _Nullable * _Nullable)error
-    NS_SWIFT_NAME(unzipArchive(atPath:toDirectory:));
-
 // Lifecycle ----------------------------------------------------------------
 // Initialise the underlying eka2l1::system using the Documents directory at
 // `documentsPath`. Creates the data/ tree if missing and points the shipped
