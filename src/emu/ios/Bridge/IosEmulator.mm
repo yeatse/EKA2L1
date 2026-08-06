@@ -455,7 +455,80 @@ namespace eka2l1::ios {
         // the next launch — logon_requests_emu isn't cleared after firing) is
         // then ignored instead of closing the freshly-launched screen.
         std::uint64_t launch_generation = 0;
+
+        // Firmware code of the device a previous run of the app was still
+        // bringing up when the process died (see the boot-attempt marker
+        // below). Read once at start, handed to the frontend, and used to keep
+        // the auto-boot away from that device.
+        std::string failed_boot_firmware;
+
+        // Firmware code of the device the current boot attempt is on, empty
+        // once the boot is confirmed good. Mirrors the on-disk marker.
+        std::string pending_boot_firmware;
+
+        // Set while a boot that owns the marker above is still running, so a
+        // confirmation arriving from the frontend in the meantime (an app-list
+        // rescan racing a device switch) doesn't clear a marker the boot still
+        // needs.
+        std::atomic<bool> boot_in_flight{false};
     };
+
+    // A ROM or RPKG dump that is damaged in a way the installer doesn't catch
+    // only fails once the device is actually brought up — and it fails hard
+    // (guest memory is mapped straight from the image, so a bad one takes the
+    // host process down rather than returning an error). Persisting the device
+    // selection before that point is what turns a one-off crash into a
+    // permanent one: every later launch auto-boots the same broken device and
+    // dies again before the UI can offer a way out.
+    //
+    // So the selection is written to config.yml only after a boot has proven
+    // itself, and the attempt itself is recorded in this marker file
+    // beforehand. Finding the marker at start means the previous run died
+    // mid-boot; that device is then skipped by the auto-boot and reported to
+    // the frontend, leaving the user with a working app they can delete or
+    // reinstall the bad dump from.
+    static std::string boot_attempt_marker_path(emulator *state) {
+        return eka2l1::add_path(state->conf.storage, "boot_attempt.txt");
+    }
+
+    static void mark_boot_attempt(emulator *state, const std::string &firmware_code) {
+        state->pending_boot_firmware = firmware_code;
+        state->boot_in_flight = true;
+        FILE *f = common::open_c_file(boot_attempt_marker_path(state), "wb");
+        if (!f) {
+            LOG_WARN(eka2l1::FRONTEND_CMDLINE, "Unable to record the device boot attempt marker");
+            return;
+        }
+        fwrite(firmware_code.data(), 1, firmware_code.length(), f);
+        fflush(f);
+        fclose(f);
+    }
+
+    static void clear_boot_attempt(emulator *state) {
+        state->boot_in_flight = false;
+        if (state->pending_boot_firmware.empty()) {
+            return;
+        }
+        state->pending_boot_firmware.clear();
+        common::remove(boot_attempt_marker_path(state));
+    }
+
+    // Read the marker left by a previous run and delete it, so a device is only
+    // ever held against one launch: the user can still boot it by hand, and a
+    // dump that works again (reinstalled, or the crash was unrelated) is not
+    // locked out.
+    static std::string take_boot_attempt(emulator *state) {
+        const std::string marker = boot_attempt_marker_path(state);
+        std::string firmware_code;
+        if (FILE *f = common::open_c_file(marker, "rb")) {
+            char buf[128] = { 0 };
+            const std::size_t read = fread(buf, 1, sizeof(buf) - 1, f);
+            fclose(f);
+            firmware_code.assign(buf, read);
+        }
+        common::remove(marker);
+        return firmware_code;
+    }
 
     // Typed service-server accessors. The window / applist / fbs servers are
     // all looked up by their epoc-version-specific name, so wrap the verbose
@@ -820,10 +893,10 @@ namespace eka2l1::ios {
     // the host APFS volume (which itself is case-insensitive, so we can
     // only ever have one entry per case-insensitive name on disk). Naming
     // everything lowercase ensures both views agree.
-    // Only the emulator's own tree is created here. The import staging folders
-    // (roms/, import_tmp/) are made on demand by ImportRouter, and SIS packages
-    // are installed straight from the picked URL, so neither needs to sit empty
-    // in the user-visible Documents root.
+    // Only the emulator's own tree is created here. roms/ is made on demand by
+    // the device install, and ROM/RPKG/SIS files are all read straight from the
+    // picked URL, so nothing else needs to sit empty in the user-visible
+    // Documents root.
     NSArray<NSString *> *subdirs = @[@"data",
                                       @"data/drives/c", @"data/drives/d",
                                       @"data/drives/e", @"data/drives/z",
@@ -881,6 +954,16 @@ namespace eka2l1::ios {
 
     _state->conf.deserialize();
     _state->conf.storage = dataRoot.UTF8String;
+
+    // Pick up (and clear) the marker a previous run left behind if it died
+    // while bringing a device up — a damaged ROM/RPKG only shows itself there,
+    // and it takes the process down instead of failing gracefully. The device
+    // it names is kept out of the auto-boot below and reported to the frontend.
+    _state->failed_boot_firmware = eka2l1::ios::take_boot_attempt(_state.get());
+    if (!_state->failed_boot_firmware.empty()) {
+        LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Previous run did not survive booting device {}; skipping it",
+            _state->failed_boot_firmware);
+    }
     // Force cpu_load_save on, matching desktop/Android's default: when the guest
     // has no ready thread the scheduler parks the os_thread on idle_event instead
     // of spinning symsys->loop(), so an idle screen (e.g. the N97 home screen)
@@ -1049,10 +1132,43 @@ namespace eka2l1::ios {
         if (want >= dvc->total()) {
             want = 0;
         }
-        [self bootDeviceAtIndex:want];
+        // A device the previous run died on must not be auto-booted again, or
+        // a broken dump crashes the app on every launch with no chance to
+        // reach the UI and remove it. Fall back to the first device that isn't
+        // the suspect one; if it is the only one, come up device-less and let
+        // the frontend report it.
+        if (!_state->failed_boot_firmware.empty()) {
+            std::lock_guard<std::mutex> dvc_lock(dvc->lock);
+            auto &devices = dvc->get_devices();
+            const auto is_suspect = [&](const std::size_t idx) {
+                return eka2l1::common::compare_ignore_case(devices[idx].firmware_code.c_str(),
+                    _state->failed_boot_firmware.c_str()) == 0;
+            };
+            if (is_suspect(want)) {
+                want = devices.size();
+                for (std::size_t i = 0; i < devices.size(); i++) {
+                    if (!is_suspect(i)) {
+                        want = i;
+                        break;
+                    }
+                }
+            }
+        }
+        if (want < dvc->total()) {
+            [self bootDeviceAtIndex:want];
+        }
     }
 
     return YES;
+}
+
+- (NSString *)takeFailedBootDeviceCode {
+    if (!_state || _state->failed_boot_firmware.empty()) {
+        return nil;
+    }
+    NSString *code = [NSString stringWithUTF8String:_state->failed_boot_firmware.c_str()];
+    _state->failed_boot_firmware.clear();
+    return code;
 }
 
 - (void)shutdown {
@@ -1128,7 +1244,9 @@ namespace eka2l1::ios {
 }
 
 - (EKA2L1InstallResult)installDeviceWithRomPath:(NSString *)romPath
-                                       rpkgPath:(NSString *)rpkgPath {
+                                       rpkgPath:(NSString *)rpkgPath
+                                       progress:(void (^)(double))progress
+                                    cancelCheck:(BOOL (^)(void))cancelCheck {
     if (!_state || !_state->symsys) {
         return EKA2L1InstallResultGeneralFailure;
     }
@@ -1164,6 +1282,33 @@ namespace eka2l1::ios {
     bool need_add_rpkg = false;
     std::string firmware_code;
 
+    // Both installers report (done, total) pairs whose scale changes between
+    // phases but whose ratio stays monotonic, so hand the frontend the ratio.
+    // `ceiling` leaves room for work this method does after the installer
+    // returns. The last reported value is kept so a per-chunk callback doesn't
+    // wake the frontend thousands of times for sub-percent moves.
+    auto last_reported = std::make_shared<std::atomic<double>>(-1.0);
+    const auto make_progress_cb = [progress, last_reported](const double ceiling) -> progress_changed_callback {
+        if (!progress) {
+            return nullptr;
+        }
+        return [progress, last_reported, ceiling](const std::size_t done, const std::size_t total) {
+            if (!total) {
+                return;
+            }
+            const double fraction = std::clamp(static_cast<double>(done) / static_cast<double>(total), 0.0, 1.0) * ceiling;
+            if ((fraction < last_reported->load() + 0.005) && (fraction < ceiling)) {
+                return;
+            }
+            last_reported->store(fraction);
+            progress(fraction);
+        };
+    };
+    cancel_requested_callback cancel_cb = nullptr;
+    if (cancelCheck) {
+        cancel_cb = [cancelCheck]() -> bool { return cancelCheck() == YES; };
+    }
+
     // Mirror launcher::install_device: a raw ROM that the loader flags as
     // needing an RPKG must be paired with one; otherwise install_rom alone
     // covers the dump.
@@ -1172,32 +1317,55 @@ namespace eka2l1::ios {
             _state->mounted = was_mounted;
             return EKA2L1InstallResultNeedRpkg;
         }
+        // The resident ROM copy below is on this path only, and it is a sizeable
+        // share of the wait — leave it the last tenth of the bar.
         result = eka2l1::loader::install_rpkg(dvc, rpkgPath.UTF8String, root_z_path,
-            firmware_code, nullptr, nullptr);
+            firmware_code, make_progress_cb(0.9), cancel_cb);
         need_add_rpkg = true;
     } else {
         result = eka2l1::loader::install_rom(dvc, rom_std, rom_resident_path, root_z_path,
-            nullptr, nullptr);
+            make_progress_cb(1.0), cancel_cb);
     }
 
     if (result != eka2l1::device_installation_none) {
         _state->mounted = was_mounted;
+        // A cancel surfaces as whatever error the aborted step happened to
+        // return (install_rom turns it into "ROM file corrupt"), so answer from
+        // the flag the user actually set instead of from the error code.
+        if (cancel_cb && cancel_cb()) {
+            return EKA2L1InstallResultCancelled;
+        }
         return eka2l1::ios::map_install_result(result);
     }
 
     dvc->save_devices();
 
     if (need_add_rpkg) {
+        // Past the point of no return: the device is in devices.yml and its
+        // drive Z is populated, so a cancel arriving now is ignored rather than
+        // left half-installed.
         const std::string rom_directory = eka2l1::add_path(rom_resident_path,
             eka2l1::common::lowercase_string(firmware_code) + "/");
         eka2l1::common::create_directories(rom_directory);
         eka2l1::common::copy_file(rom_std, eka2l1::add_path(rom_directory, "SYM.ROM"), true);
     }
 
+    if (progress) {
+        progress(1.0);
+    }
     return EKA2L1InstallResultSuccess;
 }
 
 - (BOOL)bootDeviceAtIndex:(NSUInteger)index {
+    return [self bootDeviceAtIndex:index trackAttempt:YES];
+}
+
+// trackAttempt drops the boot-attempt marker that guards against a dump which
+// only turns out to be broken at boot time. Only user-driven boots need it: the
+// relaunch reboot re-runs a device that already came up in this session, and
+// leaving a marker behind there would quarantine a healthy device on the next
+// launch (nothing rescans the app list afterwards to clear it).
+- (BOOL)bootDeviceAtIndex:(NSUInteger)index trackAttempt:(BOOL)trackAttempt {
     if (!_state) {
         return NO;
     }
@@ -1258,15 +1426,25 @@ namespace eka2l1::ios {
     // configured system language isn't shipped by this device's ROM (or was
     // never set), fall back to the device's default language. Services boot
     // below (setup_outsider) reads conf.language, so fix it up first.
+    std::string firmware_code;
     {
         std::lock_guard<std::mutex> dvc_lock(dvc->lock);
-        const auto &device_langs = dvc->get_devices()[index].languages;
+        const auto &device = dvc->get_devices()[index];
+        firmware_code = device.firmware_code;
+        const auto &device_langs = device.languages;
         if (std::find(device_langs.begin(), device_langs.end(), _state->conf.language) == device_langs.end()) {
-            _state->conf.language = dvc->get_devices()[index].default_language_code;
+            _state->conf.language = device.default_language_code;
         }
     }
 
-    _state->conf.serialize();
+    // Everything below reads the device's own image. conf keeps the new
+    // selection in memory from here on, but it is only written to disk once the
+    // frontend reaches the app list on the other side of this boot
+    // (confirmDeviceBoot) — the point at which the device has proven it can
+    // carry the process.
+    if (trackAttempt) {
+        eka2l1::ios::mark_boot_attempt(_state.get(), firmware_code);
+    }
 
     sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
     sys->mount(drive_d, drive_media::physical, eka2l1::add_path(storage, "/drives/d/"), io_attrib_internal);
@@ -1316,6 +1494,9 @@ namespace eka2l1::ios {
         }
     }
 
+    // The device is up; the marker stays until the frontend confirms, but the
+    // boot itself is no longer in flight, so that confirmation may now land.
+    _state->boot_in_flight = false;
     return YES;
 }
 
@@ -1496,6 +1677,19 @@ namespace eka2l1::ios {
     return out;
 }
 
+- (void)confirmDeviceBoot {
+    // The frontend reached the app list, so the device it just booted brought
+    // the system up and kept it up: retire the crash marker and only now write
+    // the selection to config.yml. Skipped while a boot is still running, so a
+    // rescan that overlaps one doesn't sign off on a device that hasn't
+    // finished coming up yet.
+    if (!_state || _state->boot_in_flight.load() || _state->pending_boot_firmware.empty()) {
+        return;
+    }
+    eka2l1::ios::clear_boot_attempt(_state.get());
+    _state->conf.serialize();
+}
+
 - (void)launchAppWithUID:(uint32_t)uid completion:(void (^)(BOOL))completion {
     // Serialize launches and keep them off the main thread. The launch path
     // issues synchronous graphics commands (bind_graphics_driver ->
@@ -1537,7 +1731,7 @@ namespace eka2l1::ios {
         if (reboot_index < 0) {
             reboot_index = std::max(0, _state->conf.device);
         }
-        if (![self bootDeviceAtIndex:static_cast<NSUInteger>(reboot_index)]) {
+        if (![self bootDeviceAtIndex:static_cast<NSUInteger>(reboot_index) trackAttempt:NO]) {
             LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "iOS device reboot before relaunch failed");
             return NO;
         }

@@ -44,6 +44,10 @@ struct SettingsView: View {
     @State private var storageBytes: UInt64 = 0
     @State private var clearDataMessage: String?
     @State private var showingClearDataConfirmation = false
+    // A ROM delete / data wipe stops the emulator loop and takes the session
+    // lock, which must not happen on the main thread (see storageBusy use
+    // below), so both run off it and gate the section while they do.
+    @State private var storageBusy = false
 
     private var logURL: URL {
         URL(fileURLWithPath: documentsRoot()).appendingPathComponent("data/EKA2L1.log")
@@ -191,6 +195,7 @@ struct SettingsView: View {
                     .onDelete { offsets in
                         deleteROMs(at: offsets)
                     }
+                    .deleteDisabled(storageBusy)
                 }
                 Button(role: .destructive) {
                     showingClearDataConfirmation = true
@@ -414,37 +419,67 @@ struct SettingsView: View {
     // device_manager index at delete time (indices shift as devices are
     // removed), delete the ROM, and tell the home surface to reboot to the
     // previous ROM (or drop to the empty state) via the shared notification.
+    //
+    // deleteDevice blocks on the emulator's session lock, and the reboot the
+    // notification kicks off holds that same lock while it bounces the render
+    // layer onto the main queue — running the delete on the main thread would
+    // deadlock the two against each other on a second swipe. So the deletes run
+    // on a background queue, one notification per device, back on the main
+    // queue so the home surface reboots between them.
     private func deleteROMs(at offsets: IndexSet) {
-        let targets = offsets.map { installedDevices[$0] }
-        for device in targets {
-            let firmcode = device.firmwareCode
-            guard let liveIndex = EKA2L1Bridge.shared.installedDevices()
-                .first(where: { $0.firmwareCode == firmcode })?.index else { continue }
-            _ = EKA2L1Bridge.deleteDevice(at: liveIndex)
-            NotificationCenter.default.post(name: .eka2l1DevicesChanged,
-                                            object: nil,
-                                            userInfo: ["firmcode": firmcode])
+        guard !storageBusy else { return }
+        let firmcodes = offsets.map { installedDevices[$0].firmwareCode }
+        storageBusy = true
+        // Drop the rows now: the list is rebuilt from device_manager once the
+        // deletes land, and leaving them until then would let a second swipe
+        // target a row that is already on its way out.
+        installedDevices.removeAll { firmcodes.contains($0.firmwareCode) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for firmcode in firmcodes {
+                guard let liveIndex = EKA2L1Bridge.installedDevices()
+                    .first(where: { $0.firmwareCode == firmcode })?.index else { continue }
+                _ = EKA2L1Bridge.deleteDevice(at: liveIndex)
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .eka2l1DevicesChanged,
+                                                    object: nil,
+                                                    userInfo: ["firmcode": firmcode])
+                }
+            }
+            DispatchQueue.main.async {
+                installedDevices = EKA2L1Bridge.shared.installedDevices()
+                storageBusy = false
+                refreshStorageUsage()
+            }
         }
-        installedDevices = EKA2L1Bridge.shared.installedDevices()
-        refreshStorageUsage()
     }
 
     private func clearData() {
+        guard !storageBusy else { return }
         EKA2L1Bridge.shared.pause()
         EKA2L1Bridge.shared.closeRunningApp()
-        // Drop the in-memory device list first so the home surface can return
-        // to the empty state, then wipe the sandbox storage tree (data/ holds
-        // the drives, roms, config, logs; the others are import staging).
-        EKA2L1Bridge.shared.resetDevicesState()
-        let root = URL(fileURLWithPath: documentsRoot())
-        let fm = FileManager.default
-        for name in ["data", "sis", "roms", "import_tmp"] {
-            try? fm.removeItem(at: root.appendingPathComponent(name))
-        }
+        storageBusy = true
         installedDevices = []
-        NotificationCenter.default.post(name: .eka2l1DevicesChanged, object: nil)
-        clearDataMessage = String(localized: "settings.clearData.done")
-        refreshStorageUsage()
+        clearDataMessage = nil
+        // resetDevicesState blocks on the session lock and the wipe walks the
+        // whole sandbox tree; neither belongs on the main thread (see
+        // deleteROMs). Drop the in-memory device list first so the home surface
+        // can return to the empty state, then wipe the storage tree (data/
+        // holds the drives, config and logs, roms/ the installed ROM images;
+        // sis/ and import_tmp/ are staging folders older versions left behind).
+        DispatchQueue.global(qos: .userInitiated).async {
+            EKA2L1Bridge.resetDevicesState()
+            let root = URL(fileURLWithPath: documentsRoot())
+            let fm = FileManager.default
+            for name in ["data", "sis", "roms", "import_tmp"] {
+                try? fm.removeItem(at: root.appendingPathComponent(name))
+            }
+            DispatchQueue.main.async {
+                storageBusy = false
+                NotificationCenter.default.post(name: .eka2l1DevicesChanged, object: nil)
+                clearDataMessage = String(localized: "settings.clearData.done")
+                refreshStorageUsage()
+            }
+        }
     }
 }
 

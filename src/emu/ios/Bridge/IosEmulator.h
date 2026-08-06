@@ -42,9 +42,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *name;
 @end
 
-// Mirrors eka2l1::device_installation_error 1:1, plus an iOS-only `NeedRpkg`
-// case the bridge raises when a ROM dump requires an additional RPKG file but
-// none was supplied. Frontend maps these to the Android-sourced strings.
+// Mirrors eka2l1::device_installation_error 1:1, plus two iOS-only cases the
+// bridge raises itself: `NeedRpkg` when a ROM dump requires an additional RPKG
+// file but none was supplied, and `Cancelled` when the user stopped the install
+// (the installers report a cancel as a generic failure / corrupt ROM, which
+// would be a lie to show). Frontend maps these to the Android-sourced strings.
 typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
     EKA2L1InstallResultSuccess = 0,
     EKA2L1InstallResultNotExist,
@@ -59,6 +61,7 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
     EKA2L1InstallResultRomCorrupt,
     EKA2L1InstallResultFpsxCorrupt,
     EKA2L1InstallResultNeedRpkg,
+    EKA2L1InstallResultCancelled,
 };
 
 @interface EKA2L1Emulator : NSObject
@@ -86,14 +89,40 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 // the Android launcher::install_device path: install_rpkg when the ROM needs
 // it, else install_rom. Writes into the sandbox storage and persists
 // devices.yml. Does NOT boot the device — call bootDeviceAtIndex: after.
+//
+// Unpacking a firmware runs for minutes on a large dump, so both installer
+// callbacks are wired: `progress` reports 0…1 completion (throttled, delivered
+// on the calling thread) and `cancelCheck` is polled between files — return YES
+// from it to stop, and the installer reverts what it wrote. Runs synchronously;
+// call it off the main thread.
 - (EKA2L1InstallResult)installDeviceWithRomPath:(NSString *)romPath
                                        rpkgPath:(nullable NSString *)rpkgPath
-    NS_SWIFT_NAME(installDevice(romPath:rpkgPath:));
+                                       progress:(nullable void (^)(double fraction))progress
+                                    cancelCheck:(nullable BOOL (^)(void))cancelCheck
+    NS_SWIFT_NAME(installDevice(romPath:rpkgPath:progress:cancelCheck:));
 
 // Boot a previously-installed device by index: (re)builds the system, sets
 // the device, mounts drives, binds the graphics driver. Returns YES on
 // success.
+//
+// The device selection is not persisted here. A ROM/RPKG dump that is damaged
+// in a way the installer doesn't catch only fails while the device comes up,
+// and it fails hard — so the boot is first recorded as an attempt on disk, and
+// only confirmDeviceBoot promotes that to a saved selection. A run that dies in
+// between leaves the marker, and the next launch skips that device instead of
+// crashing again forever (see takeFailedBootDeviceCode).
 - (BOOL)bootDeviceAtIndex:(NSUInteger)index;
+
+// Sign off on the boot above: retires the crash marker and writes the device
+// selection to config.yml. Call once the frontend has the app list for the
+// booted device — that is the proof the dump can carry the process. No-op when
+// no boot is pending or one is still running.
+- (void)confirmDeviceBoot;
+
+// Firmware code of the device the previous run of the app died on while
+// booting, or nil when the last run was clean. Cleared by this call, so the
+// frontend gets to report it exactly once per launch.
+- (nullable NSString *)takeFailedBootDeviceCode;
 
 // Delete an installed device by index: removes its entry from devices.yml and
 // deletes the device's ROM filesystem (drive Z) and resident ROM image from

@@ -69,7 +69,14 @@ final class EKA2L1Bridge {
     }
 
     func installedDevices() -> [EKA2L1DeviceItem] {
-        emulator.installedDevices().map {
+        Self.installedDevices()
+    }
+
+    // Reading the device list only takes device_manager's own lock, so the
+    // background paths that delete ROMs can resolve live indices without
+    // hopping to the main queue.
+    nonisolated static func installedDevices() -> [EKA2L1DeviceItem] {
+        EKA2L1Emulator.shared().installedDevices().map {
             EKA2L1DeviceItem(index: Int($0.index), firmwareCode: $0.firmwareCode,
                              manufacturer: $0.manufacturer, model: $0.model)
         }
@@ -104,12 +111,24 @@ final class EKA2L1Bridge {
     // Heavy operations (ROM dump / system rebuild) — exposed as nonisolated so
     // the frontend can run them off the main queue while a spinner shows. The
     // Obj-C side serialises against the emulator loop internally.
-    nonisolated static func installDevice(romPath: String, rpkgPath: String?) -> EKA2L1InstallResult {
-        EKA2L1Emulator.shared().installDevice(romPath: romPath, rpkgPath: rpkgPath)
+    // `progress` (0…1) and `cancelCheck` are both called on this thread while
+    // the install runs — see installDeviceWithRomPath:rpkgPath:progress:cancelCheck:.
+    nonisolated static func installDevice(romPath: String, rpkgPath: String?,
+                                          progress: (@Sendable (Double) -> Void)? = nil,
+                                          cancelCheck: (@Sendable () -> Bool)? = nil) -> EKA2L1InstallResult {
+        EKA2L1Emulator.shared().installDevice(romPath: romPath, rpkgPath: rpkgPath,
+                                              progress: progress, cancelCheck: cancelCheck)
     }
 
     nonisolated static func bootDevice(at index: Int) -> Bool {
         EKA2L1Emulator.shared().bootDevice(at: UInt(index))
+    }
+
+    // Firmware code of the device the previous run of the app died on while
+    // booting (a corrupt ROM/RPKG only fails there, and it fails hard). Reading
+    // it clears it, so the home screen warns about it once per launch.
+    func takeFailedBootDeviceCode() -> String? {
+        emulator.takeFailedBootDeviceCode()
     }
 
     // Remove an installed device (ROM) from devices.yml and delete its files.
@@ -119,9 +138,11 @@ final class EKA2L1Bridge {
     }
 
     // Reset the in-memory device list to empty (used by the full data reset,
-    // which removes the sandbox storage tree separately).
-    func resetDevicesState() {
-        emulator.resetDevicesState()
+    // which removes the sandbox storage tree separately). Blocks on the session
+    // lock, so — like the other heavy device operations — it is only reachable
+    // off the main queue.
+    nonisolated static func resetDevicesState() {
+        EKA2L1Emulator.shared().resetDevicesState()
     }
 
     // Rebuild the device list from what's on drive Z (recovers devices dropped
@@ -132,9 +153,16 @@ final class EKA2L1Bridge {
     }
 
     func rescanApps() -> [EKA2L1AppItem] {
-        emulator.rescanApps().map {
+        let apps = emulator.rescanApps().map {
             EKA2L1AppItem(uid: $0.uid, name: $0.name, system: $0.system)
         }
+        // Asking for the app list is the frontend's last step after a device
+        // boot, so it doubles as the boot's sign-off (see confirmDeviceBoot).
+        // It sits here rather than inside rescanApps so a scan that had to hand
+        // back its cached list — the session lock is busy decoding icons often
+        // enough — still confirms: the device is up either way.
+        emulator.confirmDeviceBoot()
+        return apps
     }
 
     // Launch runs off the main thread inside the bridge (it drives synchronous

@@ -82,10 +82,18 @@
            public.data → com.eka2l1.sis (.sis)
                        → com.eka2l1.sisx (.sisx)
                        → com.eka2l1.ngage (.n-gage, N-Gage 2.0 game package)
+         plus two imported below: com.eka2l1.rom (.rom, a raw device ROM dump)
+         and com.eka2l1.rpkg (.rpkg, a device package produced by the dumping
+         tools) — formats this app only reads.
          The exported declarations let other apps know our identifiers; the
          document-types entry says "we open these" so iOS surfaces EKA2L1 in
-         the Share / Open-in sheet. Device ROMs and RPKGs are not listed: they
-         are picked explicitly inside the device importer. -->
+         the Share / Open-in sheet. ROM and RPKG are declared but deliberately
+         left out of the document types: they are picked explicitly inside the
+         device importer, never opened from the Files share sheet. The
+         declarations exist because that picker filters on them — a file picker
+         only matches *declared* identifiers, so filtering on the dynamic type
+         the system synthesises for an unregistered extension greys out every
+         .rom/.rpkg file instead of offering it. -->
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -164,6 +172,48 @@
                 <key>public.filename-extension</key>
                 <array>
                     <string>n-gage</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+    <!-- Neither device-dump format is defined or written by this app — a ROM is
+         whatever the phone's flash held, and an RPKG comes out of the dumping
+         tools — so their identifiers are imported rather than exported. They are
+         declared at all only so the device importer's file picker has a declared
+         type to filter on. -->
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.eka2l1.rom</string>
+            <key>UTTypeDescription</key>
+            <string>Symbian Device ROM Dump</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rom</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.eka2l1.rpkg</string>
+            <key>UTTypeDescription</key>
+            <string>EKA2L1 Device Package</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>rpkg</string>
                 </array>
             </dict>
         </dict>

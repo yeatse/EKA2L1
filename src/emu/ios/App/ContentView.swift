@@ -81,6 +81,10 @@ struct ContentView: View {
     @State private var apps: [EKA2L1AppItem] = []
     @State private var bootError: String?
     @State private var banner: String?
+    // Device the previous run crashed on while booting (corrupt ROM/RPKG).
+    // Auto-boot skipped it, so say why instead of leaving the user wondering
+    // which device they ended up on.
+    @State private var failedBootDevice: String?
     @State private var switching = false
 
     @State private var showingImportDevice = false
@@ -189,6 +193,13 @@ struct ContentView: View {
                 OnboardingView {
                     onboardingCompleted = true
                 }
+            }
+            .alert(String(localized: "home.error.deviceBootCrashedTitle"),
+                   isPresented: Binding(get: { failedBootDevice != nil },
+                                        set: { if !$0 { failedBootDevice = nil } })) {
+                Button("common.ok", role: .cancel) { failedBootDevice = nil }
+            } message: {
+                Text("home.error.deviceBootCrashed \(failedBootDevice ?? "")")
             }
             .fileImporter(isPresented: $showingHomeImporter,
                           allowedContentTypes: homeImporterTypes,
@@ -462,6 +473,7 @@ struct ContentView: View {
         if EKA2L1Bridge.shared.start(documentsPath: documentsRoot()) {
             booted = true
             refresh()
+            reportFailedBootDevice()
             selectLaunchRomThenAutoLaunch()
             processPendingOpenURLs()
         } else {
@@ -559,6 +571,16 @@ struct ContentView: View {
             }
         }
         return nil
+    }
+
+    // The bridge keeps a device that took the previous run down out of the
+    // auto-boot; name it (with the model, when it is still installed) so the
+    // user knows which dump to reinstall or delete. Skipped for automated
+    // launches, where an alert would sit on top of the app list.
+    private func reportFailedBootDevice() {
+        guard let code = EKA2L1Bridge.shared.takeFailedBootDeviceCode(), !Self.isAutomationLaunch else { return }
+        let device = devices.first { $0.firmwareCode.caseInsensitiveCompare(code) == .orderedSame }
+        failedBootDevice = device.map { "\($0.displayName) (\(code))" } ?? code
     }
 
     private func refresh() {
@@ -876,19 +898,62 @@ struct ContentView: View {
     }
 }
 
+// Content types the device importer accepts. The identifier comes first and
+// has to be one this app declares (Info.plist UTImportedTypeDeclarations): a
+// document picker only matches declared types, so filtering on the dynamic type
+// the system synthesises for an unregistered extension greys out every file it
+// was supposed to offer. types(tag:) then adds anything else the system already
+// associates with the extension, so a file typed by another app's declaration
+// still comes through. Extension lookup is case-insensitive — .ROM and .rom
+// land on the same types.
+private func deviceDumpTypes(extension ext: String, declaredAs identifier: String) -> [UTType] {
+    var types: [UTType] = []
+    if let declared = UTType(identifier) { types.append(declared) }
+    for type in UTType.types(tag: ext, tagClass: .filenameExtension, conformingTo: nil)
+    where !types.contains(type) {
+        types.append(type)
+    }
+    return types.isEmpty ? [.data] : types
+}
+
+private let romTypes: [UTType] = deviceDumpTypes(extension: "rom", declaredAs: "com.eka2l1.rom")
+private let rpkgTypes: [UTType] = deviceDumpTypes(extension: "rpkg", declaredAs: "com.eka2l1.rpkg")
+
+// Shared between the main queue (which sets it from the Stop button) and the
+// install thread (which polls it between files), so the accesses are locked.
+private final class InstallCancelFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requested = false
+
+    func request() {
+        lock.lock()
+        requested = true
+        lock.unlock()
+    }
+
+    var isRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return requested
+    }
+}
+
 // Device-install Form. ROM file is mandatory; RPKG is supplied only when the
-// installer needs it (S60v2+ dumps). Both files are staged into the sandbox at
-// pick time so their paths survive past the security-scoped access window.
+// installer needs it (S60v2+ dumps). Both files are read in place at install
+// time — the installer copies the ROM onto the device folder and extracts the
+// RPKG itself, so staging a sandbox copy first would only duplicate hundreds of
+// MB. The picked URLs are security-scoped, so the scope is opened around the
+// install call (same pattern as the SIS importer).
 struct ImportDeviceView: View {
     var onFinish: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
-    private struct StagedFile { let name: String; let path: String }
+    private struct PickedFile { let name: String; let url: URL }
     private enum PickTarget { case rom, rpkg }
 
-    @State private var rom: StagedFile?
-    @State private var rpkg: StagedFile?
+    @State private var rom: PickedFile?
+    @State private var rpkg: PickedFile?
     // A single fileImporter driven by which row was tapped. Stacking two
     // .fileImporter modifiers on one view makes SwiftUI drop one of them, so
     // we multiplex through this instead. `pickTarget` is read in the
@@ -897,6 +962,12 @@ struct ImportDeviceView: View {
     @State private var pickTarget: PickTarget = .rom
     @State private var showingImporter = false
     @State private var installing = false
+    @State private var installProgress: Double = 0
+    // Set by the Stop button and polled by the installer between files. A class
+    // so the installer thread reads the same box the main thread wrote; the
+    // separate flag drives the UI, which a reference type would not refresh.
+    @State private var cancelFlag: InstallCancelFlag?
+    @State private var cancelRequested = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -918,29 +989,42 @@ struct ImportDeviceView: View {
                 }
 
                 Section {
-                    Button(action: install) {
-                        HStack(spacing: 8) {
-                            if installing { ProgressView() }
-                            Text(installing ? String(localized: "common.processing") : String(localized: "common.install"))
+                    if installing {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ProgressView(value: installProgress)
+                            Text(cancelRequested
+                                 ? String(localized: "import.cancelling")
+                                 : String(localized: "import.installing \(Int(installProgress * 100))"))
+                                .font(.footnote)
+                                .foregroundColor(.secondary)
                         }
+                        Button(role: .destructive) {
+                            cancelRequested = true
+                            cancelFlag?.request()
+                        } label: {
+                            Text("import.stopInstall")
+                        }
+                        .disabled(cancelRequested)
+                    } else {
+                        Button(action: install) {
+                            Text("common.install")
+                        }
+                        .disabled(rom == nil)
                     }
-                    .disabled(rom == nil || installing)
                 }
             }
             .navigationTitle("import.title")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("common.cancel") { dismiss() }.disabled(installing)
+                    Button("common.cancel") { dismiss() }
+                        .disabled(installing)
                 }
             }
             .fileImporter(isPresented: $showingImporter,
-                          allowedContentTypes: [.data],
+                          allowedContentTypes: pickTarget == .rpkg ? rpkgTypes : romTypes,
                           allowsMultipleSelection: false) { result in
-                let isRpkg = pickTarget == .rpkg
-                stage(result, kind: isRpkg ? "rpkg" : "rom") { staged in
-                    if isRpkg { rpkg = staged } else { rom = staged }
-                }
+                pick(result, target: pickTarget)
             }
             .interactiveDismissDisabled(installing)
         }
@@ -957,38 +1041,53 @@ struct ImportDeviceView: View {
         }
     }
 
-    private func stage(_ result: Result<[URL], Error>, kind: String, assign: (StagedFile?) -> Void) {
+    private func pick(_ result: Result<[URL], Error>, target: PickTarget) {
         guard case .success(let urls) = result, let url = urls.first else { return }
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
-        let tmpDir = (documentsRoot() as NSString).appendingPathComponent("import_tmp")
-        let dst = (tmpDir as NSString).appendingPathComponent("\(kind)_\(url.lastPathComponent)")
-        let fm = FileManager.default
-        do {
-            try fm.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
-            if fm.fileExists(atPath: dst) { try fm.removeItem(atPath: dst) }
-            try fm.copyItem(at: url, to: URL(fileURLWithPath: dst))
-            assign(StagedFile(name: url.lastPathComponent, path: dst))
-            errorMessage = nil
-        } catch {
-            errorMessage = "Failed to read file: \(error.localizedDescription)"
+        let kind = target == .rpkg ? "rpkg" : "rom"
+        // The picker filters by content type, which a file from a provider that
+        // types everything as generic data can slip past. The extension is the
+        // only thing the installers key off, so hold the line here too rather
+        // than feeding a ROM to the RPKG reader (and vice versa).
+        guard url.pathExtension.caseInsensitiveCompare(kind) == .orderedSame else {
+            errorMessage = String(localized: "import.error.wrongExtension \(kind.uppercased())")
+            return
         }
+
+        errorMessage = nil
+        let picked = PickedFile(name: url.lastPathComponent, url: url)
+        if target == .rpkg { rpkg = picked } else { rom = picked }
     }
 
     private func install() {
         guard let rom else { return }
         installing = true
+        installProgress = 0
         errorMessage = nil
-        let romPath = rom.path
-        let rpkgPath = rpkg?.path
+        cancelRequested = false
+        let flag = InstallCancelFlag()
+        cancelFlag = flag
+        let romURL = rom.url
+        let rpkgURL = rpkg?.url
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = EKA2L1Bridge.installDevice(romPath: romPath, rpkgPath: rpkgPath)
+            let romScoped = romURL.startAccessingSecurityScopedResource()
+            defer { if romScoped { romURL.stopAccessingSecurityScopedResource() } }
+            let rpkgScoped = rpkgURL?.startAccessingSecurityScopedResource() ?? false
+            defer { if rpkgScoped { rpkgURL?.stopAccessingSecurityScopedResource() } }
+            let result = EKA2L1Bridge.installDevice(
+                romPath: romURL.path,
+                rpkgPath: rpkgURL?.path,
+                progress: { fraction in
+                    DispatchQueue.main.async { installProgress = fraction }
+                },
+                cancelCheck: { flag.isRequested })
             DispatchQueue.main.async {
                 installing = false
-                cleanupStaging()
+                cancelFlag = nil
+                cancelRequested = false
                 if result == .success {
                     onFinish(true)
+                    dismiss()
+                } else if result == .cancelled {
                     dismiss()
                 } else {
                     errorMessage = installMessage(for: result)
@@ -1023,18 +1122,13 @@ struct ImportDeviceView: View {
             return String(localized: "import.error.romCopy")
         case .needRpkg:
             return String(localized: "import.error.needRpkg")
+        case .cancelled:
+            return String(localized: "import.cancelled")
         case .generalFailure:
             return String(localized: "common.error")
         @unknown default:
             return String(localized: "common.error")
         }
-    }
-
-    private func cleanupStaging() {
-        let tmpDir = (documentsRoot() as NSString).appendingPathComponent("import_tmp")
-        try? FileManager.default.removeItem(atPath: tmpDir)
-        rom = nil
-        rpkg = nil
     }
 }
 

@@ -61,16 +61,6 @@
         }
       }
     },
-    "common.processing" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Processing..."
-          }
-        }
-      }
-    },
     "controllerMapping.actions" : {
       "localizations" : {
         "en" : {
@@ -485,6 +475,26 @@
         }
       }
     },
+    "home.error.deviceBootCrashed %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ took the app down while it was starting up, so it was skipped this time. Its ROM (or RPKG) dump is likely damaged — delete the device and install it again from a good dump."
+          }
+        }
+      }
+    },
+    "home.error.deviceBootCrashedTitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device could not be started"
+          }
+        }
+      }
+    },
     "home.error.initTitle" : {
       "localizations" : {
         "en" : {
@@ -853,6 +863,26 @@
         }
       }
     },
+    "import.cancelled" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install cancelled."
+          }
+        }
+      }
+    },
+    "import.cancelling" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancelling…"
+          }
+        }
+      }
+    },
     "import.error.alreadyExists" : {
       "localizations" : {
         "en" : {
@@ -963,6 +993,26 @@
         }
       }
     },
+    "import.error.wrongExtension %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Please choose a %@ file."
+          }
+        }
+      }
+    },
+    "import.installing %lld" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unpacking the dump… %lld%%"
+          }
+        }
+      }
+    },
     "import.noDeviceInstalled" : {
       "localizations" : {
         "en" : {
@@ -1009,6 +1059,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "RPKG file (optional)"
+          }
+        }
+      }
+    },
+    "import.stopInstall" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop installing"
           }
         }
       }

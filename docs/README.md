@@ -111,6 +111,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-04 | [Why the time zone server is HLE'd, and why only from Symbian^3 up](./tzserver-hle-scope.md) |
 | 2026-08-05 | [`destroy()` erased the object next to the one it was given](./destroy-erases-the-wrong-object.md) |
 | 2026-08-05 | [Uninstalling an app the package manager never fully knew](./uninstall-package-of-an-app.md) |
+| 2026-08-06 | [A damaged ROM crashed the app once, then on every launch after](./device-boot-crash-loop.md) |
+| 2026-08-07 | [What blocks while a device installs, and the rule the Settings screen broke](./install-flow-main-thread.md) |
 
 ## Archived planning docs
 
