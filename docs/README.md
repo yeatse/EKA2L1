@@ -113,6 +113,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-05 | [Uninstalling an app the package manager never fully knew](./uninstall-package-of-an-app.md) |
 | 2026-08-06 | [A damaged ROM crashed the app once, then on every launch after](./device-boot-crash-loop.md) |
 | 2026-08-07 | [What blocks while a device installs, and the rule the Settings screen broke](./install-flow-main-thread.md) |
+| 2026-08-07 | [A repository setting spelled `""` took the emulator down](./cenrep-ini-parser.md) |
 
 ## Archived planning docs
 
