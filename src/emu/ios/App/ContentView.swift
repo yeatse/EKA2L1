@@ -13,21 +13,18 @@ import UniformTypeIdentifiers
 
 // SIS files only — device ROM / RPKG go through ImportDeviceView's own picker.
 private let sisTypes: [UTType] = {
-    var v: [UTType] = []
-    if let sis = UTType("com.eka2l1.sis") { v.append(sis) }
-    if let sisx = UTType("com.eka2l1.sisx") { v.append(sisx) }
-    v.append(.data) // fallback so SIS files without UTI hints still pick
-    return v
+    var types = importTypes(extension: "sis", declaredAs: "com.eka2l1.sis")
+    for type in importTypes(extension: "sisx", declaredAs: "com.eka2l1.sisx")
+    where !types.contains(type) {
+        types.append(type)
+    }
+    return types
 }()
 
 // N-Gage 2.0 game packages (.n-gage). Copied onto the E drive for the N-Gage
 // launcher to install from; see handleNGage2Import.
-private let ngage2Types: [UTType] = {
-    var v: [UTType] = []
-    if let pkg = UTType("com.eka2l1.ngage") { v.append(pkg) }
-    v.append(.data) // fallback so packages without UTI hints still pick
-    return v
-}()
+private let ngage2Types: [UTType] =
+    importTypes(extension: "n-gage", declaredAs: "com.eka2l1.ngage")
 
 // Guest fonts. A TrueType font serves every device: the font store backs the
 // device's own faces with it, converting its glyphs to the monochrome format
@@ -898,26 +895,31 @@ struct ContentView: View {
     }
 }
 
-// Content types the device importer accepts. The identifier comes first and
-// has to be one this app declares (Info.plist UTImportedTypeDeclarations): a
-// document picker only matches declared types, so filtering on the dynamic type
-// the system synthesises for an unregistered extension greys out every file it
-// was supposed to offer. types(tag:) then adds anything else the system already
-// associates with the extension, so a file typed by another app's declaration
-// still comes through. Extension lookup is case-insensitive — .ROM and .rom
-// land on the same types.
-private func deviceDumpTypes(extension ext: String, declaredAs identifier: String) -> [UTType] {
+// Content types an importer accepts for one file extension. The identifier
+// comes first and has to be one this app declares (Info.plist
+// UTImportedTypeDeclarations): a document picker only matches declared types,
+// so filtering on the dynamic type the system synthesises for an unregistered
+// extension greys out every file it was supposed to offer. types(tag:) then
+// adds anything else the system already associates with the extension, so a
+// file typed by another app's declaration still comes through. Extension lookup
+// is case-insensitive — .ROM and .rom land on the same types.
+//
+// Never fall back to .data: that re-enables every file in the picker, which is
+// exactly what filtering is meant to prevent. An empty list (only possible if
+// our own declaration went missing) leaves the picker offering nothing, which
+// is the honest failure.
+private func importTypes(extension ext: String, declaredAs identifier: String) -> [UTType] {
     var types: [UTType] = []
     if let declared = UTType(identifier) { types.append(declared) }
     for type in UTType.types(tag: ext, tagClass: .filenameExtension, conformingTo: nil)
     where !types.contains(type) {
         types.append(type)
     }
-    return types.isEmpty ? [.data] : types
+    return types
 }
 
-private let romTypes: [UTType] = deviceDumpTypes(extension: "rom", declaredAs: "com.eka2l1.rom")
-private let rpkgTypes: [UTType] = deviceDumpTypes(extension: "rpkg", declaredAs: "com.eka2l1.rpkg")
+private let romTypes: [UTType] = importTypes(extension: "rom", declaredAs: "com.eka2l1.rom")
+private let rpkgTypes: [UTType] = importTypes(extension: "rpkg", declaredAs: "com.eka2l1.rpkg")
 
 // Shared between the main queue (which sets it from the Stop button) and the
 // install thread (which polls it between files), so the accesses are locked.
