@@ -62,8 +62,26 @@ namespace eka2l1 {
             break;
         }
 
+        // The real server keeps the decoded source data of an icon around so a later
+        // resize does not have to read the container again, and hands it back when the
+        // client is done. This server re-renders from the container file every time and
+        // caches the results in "icons", so there is nothing to pin or hand back: both
+        // requests are already satisfied, and so is a request to enable the cache.
+        case akn_icon_server_preserve_icon_data:
+        case akn_icon_server_destroy_icon_data:
+        case akn_icon_server_request_to_enable_cache: {
+            ctx->complete(epoc::error_none);
+            break;
+        }
+
         default: {
+            // Complete even what we don't implement. A client blocks in SendReceive
+            // until the server answers, so leaving a message hanging freezes the
+            // calling thread for good - one unknown opcode is enough to leave every
+            // app on a device drawing nothing.
             LOG_ERROR(SERVICE_UI, "Unimplemented IPC opcode for AknIconServer session: 0x{:X}", ctx->msg->function);
+            ctx->complete(epoc::error_not_supported);
+
             break;
         }
         }

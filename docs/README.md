@@ -114,6 +114,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-06 | [A damaged ROM crashed the app once, then on every launch after](./device-boot-crash-loop.md) |
 | 2026-08-07 | [What blocks while a device installs, and the rule the Settings screen broke](./install-flow-main-thread.md) |
 | 2026-08-07 | [A repository setting spelled `""` took the emulator down](./cenrep-ini-parser.md) |
+| 2026-08-09 | [One unanswered IPC message black-screened every app on a device](./icon-server-hang-bricks-a-device.md) |
 
 ## Archived planning docs
 
