@@ -71,6 +71,23 @@ namespace eka2l1::epoc::socket {
             default:
                 break;
             }
+        } else {
+            switch (ctx->msg->function) {
+            case socket_ndb_query:
+                query(ctx);
+                return;
+
+            case socket_ndb_cancel:
+                cancel(ctx);
+                return;
+
+            case socket_ndb_close:
+                close(ctx);
+                return;
+
+            default:
+                break;
+            }
         }
 
         LOG_ERROR(SERVICE_ESOCK, "Unimplemented net database opcode: {}", ctx->msg->function);

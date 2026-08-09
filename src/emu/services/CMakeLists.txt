@@ -98,6 +98,7 @@ add_library(epocservs
         include/services/msv/msv.h
         include/services/msv/store.h
         include/services/notifier/notifier.h
+        include/services/notifier/bluetooth.h
         include/services/notifier/queries.h
         include/services/redir/redir.h
         include/services/remcon/common.h
@@ -248,6 +249,7 @@ add_library(epocservs
         src/msv/registry.cpp
         src/msv/store.cpp
         src/notifier/notifier.cpp
+        src/notifier/bluetooth.cpp
         src/notifier/queries.cpp
         src/redir/redir.cpp
         src/remcon/common.cpp

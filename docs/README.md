@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-10 | [N70 Bluetooth netplay: EKA1 IPC headers and device selection](./n70-bluetooth-netplay-ipc-and-device-selection.md) |
 | 2026-08-05 | [Chinese text drew as boxes because nobody assembled the ROM's linked fonts](./cjk-linked-fonts.md) |
 | 2026-08-03 | [The stray signal behind `E32USER-CBase 46` was a DSA cancel completed twice](./dsa-cancel-double-completion-stray.md) |
 | 2026-08-03 | [Symbian^3 File manager exits itself because the domain manager is missing](./x7-file-manager-domain-manager-exit.md) |

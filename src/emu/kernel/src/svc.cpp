@@ -5403,12 +5403,14 @@ namespace eka2l1::epoc {
 
     BRIDGE_FUNC(std::int32_t, session_send_sync_eka1, kernel::handle session_handle, const std::int32_t ord,
         std::uint32_t *args, eka2l1::ptr<epoc::request_status> status) {
-        return session_send_general(kern, session_handle, ord, args, status, kern->is_ipc_old(), true);
+        // EKA1's IPCv2-compatible server API still receives requests from the
+        // legacy TAny*[4] client ABI, which has no per-slot type header.
+        return session_send_general(kern, session_handle, ord, args, status, true, true);
     }
 
     BRIDGE_FUNC(std::int32_t, session_send_eka1, kernel::handle session_handle, const std::int32_t ord,
         std::uint32_t *args, eka2l1::ptr<epoc::request_status> status) {
-        return session_send_general(kern, session_handle, ord, args, status, kern->is_ipc_old(), false);
+        return session_send_general(kern, session_handle, ord, args, status, true, false);
     }
 
     std::int32_t thread_ipc_to_des_eka1(kernel_system *kern, address client_ptr_addr, epoc::des8 *des_ptr, std::int32_t offset, kernel::handle client_thread_h,

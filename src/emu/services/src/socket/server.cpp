@@ -204,6 +204,10 @@ namespace eka2l1 {
                     hr_create(ctx, false);
                     return;
 
+                case socket_ndb_open:
+                    ndb_create(ctx);
+                    return;
+
                 case socket_hr_open_with_connection:
                     hr_create(ctx, true);
                     return;

@@ -696,6 +696,10 @@ namespace eka2l1::epoc::socket {
                     write(ctx);
                     return;
 
+                case socket_reform_so_read:
+                    read(ctx);
+                    return;
+
                 case socket_reform_so_send:
                     send(ctx, true, false);
                     return;
@@ -771,6 +775,10 @@ namespace eka2l1::epoc::socket {
                 }
             } else {
                 switch (ctx->msg->function) {
+                case socket_so_set_opt:
+                    set_option(ctx);
+                    return;
+
                 case socket_so_get_opt:
                     get_option(ctx);
                     return;
@@ -797,6 +805,10 @@ namespace eka2l1::epoc::socket {
 
                 case socket_so_write:
                     write(ctx);
+                    return;
+
+                case socket_so_read:
+                    read(ctx);
                     return;
 
                 case socket_so_send:
