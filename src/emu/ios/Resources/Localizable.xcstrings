@@ -1573,6 +1573,16 @@
         }
       }
     },
+    "settings.netplay.directIpHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Peers reach this device at its IP address and the discovery port above, so enter that pair on their side."
+          }
+        }
+      }
+    },
     "settings.netplay.discoveryMode" : {
       "localizations" : {
         "en" : {
@@ -1609,6 +1619,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Emulates Symbian Bluetooth multiplayer over the network. Changes apply from the next app launch. iOS will ask for Local Network permission on first use."
+          }
+        }
+      }
+    },
+    "settings.netplay.listenPort" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Discovery port"
           }
         }
       }

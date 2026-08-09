@@ -35,6 +35,7 @@ struct SettingsView: View {
     // next app launch.
     @State private var btDiscoveryMode = 0
     @State private var btPortOffset = 15000
+    @State private var btListenPort = 35689
     @State private var btPassword = ""
     @State private var btServerUrl = ""
     @State private var btUpnp = true
@@ -119,6 +120,19 @@ struct SettingsView: View {
                             .frame(maxWidth: 100)
                     }
                 }
+                // The discovery port is only honoured in direct IP mode; the
+                // other modes force it to the fixed harbour port the LAN
+                // broadcast and the central server agree on. This is the port
+                // peers have to enter next to our address, so it is worth
+                // showing even though it rarely needs changing.
+                if btDiscoveryMode == 1 {
+                    LabeledContent("settings.netplay.listenPort") {
+                        TextField(String("35689"), value: $btListenPort, format: .number.grouping(.never))
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 100)
+                    }
+                }
                 // Direct IP peers are configured by hand, so the matching
                 // password is only meaningful for the discovery modes that
                 // negotiate it. UPnP only maps ports for the central server.
@@ -163,7 +177,12 @@ struct SettingsView: View {
                 Text("settings.netplay")
             } footer: {
                 if btDiscoveryMode != 0 {
-                    Text("settings.netplay.hint")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("settings.netplay.hint")
+                        if btDiscoveryMode == 1 {
+                            Text("settings.netplay.directIpHint")
+                        }
+                    }
                 }
             }
             Section("settings.peripherals") {
@@ -268,6 +287,7 @@ struct SettingsView: View {
         .onChange(of: hideSystemApps) { _ in save() }
         .onChange(of: btDiscoveryMode) { _ in save() }
         .onChange(of: btPortOffset) { _ in save() }
+        .onChange(of: btListenPort) { _ in save() }
         .onChange(of: btPassword) { _ in save() }
         .onChange(of: btServerUrl) { _ in save() }
         .onChange(of: btUpnp) { _ in save() }
@@ -335,6 +355,9 @@ struct SettingsView: View {
         if let value = snapshot["btnetPortOffset"] as? NSNumber {
             btPortOffset = value.intValue
         }
+        if let value = snapshot["btnetListenPort"] as? NSNumber {
+            btListenPort = value.intValue
+        }
         if let value = snapshot["btnetPassword"] as? String {
             btPassword = value
         }
@@ -387,6 +410,7 @@ struct SettingsView: View {
             "jitEnabled": useJIT && EKA2L1Bridge.shared.jitCompiledIn,
             "btnetDiscoveryMode": btDiscoveryMode,
             "btnetPortOffset": max(btPortOffset, 0),
+            "btnetListenPort": min(max(btListenPort, 1), 65535),
             "btnetPassword": btPassword,
             "btCentralServerUrl": btServerUrl,
             "enableUpnp": btUpnp,

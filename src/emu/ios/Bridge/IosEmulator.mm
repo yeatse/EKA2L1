@@ -976,37 +976,18 @@ namespace eka2l1::ios {
     // down promptly.
     _state->conf.cpu_load_save = true;
 
-    // Apply the configured log filter — the iOS frontend previously skipped
-    // this step (Qt does it in state.cpp), so the default log_filterings ctor
-    // left every class at trace level. On top of that, the iOS app is not a
-    // BUILD_FOR_USER build, so config::deserialize never downgrades the
-    // "*:trace" debug preset to the normal-use preset. The result was that
-    // every guest context switch ([Kernel]) and every dyncom VFP op
-    // ([CPU.DynCom]) was logged and synchronously flushed (spdlog flush_on =
-    // debug). Light S60v3 ROMs (N95) limped through, but heavier S60v5 ROMs
-    // (N97: ecomserver / AknIconSrv / cdlserver startup storm) spent ~all CPU
-    // in the trace flush flood and never produced a frame — a black screen at
-    // 100% CPU. Mirror BUILD_FOR_USER's downgrade here unless the user opted
-    // into extensive logging or set a custom filter.
-    std::string log_filter = _state->conf.log_filter;
-    if (log_filter.empty() || log_filter == eka2l1::LOG_FILTER_DEBUG_PRESET) {
-        if (_state->conf.extensive_logging) {
-            log_filter = eka2l1::LOG_FILTER_DEBUG_PRESET;
-        } else {
-            // Normal-use preset, plus silence the dyncom interpreter's per-op
-            // VFP trace. iOS runs the dyncom backend (see epoc.cpp — dynarmic
-            // still has a simulator-only A32 regalloc crash), and the normal
-            // preset leaves the CPU classes at trace level. Float-heavy guest
-            // code — e.g. AVKON UI bring-up on S60v5 (N97) — would otherwise
-            // flood the log with [CPU.DynCom] VFP traces, each synchronously
-            // flushed (spdlog flush_on = debug), pinning the CPU and starving
-            // rendering: the exact black-screen-at-100%-CPU symptom.
-            log_filter = std::string(eka2l1::LOG_FILTER_NORMAL_USE_PRESET)
-                + " CPU:warn CPU.DynCom:warn CPU.12L1R:warn";
-        }
-    }
-    if (eka2l1::log::filterings) {
-        eka2l1::log::filterings->parse_filter_string(log_filter);
+    // Apply the configured log filter, the way Qt does it in state.cpp — the iOS
+    // frontend used to skip this step, leaving the log_filterings ctor's
+    // every-class-at-trace default in place. The filter string is taken as
+    // written: an earlier version here rewrote it whenever it equalled the
+    // "*:trace" debug preset, which made a filter the user had set explicitly
+    // indistinguishable from an unconfigured one (that preset is also this
+    // build's default, since the app is not a BUILD_FOR_USER build). What that
+    // rewrite really guarded against was dyncom's per-op VFP trace on the
+    // interpreter's hot path, and those sites are now compiled out unless
+    // EKA2L1_DYNCOM_VFP_TRACE is turned on (see src/emu/cpu/CMakeLists.txt).
+    if (eka2l1::log::filterings && !_state->conf.log_filter.empty()) {
+        eka2l1::log::filterings->parse_filter_string(_state->conf.log_filter);
     }
 
     _state->settings = std::make_unique<eka2l1::config::app_settings>(&_state->conf);
@@ -2437,6 +2418,7 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
         @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()],
         @"btnetDiscoveryMode": @(_state->conf.btnet_discovery_mode),
         @"btnetPortOffset": @(_state->conf.btnet_port_offset),
+        @"btnetListenPort": @(_state->conf.internet_bluetooth_port),
         @"btnetPassword": [NSString stringWithUTF8String:_state->conf.btnet_password.c_str()],
         @"btCentralServerUrl": [NSString stringWithUTF8String:_state->conf.bt_central_server_url.c_str()],
         @"enableUpnp": @(_state->conf.enable_upnp),
@@ -2506,6 +2488,13 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
     NSNumber *btnetPortOffset = snapshot[@"btnetPortOffset"];
     if (btnetPortOffset) {
         _state->conf.btnet_port_offset = btnetPortOffset.unsignedIntValue;
+    }
+    // Discovery port for direct IP mode (the other modes bind the fixed
+    // harbour port instead). Clamped so a stray value can never make the
+    // midman bind an out-of-range port at boot.
+    NSNumber *btnetListenPort = snapshot[@"btnetListenPort"];
+    if (btnetListenPort) {
+        _state->conf.internet_bluetooth_port = std::clamp(btnetListenPort.intValue, 1, 65535);
     }
     NSString *btnetPassword = snapshot[@"btnetPassword"];
     if ([btnetPassword isKindOfClass:NSString.class]) {
