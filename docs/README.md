@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-10 | [Proxy-server Bluetooth netplay never worked, and how to run your own matching server](./bluetooth-netplay-central-server.md) |
 | 2026-08-10 | [X7 Bounce Boing Battle: common Bluetooth options and reform NetDB opcodes](./x7-bounce-boing-battle-bluetooth-netplay.md) |
 | 2026-08-10 | [N70 Bluetooth netplay: EKA1 IPC headers and device selection](./n70-bluetooth-netplay-ipc-and-device-selection.md) |
 | 2026-08-05 | [Chinese text drew as boxes because nobody assembled the ROM's linked fonts](./cjk-linked-fonts.md) |

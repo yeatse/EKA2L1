@@ -81,9 +81,8 @@ namespace eka2l1::epoc::bt {
 
             matching_server_socket_copy_copy->bind(*reinterpret_cast<sockaddr*>(&addr_temp));
 
-            matching_server_socket_copy_copy->on<uvw::error_event>([this](const uvw::error_event &event, uvw::tcp_handle &handle) {
-                // Accept the fate and resend login
-                send_login();
+            matching_server_socket_copy_copy->on<uvw::error_event>([](const uvw::error_event &event, uvw::tcp_handle &handle) {
+                LOG_ERROR(SERVICE_BLUETOOTH, "Error on the central Bluetooth Netplay server socket! Libuv error code={}", event.code());
             });
 
             matching_server_socket_copy_copy->on<uvw::connect_event>([matching_server_socket_copy_copy, this](const uvw::connect_event &event, uvw::tcp_handle &handle) {
@@ -92,6 +91,10 @@ namespace eka2l1::epoc::bt {
                 });
 
                 matching_server_socket_copy_copy->read();
+
+                // The server puts us in the room named by our password, so it has to
+                // hear the login before it can answer any player query.
+                send_login();
             });
 
             int err = matching_server_socket_copy_copy->connect(*reinterpret_cast<const sockaddr *>(&meta_server_addr));
@@ -135,7 +138,7 @@ namespace eka2l1::epoc::bt {
         int err = matching_server_socket_->write(&package, 1);
 
         if (err < 0) {
-            LOG_ERROR(SERVICE_BLUETOOTH, , err);
+            LOG_ERROR(SERVICE_BLUETOOTH, "Fail to send logout request to server! Libuv's error code {}", err);
         }
 
         if (close_and_reset) {
@@ -146,6 +149,11 @@ namespace eka2l1::epoc::bt {
     }
 
     void midman_inet::handle_matching_server_msg(std::int64_t nread, const char *buf) {
+        // The reply comes from the network, so it may be truncated or hostile.
+        if (!buf || (nread < 2)) {
+            return;
+        }
+
         if (buf[0] == QUERY_OPCODE_NOTIFY_PLAYER_EXISTENCE) {
             if (!current_active_observer_) {
                 return;
@@ -153,15 +161,15 @@ namespace eka2l1::epoc::bt {
 
             hearing_timeout_timer_->stop();
 
-            char friend_count = buf[1];
-            char packet_stream_pointer = 2;
+            const std::uint8_t friend_count = static_cast<std::uint8_t>(buf[1]);
+            std::int64_t packet_stream_pointer = 2;
 
-            for (char i = 0; i < friend_count; i++) {
+            for (std::uint8_t i = 0; i < friend_count; i++) {
                 if (packet_stream_pointer >= nread) {
                     break;
                 }
 
-                read_and_add_friend(buf, packet_stream_pointer);
+                read_and_add_friend(buf, nread, packet_stream_pointer);
             }
 
             // No need to restart, it's one time thing

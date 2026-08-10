@@ -145,7 +145,7 @@ namespace eka2l1::epoc::bt {
         void handle_matching_server_msg(std::int64_t nread, const char *buf_ptr);
         void send_login();
         void send_logout(const bool close_and_reset = true);
-        void read_and_add_friend(const char *buf, char &buf_pointer);
+        void read_and_add_friend(const char *buf, std::int64_t nread, std::int64_t &buf_pointer);
         void add_friend(epoc::bt::friend_info &info);
         void on_timeout_friend_search();
 

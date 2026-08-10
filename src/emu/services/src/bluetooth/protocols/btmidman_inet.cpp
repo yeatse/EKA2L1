@@ -346,21 +346,30 @@ namespace eka2l1::epoc::bt {
         current_active_observer_->on_stranger_call(info.real_addr_, static_cast<std::uint32_t>(friends_.size() - 1));
     }
 
-    void midman_inet::read_and_add_friend(const char *buf, char &buf_pointer) {
+    void midman_inet::read_and_add_friend(const char *buf, std::int64_t nread, std::int64_t &buf_pointer) {
         epoc::bt::friend_info info;
+        std::memset(&info.real_addr_, 0, sizeof(epoc::socket::saddress));
         info.dvc_addr_.padding_ = 0;
 
-        char is_ipv4 = buf[buf_pointer++];
+        const char is_ipv4 = buf[buf_pointer++];
+        const std::int64_t address_size = is_ipv4 ? 4 : 16;
+
+        if (buf_pointer + address_size > nread) {
+            LOG_ERROR(SERVICE_BLUETOOTH, "Player list from the matching server is truncated (got {} bytes)", nread);
+
+            buf_pointer = nread;
+            return;
+        }
+
         if (is_ipv4) {
             info.real_addr_.family_ = epoc::internet::INET_ADDRESS_FAMILY;
-
-            *static_cast<epoc::internet::sinet_address &>(info.real_addr_).addr_long() = *reinterpret_cast<const std::uint32_t *>(buf);
-            buf_pointer += sizeof(std::uint32_t);
-        } else {info.real_addr_.family_ = epoc::internet::INET6_ADDRESS_FAMILY;
-
-            std::memcpy(static_cast<epoc::internet::sinet6_address &>(info.real_addr_).address_32x4(), buf, sizeof(std::uint32_t) * 4);
-            buf_pointer += sizeof(std::uint32_t) * 4;
+            std::memcpy(static_cast<epoc::internet::sinet_address &>(info.real_addr_).addr_long(), buf + buf_pointer, address_size);
+        } else {
+            info.real_addr_.family_ = epoc::internet::INET6_ADDRESS_FAMILY;
+            std::memcpy(static_cast<epoc::internet::sinet6_address &>(info.real_addr_).address_32x4(), buf + buf_pointer, address_size);
         }
+
+        buf_pointer += address_size;
 
         info.real_addr_.port_ = HARBOUR_PORT;
         add_friend(info);
