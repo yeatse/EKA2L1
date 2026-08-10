@@ -217,6 +217,10 @@ namespace eka2l1 {
         socket_reform_hr_get_host_name = 0x3B,
         socket_reform_hr_set_host_name = 0x3C,
         socket_reform_sr_get_by_number = 0x3F,
+        socket_reform_ndb_open = 0x42,
+        socket_reform_ndb_query = 0x43,
+        socket_reform_ndb_add = 0x44,
+        socket_reform_ndb_remove = 0x45,
         socket_reform_so_open_with_conn = 0x46,
         socket_reform_hr_open_with_connection = 0x47,
         socket_reform_cn_open_with_cn_type = 0x48,
@@ -233,6 +237,8 @@ namespace eka2l1 {
         socket_reform_so_cancel_ioctl = 0x89,
         socket_reform_hr_cancel = 0x91,
         socket_reform_hr_close = 0x92,
+        socket_reform_ndb_cancel = 0x95,
+        socket_reform_ndb_close = 0x96,
         socket_reform_so_open_with_subconn = 0xBC,
         socket_reform_ss_request_optimal_dealer = 0xBE
     };

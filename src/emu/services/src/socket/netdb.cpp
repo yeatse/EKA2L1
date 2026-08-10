@@ -72,21 +72,40 @@ namespace eka2l1::epoc::socket {
                 break;
             }
         } else {
-            switch (ctx->msg->function) {
-            case socket_ndb_query:
-                query(ctx);
-                return;
+            if (ctx->sys->get_symbian_version_use() >= epocver::epoc95) {
+                switch (ctx->msg->function) {
+                case socket_reform_ndb_query:
+                    query(ctx);
+                    return;
 
-            case socket_ndb_cancel:
-                cancel(ctx);
-                return;
+                case socket_reform_ndb_cancel:
+                    cancel(ctx);
+                    return;
 
-            case socket_ndb_close:
-                close(ctx);
-                return;
+                case socket_reform_ndb_close:
+                    close(ctx);
+                    return;
 
-            default:
-                break;
+                default:
+                    break;
+                }
+            } else {
+                switch (ctx->msg->function) {
+                case socket_ndb_query:
+                    query(ctx);
+                    return;
+
+                case socket_ndb_cancel:
+                    cancel(ctx);
+                    return;
+
+                case socket_ndb_close:
+                    close(ctx);
+                    return;
+
+                default:
+                    break;
+                }
             }
         }
 

@@ -162,6 +162,10 @@ namespace eka2l1 {
                     sr_get_by_number(ctx);
                     return;
 
+                case socket_reform_ndb_open:
+                    ndb_create(ctx);
+                    return;
+
                 case socket_reform_cn_open_with_cn_type:
                     cn_open(ctx);
                     return;
