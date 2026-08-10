@@ -50,6 +50,49 @@ Nothing in the repo's history suggests this path was ever exercised: the file ha
 not been touched since 2023, and the upstream default host resolves to
 Cloudflare's proxy addresses, which do not forward TCP 27138 at all.
 
+## The upstream server speaks a protocol no client has used since 2023
+
+[`EKA2L1/btnet-server`](https://github.com/EKA2L1/btnet-server) does exist — a
+90-line Node script, last touched 2022-08-25 — and it implements a completely
+different wire protocol from the one above:
+
+```
+client -> server (TCP)   'l' '0' <len> <password>    log in
+                         'l' '1'                      log out
+                         'c' 'r'                      call for players
+server -> peer (UDP 35689, not the TCP socket!)
+                         'c' 'r' <'0'|'1'> <len> <requester address as ASCII>
+peer   -> requester (UDP 35689)
+                         'c' 'a'                      call accepted
+```
+
+That is the emulator's *own* protocol as of commit `1493e8af` (2022-08-25), and
+`btnet-server`'s last commit is the same day. Then `86b9244d` (2023-03-14)
+rewrote the client onto the binary opcode protocol and nobody touched the server
+again. So proxy mode has been broken in two independent ways at once: the client
+and the server have not spoken the same language for years, and the client-side
+code that would have parsed a correct reply never worked either.
+
+The two designs also differ in direction. The old one pushes: the server
+forwards the requester's address to every other room member over UDP, and each
+member answers the requester directly. The current one pulls: the requester gets
+a list back on its own TCP connection and contacts the peers itself.
+
+Push looks like it should help with NAT, but it does not — the server's push
+goes to the peer's harbour port, which is exactly the port that has to be
+forwarded anyway, so both designs need every player reachable on UDP 35689. And
+pull is enough for a real session even though only the scanning side learns
+about the other: the host registers the joiner from the inbound connection in
+`btinet_socket`'s accept path (`add_or_update_friend`), so it never needs to
+have discovered it.
+
+There was therefore nothing to port back from the upstream server. Two of its
+details are worth recording anyway: it also refuses to report a peer whose
+address equals the requester's, which confirms that rule is intended behaviour
+rather than an invention; and it keys room membership on `socket.remoteAddress`,
+so two clients behind one public address overwrite each other's room entry and
+either one logging out evicts both — key on the connection instead.
+
 ## Fix
 
 - `setup_proxy_server_discovery()` sends the login from the `connect_event`
