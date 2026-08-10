@@ -1787,7 +1787,9 @@ static unsigned int InterpreterTranslateInstruction(ARMul_State *cpu, const std:
             inst);
         LOG_ERROR(eka2l1::CPU_DYNCOM, "cpsr={:#X}, cpu->TFlag={}, r15={:#010X}", cpu->Cpsr, cpu->TFlag,
             cpu->Reg[15]);
-        CITRA_IGNORE_EXIT(-1);
+        cpu->RaiseException(eka2l1::arm::exception_type_undefined_inst, phys_addr);
+        inst_base = nullptr;
+        return 0;
     }
     inst_base = arm_instruction_trans[idx](cpu, inst, idx);
 
@@ -1827,6 +1829,10 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
     while (ret == TransExtData::NON_BRANCH) {
         unsigned int inst_size = InterpreterTranslateInstruction(cpu, phys_addr, inst_base);
 
+        if (!inst_base) {
+            return FETCH_EXCEPTION;
+        }
+
         size++;
 
         phys_addr += inst_size;
@@ -1850,6 +1856,10 @@ static int InterpreterTranslateSingle(ARMul_State *cpu, std::size_t &bb_start, s
     std::uint32_t pc_start = cpu->Reg[15];
 
     InterpreterTranslateInstruction(cpu, phys_addr, inst_base);
+
+    if (!inst_base) {
+        return FETCH_EXCEPTION;
+    }
 
     if (inst_base->br == TransExtData::NON_BRANCH) {
         inst_base->br = TransExtData::SINGLE_STEP;

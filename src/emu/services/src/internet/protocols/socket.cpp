@@ -89,8 +89,15 @@ namespace eka2l1::epoc::internet {
 
     void inet_socket::close_down() {
         if (accept_server_) {
-            accept_server_->cancel_accept();
+            inet_socket *accept_server = accept_server_;
+            accept_server_ = nullptr;
+            accept_server->cancel_accept();
         }
+
+        // A listening socket can be destroyed before the empty socket supplied
+        // to Accept(). Detach that socket while both objects are still alive so
+        // its destructor cannot call back through a stale accept_server_ pointer.
+        cancel_accept();
 
         if (opaque_handle_) {
             if (protocol_ == INET_TCP_PROTOCOL_ID) {
@@ -602,11 +609,13 @@ namespace eka2l1::epoc::internet {
             }
         }
 
-        // Well we are done, lol
-        kern->lock();
-        accept_done_info_.complete(epoc::error_none);
+        // Detach both sides before completing. Completion wakes the guest and
+        // can make either socket eligible for destruction immediately.
         accept_socket_ptr_->accept_server_ = nullptr;
         accept_socket_ptr_ = nullptr;
+
+        kern->lock();
+        accept_done_info_.complete(epoc::error_none);
         kern->unlock();
     }
 
@@ -627,14 +636,16 @@ namespace eka2l1::epoc::internet {
     }
 
     void inet_socket::cancel_accept() {
-        // NOTE: Sad race condition
         if (accept_done_info_.empty()) {
             return;
         }
 
-        accept_done_info_.complete(epoc::error_cancel);
-        accept_socket_ptr_->accept_server_ = nullptr;
+        if (accept_socket_ptr_) {
+            accept_socket_ptr_->accept_server_ = nullptr;
+        }
+
         accept_socket_ptr_ = nullptr;
+        accept_done_info_.complete(epoc::error_cancel);
     }   
 
     std::int32_t inet_socket::local_name(epoc::socket::saddress &result, std::uint32_t &result_len) {

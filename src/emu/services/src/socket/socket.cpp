@@ -738,6 +738,10 @@ namespace eka2l1::epoc::socket {
 
                     return;
 
+                case socket_reform_so_cancel_accept:
+                    cancel_accept(ctx);
+                    return;
+
                 case socket_reform_so_set_opt:
                     set_option(ctx);
                     return;
