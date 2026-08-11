@@ -100,6 +100,11 @@ namespace eka2l1::epoc::bt {
         std::vector<friend_info> friends_;
         common::bitmap_allocator allocated_ports_;
         std::array<std::uint16_t, MAX_PORT> port_refs_;
+        // Host ports we actually asked the router to forward. A port ref is not
+        // proof of a mapping (accept() refs a port that was never published),
+        // so unmapping must follow this instead, or we delete a stranger's
+        // mapping on the same router.
+        std::array<bool, MAX_PORT> port_upnp_mapped_;
         std::uint32_t port_offset_;
         bool enable_upnp_;
 

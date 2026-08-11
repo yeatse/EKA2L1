@@ -60,6 +60,7 @@ namespace eka2l1::epoc::bt {
         }
 
         std::fill(port_refs_.begin(), port_refs_.end(), 0);
+        std::fill(port_upnp_mapped_.begin(), port_upnp_mapped_.end(), false);
 
         std::vector<std::uint64_t> errs;
         update_friend_list(conf.friend_addresses, errs);
@@ -102,7 +103,14 @@ namespace eka2l1::epoc::bt {
             addr_bind.sin6_family = (discovery_mode_ == DISCOVERY_MODE_LAN) ? AF_INET : AF_INET6;
             addr_bind.sin6_port = htons(static_cast<std::uint16_t>(port_));
 
-            bluetooth_queries_server_socket_->bind(*reinterpret_cast<sockaddr*>(&addr_bind));
+            // A failed bind here is silent otherwise, and the whole discovery
+            // side is then dead without a single line in the log: nothing else
+            // reports on this socket until a query never arrives. The common
+            // cause is a second emulator instance on the same host, since LAN
+            // mode forces the fixed harbour port for everyone.
+            if (const int bind_err = bluetooth_queries_server_socket_->bind(*reinterpret_cast<sockaddr*>(&addr_bind)); bind_err < 0) {
+                LOG_ERROR(SERVICE_BLUETOOTH, "Can't bind the Bluetooth queries socket to port {}! Libuv error code={}", port_, bind_err);
+            }
 
             if (should_upnp_apply_to_port()) {
                 UPnP::TryPortmapping(static_cast<std::uint16_t>(port_), true);
@@ -133,8 +141,8 @@ namespace eka2l1::epoc::bt {
         if (should_upnp_apply_to_port()) {
             UPnP::StopPortmapping(static_cast<std::uint16_t>(port_), true);
 
-            for (std::size_t i = 0; i < port_refs_.size(); i++) {
-                if (port_refs_[i] != 0) {
+            for (std::size_t i = 0; i < port_upnp_mapped_.size(); i++) {
+                if (port_upnp_mapped_[i]) {
                     UPnP::StopPortmapping(static_cast<std::uint16_t>(port_offset_ + i), false);
                 }
             }
@@ -559,7 +567,8 @@ lookup:
         }
 
         if (should_upnp_apply_to_port()) {
-            UPnP::TryPortmapping(virtual_port - 1 + port_offset_, false);
+            UPnP::TryPortmapping(static_cast<std::uint16_t>(port_offset_ + virtual_port - 1), false);
+            port_upnp_mapped_[virtual_port - 1] = true;
         }
 
         allocated_ports_.force_fill(virtual_port - 1, 1);
@@ -606,8 +615,12 @@ lookup:
         if (allocated_ports_.is_allocated(virtual_port - 1)) {
             std::uint32_t ref_count = --port_refs_[virtual_port - 1];
             if (ref_count == 0) {
-                if (should_upnp_apply_to_port()) {
-                    UPnP::StopPortmapping(virtual_port, false);
+                if (port_upnp_mapped_[virtual_port - 1]) {
+                    // The mapped port is the host one, not the virtual port:
+                    // passing the latter deleted whatever mapping happened to
+                    // sit on port 1..60 of the router.
+                    UPnP::StopPortmapping(static_cast<std::uint16_t>(port_offset_ + virtual_port - 1), false);
+                    port_upnp_mapped_[virtual_port - 1] = false;
                 }
                 allocated_ports_.deallocate(virtual_port - 1, 1);
             }
@@ -721,7 +734,14 @@ lookup:
 
                 char request_friends = QUERY_OPCODE_GET_PLAYERS;
 
-                if (discovery_mode_ == DISCOVERY_MODE_LAN) {
+                // Direct IP has no network-wide search at all (its peers come
+                // from the config list), and either socket can be null when its
+                // setup failed. Observers still have to hear the end of the
+                // search, so the only thing that must always happen is arming
+                // the timeout below: a hearing observer that never gets
+                // on_no_more_strangers() leaves its guest request hanging
+                // forever.
+                if ((discovery_mode_ == DISCOVERY_MODE_LAN) && lan_discovery_call_listener_socket_) {
                     sockaddr_in6 server_addr_modded;
 
                     // A bit of overflow would be ok, I guess))
@@ -745,7 +765,7 @@ lookup:
 
                     lan_discovery_call_listener_socket_->broadcast(true);
                     lan_discovery_call_listener_socket_->send(*reinterpret_cast<sockaddr*>(&server_addr_modded), broadcast_buf.data(), static_cast<std::uint32_t>(broadcast_buf.size()));
-                } else {
+                } else if ((discovery_mode_ == DISCOVERY_MODE_PROXY_SERVER) && matching_server_socket_) {
                     matching_server_socket_->write(&request_friends, 1);
                 }
 

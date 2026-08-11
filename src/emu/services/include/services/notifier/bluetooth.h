@@ -31,7 +31,6 @@ namespace eka2l1::epoc::notifier {
             epoc::des8 *response = nullptr;
             epoc::notify_info complete_info{};
             std::atomic<std::uint64_t> generation{ 0 };
-            std::atomic<bool> saw_friend{ false };
         };
 
         std::shared_ptr<request_state> request_state_;

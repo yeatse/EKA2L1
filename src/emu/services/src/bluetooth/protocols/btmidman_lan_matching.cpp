@@ -39,7 +39,9 @@ namespace eka2l1::epoc::bt {
             addr_bind.sin6_family = AF_INET;
             addr_bind.sin6_port = htons(static_cast<std::uint16_t>(LAN_DISCOVERY_PORT));
 
-            lan_discovery_call_listener_socket_->bind(*reinterpret_cast<sockaddr*>(&addr_bind));
+            if (const int bind_err = lan_discovery_call_listener_socket_->bind(*reinterpret_cast<sockaddr*>(&addr_bind)); bind_err < 0) {
+                LOG_ERROR(SERVICE_BLUETOOTH, "Can't bind the LAN discovery socket to port {}! Libuv error code={}", LAN_DISCOVERY_PORT, bind_err);
+            }
             lan_discovery_call_listener_socket_->on<uvw::error_event>([](const uvw::error_event &event, uvw::udp_handle &handle) {
                 LOG_ERROR(SERVICE_BLUETOOTH, "Error on the LAN discovery listener socket! Libuv error code={}", event.code());
             });

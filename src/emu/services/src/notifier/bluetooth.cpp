@@ -93,7 +93,6 @@ namespace eka2l1::epoc::notifier {
         state->midman = midman;
         state->response = response;
         state->complete_info = complete_info;
-        state->saw_friend.store(false, std::memory_order_release);
         state->generation.fetch_add(1, std::memory_order_acq_rel);
         midman->begin_hearing_stranger_call(this);
     }
@@ -119,7 +118,8 @@ namespace eka2l1::epoc::notifier {
     }
 
     void bluetooth_device_selection_plugin::on_stranger_call(epoc::socket::saddress &, std::uint32_t) {
-        request_state_->saw_friend.store(true, std::memory_order_release);
+        // The peer list is read from the midman once the search ends, so an
+        // individual sighting needs no bookkeeping here.
     }
 
     void bluetooth_device_selection_plugin::on_no_more_strangers() {
@@ -136,7 +136,12 @@ namespace eka2l1::epoc::notifier {
                 midman = state->midman;
             }
 
-            if (!midman || !state->saw_friend.load(std::memory_order_acquire)) {
+            // Hearing no stranger does not mean there is no peer: direct IP
+            // takes its peers from the config list and never reports them
+            // through the observer, so the search legitimately ends silent
+            // with a friend whose virtual Bluetooth address is simply not
+            // resolved yet. Let the refresh below decide.
+            if (!midman) {
                 finish_request(state, generation);
                 return;
             }
