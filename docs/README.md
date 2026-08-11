@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-11 | [Dragon World stalls at the difficulty screen in netplay](./dragon-world-recv-one-or-more-layout.md) |
 | 2026-08-11 | [Verifying Bluetooth netplay with two simulators on one host](./netplay-two-simulator-verification.md) |
 | 2026-08-11 | [Central netplay collapsed same-source peers onto one UDP endpoint](./bluetooth-central-same-address-ports.md) |
 | 2026-08-10 | [Installing a device straight from a .7z](./device-install-from-7z-archives.md) |
