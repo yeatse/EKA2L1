@@ -34,11 +34,9 @@ struct SettingsView: View {
     // bluetooth midman reads these at device boot, so edits apply from the
     // next app launch.
     @State private var btDiscoveryMode = 0
-    @State private var btPortOffset = 15000
     @State private var btListenPort = 35689
     @State private var btPassword = ""
     @State private var btServerUrl = ""
-    @State private var btUpnp = true
     @State private var btFriends: [BTNetFriend] = []
     @State private var newFriendAddress = ""
     @State private var newFriendPort = ""
@@ -112,14 +110,6 @@ struct SettingsView: View {
                     Text("settings.netplay.mode.lan").tag(2)
                     Text("settings.netplay.mode.server").tag(3)
                 }
-                if btDiscoveryMode != 0 {
-                    LabeledContent("settings.netplay.portOffset") {
-                        TextField(String("15000"), value: $btPortOffset, format: .number.grouping(.never))
-                            .keyboardType(.numberPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(maxWidth: 100)
-                    }
-                }
                 // LAN discovery uses its fixed harbour port. Direct IP and a
                 // current central server can advertise a configurable port.
                 if btDiscoveryMode == 1 || btDiscoveryMode == 3 {
@@ -132,7 +122,7 @@ struct SettingsView: View {
                 }
                 // Direct IP peers are configured by hand, so the matching
                 // password is only meaningful for the discovery modes that
-                // negotiate it. UPnP only maps ports for the central server.
+                // negotiate it.
                 if btDiscoveryMode == 2 || btDiscoveryMode == 3 {
                     TextField("settings.netplay.password", text: $btPassword)
                         .autocorrectionDisabled()
@@ -143,7 +133,6 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                         .keyboardType(.URL)
-                    Toggle("settings.netplay.upnp", isOn: $btUpnp)
                 }
                 if btDiscoveryMode == 1 {
                     ForEach(btFriends) { friendEntry in
@@ -283,11 +272,9 @@ struct SettingsView: View {
         .onChange(of: nearestNeighborFiltering) { _ in save() }
         .onChange(of: hideSystemApps) { _ in save() }
         .onChange(of: btDiscoveryMode) { _ in save() }
-        .onChange(of: btPortOffset) { _ in save() }
         .onChange(of: btListenPort) { _ in save() }
         .onChange(of: btPassword) { _ in save() }
         .onChange(of: btServerUrl) { _ in save() }
-        .onChange(of: btUpnp) { _ in save() }
         .onChange(of: systemLanguageCode) { newCode in
             // -1 = load() hasn't found a booted device yet; don't write it back.
             if newCode >= 0, newCode != EKA2L1Bridge.shared.currentLanguageCode() {
@@ -349,9 +336,6 @@ struct SettingsView: View {
         if let value = snapshot["btnetDiscoveryMode"] as? NSNumber {
             btDiscoveryMode = value.intValue
         }
-        if let value = snapshot["btnetPortOffset"] as? NSNumber {
-            btPortOffset = value.intValue
-        }
         if let value = snapshot["btnetListenPort"] as? NSNumber {
             btListenPort = value.intValue
         }
@@ -360,9 +344,6 @@ struct SettingsView: View {
         }
         if let value = snapshot["btCentralServerUrl"] as? String {
             btServerUrl = value
-        }
-        if let value = snapshot["enableUpnp"] as? NSNumber {
-            btUpnp = value.boolValue
         }
         if let entries = snapshot["btnetFriendAddresses"] as? [[String: Any]] {
             btFriends = entries.compactMap { entry in
@@ -406,11 +387,9 @@ struct SettingsView: View {
             "hideSystemApps": hideSystemApps,
             "jitEnabled": useJIT && EKA2L1Bridge.shared.jitCompiledIn,
             "btnetDiscoveryMode": btDiscoveryMode,
-            "btnetPortOffset": max(btPortOffset, 0),
             "btnetListenPort": min(max(btListenPort, 1), 65535),
             "btnetPassword": btPassword,
             "btCentralServerUrl": btServerUrl,
-            "enableUpnp": btUpnp,
             "btnetFriendAddresses": btFriends.map { ["addr": $0.addr, "port": $0.port] }
         ]
         _ = EKA2L1Bridge.shared.applyConfigSnapshot(snapshot)

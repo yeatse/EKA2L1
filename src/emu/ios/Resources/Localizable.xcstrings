@@ -1753,32 +1753,12 @@
         }
       }
     },
-    "settings.netplay.portOffset" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Port offset"
-          }
-        }
-      }
-    },
     "settings.netplay.serverUrl" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Server address"
-          }
-        }
-      }
-    },
-    "settings.netplay.upnp" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "UPnP port forwarding"
           }
         }
       }

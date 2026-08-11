@@ -2427,11 +2427,9 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
         @"deviceDisplayName": [NSString stringWithUTF8String:_state->conf.device_display_name.c_str()],
         @"logFilter": [NSString stringWithUTF8String:_state->conf.log_filter.c_str()],
         @"btnetDiscoveryMode": @(_state->conf.btnet_discovery_mode),
-        @"btnetPortOffset": @(_state->conf.btnet_port_offset),
         @"btnetListenPort": @(_state->conf.internet_bluetooth_port),
         @"btnetPassword": [NSString stringWithUTF8String:_state->conf.btnet_password.c_str()],
         @"btCentralServerUrl": [NSString stringWithUTF8String:_state->conf.bt_central_server_url.c_str()],
-        @"enableUpnp": @(_state->conf.enable_upnp),
         @"btnetFriendAddresses": friends
     };
 }
@@ -2495,10 +2493,11 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
     if (btnetDiscoveryMode) {
         _state->conf.btnet_discovery_mode = btnetDiscoveryMode.unsignedIntValue;
     }
-    NSNumber *btnetPortOffset = snapshot[@"btnetPortOffset"];
-    if (btnetPortOffset) {
-        _state->conf.btnet_port_offset = btnetPortOffset.unsignedIntValue;
-    }
+    // The host port range the guest's virtual bluetooth ports map onto
+    // (btnet-port-offset) is not exposed: it only needs changing when several
+    // emulator instances share one machine, which iOS never does. Edit
+    // config.yml directly for that case.
+    //
     // Discovery port for direct IP mode (the other modes bind the fixed
     // harbour port instead). Clamped so a stray value can never make the
     // midman bind an out-of-range port at boot.
@@ -2514,10 +2513,9 @@ static constexpr std::uint8_t k_unlimited_refresh_rate = 240;
     if ([btCentralServerUrl isKindOfClass:NSString.class] && (btCentralServerUrl.length > 0)) {
         _state->conf.bt_central_server_url = btCentralServerUrl.UTF8String;
     }
-    NSNumber *enableUpnp = snapshot[@"enableUpnp"];
-    if (enableUpnp) {
-        _state->conf.enable_upnp = enableUpnp.boolValue;
-    }
+    // UPnP port forwarding (enable-upnp) is not exposed either: it defaults on
+    // and only ever runs in central server mode, where NAT traversal is the
+    // whole point of the mode.
     NSArray *friendAddresses = snapshot[@"btnetFriendAddresses"];
     if ([friendAddresses isKindOfClass:NSArray.class]) {
         _state->conf.friend_addresses.clear();
