@@ -14,6 +14,7 @@ endif ()
 
 add_library(common
         include/common/applauncher.h
+        include/common/archive.h
         include/common/arghandler.h
         include/common/atomic.h
         include/common/advstream.h
@@ -63,6 +64,7 @@ add_library(common
         include/common/virtualmem.h
         include/common/watcher.h
         include/common/wildcard.h
+        src/archive.cpp
         src/atomic.cpp
         src/arghandler.cpp
         src/armemitter.cpp
@@ -132,7 +134,7 @@ target_include_directories(common PUBLIC
         "${COMMON_GENERATED_INCLUDE_DIR}"
         include)
 target_link_libraries(common PUBLIC fmt miniz spdlog)
-target_link_libraries(common PRIVATE pugixml re2::re2)
+target_link_libraries(common PRIVATE archive_static pugixml re2::re2)
 target_link_libraries(common PRIVATE miniupnpc::miniupnpc)
 
 if (UNIX OR APPLE)

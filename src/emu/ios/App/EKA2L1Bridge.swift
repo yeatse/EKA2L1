@@ -120,6 +120,15 @@ final class EKA2L1Bridge {
                                               progress: progress, cancelCheck: cancelCheck)
     }
 
+    // Same, from a .7z holding either a ROM/RPKG pair or an already-unpacked
+    // device — see installDeviceWithArchivePath:progress:cancelCheck:.
+    nonisolated static func installDevice(archivePath: String,
+                                          progress: (@Sendable (Double) -> Void)? = nil,
+                                          cancelCheck: (@Sendable () -> Bool)? = nil) -> EKA2L1InstallResult {
+        EKA2L1Emulator.shared().installDevice(archivePath: archivePath,
+                                              progress: progress, cancelCheck: cancelCheck)
+    }
+
     nonisolated static func bootDevice(at index: Int) -> Bool {
         EKA2L1Emulator.shared().bootDevice(at: UInt(index))
     }

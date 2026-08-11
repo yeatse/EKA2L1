@@ -863,6 +863,26 @@
         }
       }
     },
+    "import.archiveFile" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "7z archive"
+          }
+        }
+      }
+    },
+    "import.archiveHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a .7z holding a device. Both common packagings work: a ROM image with its RPKG, or a device someone already unpacked into the emulator's folder layout (data/roms and data/drives/z).\n\nAnything else in the archive is ignored, so a pack meant to be dropped into the EKA2L1 folder by hand installs as-is."
+          }
+        }
+      }
+    },
     "import.cancelled" : {
       "localizations" : {
         "en" : {
@@ -889,6 +909,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Device to install already exists!"
+          }
+        }
+      }
+    },
+    "import.error.archiveCorrupt" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The archive could not be read. It may be incomplete, or use a compression method this build does not support."
+          }
+        }
+      }
+    },
+    "import.error.archiveNoDevice" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The archive holds no device: it needs either a ROM image (with its RPKG, if the ROM needs one) or an unpacked drive Z tree."
           }
         }
       }
@@ -1059,6 +1099,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "RPKG file (optional)"
+          }
+        }
+      }
+    },
+    "import.source" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Install from"
+          }
+        }
+      }
+    },
+    "import.source.archive" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "7z archive"
+          }
+        }
+      }
+    },
+    "import.source.looseFiles" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ROM / RPKG"
           }
         }
       }

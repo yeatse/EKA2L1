@@ -63,6 +63,7 @@
 #include <services/window/window.h>
 #include <system/devices.h>
 #include <system/epoc.h>
+#include <system/installation/archive.h>
 #include <system/installation/common.h>
 #include <system/installation/firmware.h>
 #include <system/installation/rpkg.h>
@@ -111,6 +112,9 @@ namespace eka2l1::ios {
             case eka2l1::device_installation_rofs_corrupt: return EKA2L1InstallResultRofsCorrupt;
             case eka2l1::device_installation_rom_file_corrupt: return EKA2L1InstallResultRomCorrupt;
             case eka2l1::device_installation_fpsx_corrupt: return EKA2L1InstallResultFpsxCorrupt;
+            case eka2l1::device_installation_rpkg_missing: return EKA2L1InstallResultNeedRpkg;
+            case eka2l1::device_installation_archive_corrupt: return EKA2L1InstallResultArchiveCorrupt;
+            case eka2l1::device_installation_archive_no_device: return EKA2L1InstallResultArchiveNoDevice;
             default: return EKA2L1InstallResultGeneralFailure;
         }
     }
@@ -1224,16 +1228,18 @@ namespace eka2l1::ios {
     return static_cast<NSInteger>(dvc->get_current_index());
 }
 
-- (EKA2L1InstallResult)installDeviceWithRomPath:(NSString *)romPath
-                                       rpkgPath:(NSString *)rpkgPath
-                                       progress:(void (^)(double))progress
-                                    cancelCheck:(BOOL (^)(void))cancelCheck {
+// Shared body of the two install entry points below. `installer` is handed the
+// device manager plus the two storage folders every installer writes into, and
+// does the format-specific work; everything around it (freezing the emulator,
+// progress plumbing, persisting devices.yml) is the same either way.
+- (EKA2L1InstallResult)runDeviceInstall:(eka2l1::device_installation_error (^)(eka2l1::device_manager *dvc,
+                                            const std::string &romResidentPath, const std::string &rootZPath,
+                                            progress_changed_callback progressCb,
+                                            cancel_requested_callback cancelCb))installer
+                               progress:(void (^)(double))progress
+                            cancelCheck:(BOOL (^)(void))cancelCheck {
     if (!_state || !_state->symsys) {
         return EKA2L1InstallResultGeneralFailure;
-    }
-    NSFileManager *fm = NSFileManager.defaultManager;
-    if (![fm fileExistsAtPath:romPath]) {
-        return EKA2L1InstallResultNotExist;
     }
 
     // Installing mutates device_manager + the sandbox storage tree; stop the
@@ -1258,55 +1264,33 @@ namespace eka2l1::ios {
     const std::string rom_resident_path = eka2l1::add_path(storage, "roms/");
     eka2l1::common::create_directories(rom_resident_path);
 
-    const std::string rom_std = romPath.UTF8String;
-    eka2l1::device_installation_error result = eka2l1::device_installation_general_failure;
-    bool need_add_rpkg = false;
-    std::string firmware_code;
-
-    // Both installers report (done, total) pairs whose scale changes between
+    // The installers report (done, total) pairs whose scale changes between
     // phases but whose ratio stays monotonic, so hand the frontend the ratio.
-    // `ceiling` leaves room for work this method does after the installer
-    // returns. The last reported value is kept so a per-chunk callback doesn't
-    // wake the frontend thousands of times for sub-percent moves.
+    // The last reported value is kept so a per-chunk callback doesn't wake the
+    // frontend thousands of times for sub-percent moves.
     auto last_reported = std::make_shared<std::atomic<double>>(-1.0);
-    const auto make_progress_cb = [progress, last_reported](const double ceiling) -> progress_changed_callback {
-        if (!progress) {
-            return nullptr;
-        }
-        return [progress, last_reported, ceiling](const std::size_t done, const std::size_t total) {
+    progress_changed_callback progress_cb = nullptr;
+    if (progress) {
+        progress_cb = [progress, last_reported](const std::size_t done, const std::size_t total) {
             if (!total) {
                 return;
             }
-            const double fraction = std::clamp(static_cast<double>(done) / static_cast<double>(total), 0.0, 1.0) * ceiling;
-            if ((fraction < last_reported->load() + 0.005) && (fraction < ceiling)) {
+            const double fraction = std::clamp(static_cast<double>(done) / static_cast<double>(total), 0.0, 1.0);
+            if ((fraction < last_reported->load() + 0.005) && (fraction < 1.0)) {
                 return;
             }
             last_reported->store(fraction);
             progress(fraction);
         };
-    };
+    }
+
     cancel_requested_callback cancel_cb = nullptr;
     if (cancelCheck) {
         cancel_cb = [cancelCheck]() -> bool { return cancelCheck() == YES; };
     }
 
-    // Mirror launcher::install_device: a raw ROM that the loader flags as
-    // needing an RPKG must be paired with one; otherwise install_rom alone
-    // covers the dump.
-    if (eka2l1::loader::should_install_requires_additional_rpkg(rom_std)) {
-        if (!rpkgPath || ![fm fileExistsAtPath:rpkgPath]) {
-            _state->mounted = was_mounted;
-            return EKA2L1InstallResultNeedRpkg;
-        }
-        // The resident ROM copy below is on this path only, and it is a sizeable
-        // share of the wait — leave it the last tenth of the bar.
-        result = eka2l1::loader::install_rpkg(dvc, rpkgPath.UTF8String, root_z_path,
-            firmware_code, make_progress_cb(0.9), cancel_cb);
-        need_add_rpkg = true;
-    } else {
-        result = eka2l1::loader::install_rom(dvc, rom_std, rom_resident_path, root_z_path,
-            make_progress_cb(1.0), cancel_cb);
-    }
+    const eka2l1::device_installation_error result = installer(dvc, rom_resident_path, root_z_path,
+        progress_cb, cancel_cb);
 
     if (result != eka2l1::device_installation_none) {
         _state->mounted = was_mounted;
@@ -1321,20 +1305,46 @@ namespace eka2l1::ios {
 
     dvc->save_devices();
 
-    if (need_add_rpkg) {
-        // Past the point of no return: the device is in devices.yml and its
-        // drive Z is populated, so a cancel arriving now is ignored rather than
-        // left half-installed.
-        const std::string rom_directory = eka2l1::add_path(rom_resident_path,
-            eka2l1::common::lowercase_string(firmware_code) + "/");
-        eka2l1::common::create_directories(rom_directory);
-        eka2l1::common::copy_file(rom_std, eka2l1::add_path(rom_directory, "SYM.ROM"), true);
-    }
-
     if (progress) {
         progress(1.0);
     }
     return EKA2L1InstallResultSuccess;
+}
+
+- (EKA2L1InstallResult)installDeviceWithRomPath:(NSString *)romPath
+                                       rpkgPath:(NSString *)rpkgPath
+                                       progress:(void (^)(double))progress
+                                    cancelCheck:(BOOL (^)(void))cancelCheck {
+    if (![NSFileManager.defaultManager fileExistsAtPath:romPath]) {
+        return EKA2L1InstallResultNotExist;
+    }
+
+    const std::string rom_std = romPath.UTF8String;
+    const std::string rpkg_std = rpkgPath ? std::string(rpkgPath.UTF8String) : std::string();
+
+    return [self runDeviceInstall:^(eka2l1::device_manager *dvc, const std::string &rom_resident_path,
+                                     const std::string &root_z_path, progress_changed_callback progress_cb,
+                                     cancel_requested_callback cancel_cb) {
+        return eka2l1::loader::install_rom_with_optional_rpkg(dvc, rom_std, rpkg_std, rom_resident_path,
+            root_z_path, progress_cb, cancel_cb);
+    } progress:progress cancelCheck:cancelCheck];
+}
+
+- (EKA2L1InstallResult)installDeviceWithArchivePath:(NSString *)archivePath
+                                           progress:(void (^)(double))progress
+                                        cancelCheck:(BOOL (^)(void))cancelCheck {
+    if (![NSFileManager.defaultManager fileExistsAtPath:archivePath]) {
+        return EKA2L1InstallResultNotExist;
+    }
+
+    const std::string archive_std = archivePath.UTF8String;
+
+    return [self runDeviceInstall:^(eka2l1::device_manager *dvc, const std::string &rom_resident_path,
+                                     const std::string &root_z_path, progress_changed_callback progress_cb,
+                                     cancel_requested_callback cancel_cb) {
+        return eka2l1::loader::install_archive(dvc, archive_std, rom_resident_path, root_z_path, progress_cb,
+            cancel_cb);
+    } progress:progress cancelCheck:cancelCheck];
 }
 
 - (BOOL)bootDeviceAtIndex:(NSUInteger)index {

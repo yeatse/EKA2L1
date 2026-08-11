@@ -920,6 +920,10 @@ private func importTypes(extension ext: String, declaredAs identifier: String) -
 
 private let romTypes: [UTType] = importTypes(extension: "rom", declaredAs: "com.eka2l1.rom")
 private let rpkgTypes: [UTType] = importTypes(extension: "rpkg", declaredAs: "com.eka2l1.rpkg")
+// 7z is not one of ours to name — org.7-zip.7-zip-archive is the identifier 7-Zip
+// and everything that reads its archives use, so we import that one rather than
+// minting a com.eka2l1.* type nothing else would recognise.
+private let archiveTypes: [UTType] = importTypes(extension: "7z", declaredAs: "org.7-zip.7-zip-archive")
 
 // Shared between the main queue (which sets it from the Stop button) and the
 // install thread (which polls it between files), so the accesses are locked.
@@ -940,22 +944,34 @@ private final class InstallCancelFlag: @unchecked Sendable {
     }
 }
 
-// Device-install Form. ROM file is mandatory; RPKG is supplied only when the
-// installer needs it (S60v2+ dumps). Both files are read in place at install
-// time — the installer copies the ROM onto the device folder and extracts the
-// RPKG itself, so staging a sandbox copy first would only duplicate hundreds of
-// MB. The picked URLs are security-scoped, so the scope is opened around the
-// install call (same pattern as the SIS importer).
+// Device-install Form, in two flavours the user picks between.
+//
+// Loose files: ROM is mandatory; RPKG is supplied only when the installer needs
+// it (S60v2+ dumps). A .7z instead: one file holding either of those same two,
+// or a device that someone already unpacked into the emulator's folder layout —
+// the installer works out which from the archive's contents.
+//
+// Everything is read in place at install time. The installer copies the ROM onto
+// the device folder and extracts the rest itself, so staging a sandbox copy first
+// would only duplicate hundreds of MB. The picked URLs are security-scoped, so
+// the scope is opened around the install call (same pattern as the SIS importer).
 struct ImportDeviceView: View {
     var onFinish: (Bool) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
     private struct PickedFile { let name: String; let url: URL }
-    private enum PickTarget { case rom, rpkg }
+    private enum PickTarget { case rom, rpkg, archive }
 
+    private enum SourceKind: Hashable {
+        case looseFiles
+        case archive
+    }
+
+    @State private var source: SourceKind = .looseFiles
     @State private var rom: PickedFile?
     @State private var rpkg: PickedFile?
+    @State private var archive: PickedFile?
     // A single fileImporter driven by which row was tapped. Stacking two
     // .fileImporter modifiers on one view makes SwiftUI drop one of them, so
     // we multiplex through this instead. `pickTarget` is read in the
@@ -976,14 +992,35 @@ struct ImportDeviceView: View {
         NavigationStack {
             Form {
                 Section {
-                    Button { pickTarget = .rom; showingImporter = true } label: {
-                        fileRow(title: String(localized: "import.romFile"), value: rom?.name)
+                    Picker("import.source", selection: $source) {
+                        Text("import.source.looseFiles").tag(SourceKind.looseFiles)
+                        Text("import.source.archive").tag(SourceKind.archive)
                     }
-                    Button { pickTarget = .rpkg; showingImporter = true } label: {
-                        fileRow(title: String(localized: "import.rpkgFile"), value: rpkg?.name)
+                    .pickerStyle(.menu)
+                    .disabled(installing)
+                }
+
+                Section {
+                    if source == .looseFiles {
+                        Button { pickTarget = .rom; showingImporter = true } label: {
+                            fileRow(title: String(localized: "import.romFile"), value: rom?.name)
+                        }
+                        Button { pickTarget = .rpkg; showingImporter = true } label: {
+                            fileRow(title: String(localized: "import.rpkgFile"), value: rpkg?.name)
+                        }
+                    } else {
+                        Button { pickTarget = .archive; showingImporter = true } label: {
+                            fileRow(title: String(localized: "import.archiveFile"), value: archive?.name)
+                        }
                     }
                 } footer: {
-                    Text("import.recommendedDevices")
+                    // Both take a LocalizedStringKey rather than a resolved String, so the wiki link in
+                    // the loose-files text keeps rendering as markdown.
+                    if source == .looseFiles {
+                        Text("import.recommendedDevices")
+                    } else {
+                        Text("import.archiveHint")
+                    }
                 }
 
                 if let errorMessage {
@@ -1011,7 +1048,7 @@ struct ImportDeviceView: View {
                         Button(action: install) {
                             Text("common.install")
                         }
-                        .disabled(rom == nil)
+                        .disabled(source == .looseFiles ? (rom == nil) : (archive == nil))
                     }
                 }
             }
@@ -1024,7 +1061,7 @@ struct ImportDeviceView: View {
                 }
             }
             .fileImporter(isPresented: $showingImporter,
-                          allowedContentTypes: pickTarget == .rpkg ? rpkgTypes : romTypes,
+                          allowedContentTypes: contentTypes(for: pickTarget),
                           allowsMultipleSelection: false) { result in
                 pick(result, target: pickTarget)
             }
@@ -1043,9 +1080,25 @@ struct ImportDeviceView: View {
         }
     }
 
+    private func contentTypes(for target: PickTarget) -> [UTType] {
+        switch target {
+        case .rom: return romTypes
+        case .rpkg: return rpkgTypes
+        case .archive: return archiveTypes
+        }
+    }
+
+    private func expectedExtension(for target: PickTarget) -> String {
+        switch target {
+        case .rom: return "rom"
+        case .rpkg: return "rpkg"
+        case .archive: return "7z"
+        }
+    }
+
     private func pick(_ result: Result<[URL], Error>, target: PickTarget) {
         guard case .success(let urls) = result, let url = urls.first else { return }
-        let kind = target == .rpkg ? "rpkg" : "rom"
+        let kind = expectedExtension(for: target)
         // The picker filters by content type, which a file from a provider that
         // types everything as generic data can slip past. The extension is the
         // only thing the installers key off, so hold the line here too rather
@@ -1057,31 +1110,56 @@ struct ImportDeviceView: View {
 
         errorMessage = nil
         let picked = PickedFile(name: url.lastPathComponent, url: url)
-        if target == .rpkg { rpkg = picked } else { rom = picked }
+        switch target {
+        case .rom: rom = picked
+        case .rpkg: rpkg = picked
+        case .archive: archive = picked
+        }
     }
 
     private func install() {
-        guard let rom else { return }
+        // Both flavours run the same way: hold the security scope open across a
+        // synchronous install on a background queue, then report on the main one.
+        // Only which bridge call sits in the middle differs.
+        let urls: [URL]
+        let run: @Sendable (@escaping @Sendable (Double) -> Void,
+                            @escaping @Sendable () -> Bool) -> EKA2L1InstallResult
+
+        switch source {
+        case .looseFiles:
+            guard let rom else { return }
+            let romPath = rom.url.path
+            let rpkgPath = rpkg?.url.path
+            urls = [rom.url] + (rpkg.map { [$0.url] } ?? [])
+            run = { progress, cancel in
+                EKA2L1Bridge.installDevice(romPath: romPath, rpkgPath: rpkgPath,
+                                           progress: progress, cancelCheck: cancel)
+            }
+
+        case .archive:
+            guard let archive else { return }
+            let archivePath = archive.url.path
+            urls = [archive.url]
+            run = { progress, cancel in
+                EKA2L1Bridge.installDevice(archivePath: archivePath, progress: progress, cancelCheck: cancel)
+            }
+        }
+
         installing = true
         installProgress = 0
         errorMessage = nil
         cancelRequested = false
         let flag = InstallCancelFlag()
         cancelFlag = flag
-        let romURL = rom.url
-        let rpkgURL = rpkg?.url
+
         DispatchQueue.global(qos: .userInitiated).async {
-            let romScoped = romURL.startAccessingSecurityScopedResource()
-            defer { if romScoped { romURL.stopAccessingSecurityScopedResource() } }
-            let rpkgScoped = rpkgURL?.startAccessingSecurityScopedResource() ?? false
-            defer { if rpkgScoped { rpkgURL?.stopAccessingSecurityScopedResource() } }
-            let result = EKA2L1Bridge.installDevice(
-                romPath: romURL.path,
-                rpkgPath: rpkgURL?.path,
-                progress: { fraction in
-                    DispatchQueue.main.async { installProgress = fraction }
-                },
-                cancelCheck: { flag.isRequested })
+            let scoped = urls.filter { $0.startAccessingSecurityScopedResource() }
+            defer { scoped.forEach { $0.stopAccessingSecurityScopedResource() } }
+
+            let result = run({ fraction in
+                DispatchQueue.main.async { installProgress = fraction }
+            }, { flag.isRequested })
+
             DispatchQueue.main.async {
                 installing = false
                 cancelFlag = nil
@@ -1126,6 +1204,10 @@ struct ImportDeviceView: View {
             return String(localized: "import.error.needRpkg")
         case .cancelled:
             return String(localized: "import.cancelled")
+        case .archiveCorrupt:
+            return String(localized: "import.error.archiveCorrupt")
+        case .archiveNoDevice:
+            return String(localized: "import.error.archiveNoDevice")
         case .generalFailure:
             return String(localized: "common.error")
         @unknown default:

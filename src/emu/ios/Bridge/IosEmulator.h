@@ -42,11 +42,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy) NSString *name;
 @end
 
-// Mirrors eka2l1::device_installation_error 1:1, plus two iOS-only cases the
-// bridge raises itself: `NeedRpkg` when a ROM dump requires an additional RPKG
-// file but none was supplied, and `Cancelled` when the user stopped the install
-// (the installers report a cancel as a generic failure / corrupt ROM, which
-// would be a lie to show). Frontend maps these to the Android-sourced strings.
+// Mirrors eka2l1::device_installation_error 1:1, plus one iOS-only case the
+// bridge raises itself: `Cancelled`, when the user stopped the install (the
+// installers report a cancel as a generic failure / corrupt ROM, which would be
+// a lie to show). Frontend maps these to the Android-sourced strings.
 typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
     EKA2L1InstallResultSuccess = 0,
     EKA2L1InstallResultNotExist,
@@ -62,6 +61,10 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
     EKA2L1InstallResultFpsxCorrupt,
     EKA2L1InstallResultNeedRpkg,
     EKA2L1InstallResultCancelled,
+    // The .7z file could not be opened or a member failed to decompress.
+    EKA2L1InstallResultArchiveCorrupt,
+    // The .7z opened fine but holds no ROM and no unpacked device dump.
+    EKA2L1InstallResultArchiveNoDevice,
 };
 
 @interface EKA2L1Emulator : NSObject
@@ -100,6 +103,19 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
                                        progress:(nullable void (^)(double fraction))progress
                                     cancelCheck:(nullable BOOL (^)(void))cancelCheck
     NS_SWIFT_NAME(installDevice(romPath:rpkgPath:progress:cancelCheck:));
+
+// Install a device from a .7z archive. Two packagings are understood, since
+// both are what gets shared: a ROM image with the RPKG that goes with it, or an
+// already-unpacked device (a `data/drives/z/<code>/` tree plus the ROM under
+// `data/roms/<code>/`) which is copied straight into place. Which one it is
+// comes out of the archive's file list, so the caller doesn't choose.
+//
+// Same contract as installDeviceWithRomPath: above — progress/cancel callbacks,
+// synchronous, does not boot the device.
+- (EKA2L1InstallResult)installDeviceWithArchivePath:(NSString *)archivePath
+                                           progress:(nullable void (^)(double fraction))progress
+                                        cancelCheck:(nullable BOOL (^)(void))cancelCheck
+    NS_SWIFT_NAME(installDevice(archivePath:progress:cancelCheck:));
 
 // Boot a previously-installed device by index: (re)builds the system, sets
 // the device, mounts drives, binds the graphics driver. Returns YES on
