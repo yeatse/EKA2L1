@@ -120,12 +120,9 @@ struct SettingsView: View {
                             .frame(maxWidth: 100)
                     }
                 }
-                // The discovery port is only honoured in direct IP mode; the
-                // other modes force it to the fixed harbour port the LAN
-                // broadcast and the central server agree on. This is the port
-                // peers have to enter next to our address, so it is worth
-                // showing even though it rarely needs changing.
-                if btDiscoveryMode == 1 {
+                // LAN discovery uses its fixed harbour port. Direct IP and a
+                // current central server can advertise a configurable port.
+                if btDiscoveryMode == 1 || btDiscoveryMode == 3 {
                     LabeledContent("settings.netplay.listenPort") {
                         TextField(String("35689"), value: $btListenPort, format: .number.grouping(.never))
                             .keyboardType(.numberPad)

@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-11 | [Central netplay collapsed same-source peers onto one UDP endpoint](./bluetooth-central-same-address-ports.md) |
 | 2026-08-10 | [Installing a device straight from a .7z](./device-install-from-7z-archives.md) |
 | 2026-08-10 | [Proxy-server Bluetooth netplay never worked, and how to run your own matching server](./bluetooth-netplay-central-server.md) |
 | 2026-08-10 | [X7 Bounce Boing Battle: common Bluetooth options and reform NetDB opcodes](./x7-bounce-boing-battle-bluetooth-netplay.md) |

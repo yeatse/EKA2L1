@@ -55,7 +55,7 @@ namespace eka2l1::epoc::bt {
             return;
         }
 
-        if (discovery_mode_ != DISCOVERY_MODE_DIRECT_IP) {
+        if (discovery_mode_ == DISCOVERY_MODE_LAN) {
             port_ = HARBOUR_PORT;
         }
 
@@ -351,10 +351,17 @@ namespace eka2l1::epoc::bt {
         std::memset(&info.real_addr_, 0, sizeof(epoc::socket::saddress));
         info.dvc_addr_.padding_ = 0;
 
-        const char is_ipv4 = buf[buf_pointer++];
+        const std::uint8_t address_type = static_cast<std::uint8_t>(buf[buf_pointer++]);
+        if (address_type > 3) {
+            LOG_ERROR(SERVICE_BLUETOOTH, "Player list from the matching server has invalid address type {}", address_type);
+            buf_pointer = nread;
+            return;
+        }
+        const bool has_port = (address_type == 2) || (address_type == 3);
+        const bool is_ipv4 = (address_type == 1) || (address_type == 2);
         const std::int64_t address_size = is_ipv4 ? 4 : 16;
 
-        if (buf_pointer + address_size > nread) {
+        if (buf_pointer + address_size + (has_port ? 2 : 0) > nread) {
             LOG_ERROR(SERVICE_BLUETOOTH, "Player list from the matching server is truncated (got {} bytes)", nread);
 
             buf_pointer = nread;
@@ -372,6 +379,11 @@ namespace eka2l1::epoc::bt {
         buf_pointer += address_size;
 
         info.real_addr_.port_ = HARBOUR_PORT;
+        if (has_port) {
+            info.real_addr_.port_ = (static_cast<std::uint16_t>(static_cast<std::uint8_t>(buf[buf_pointer])) << 8)
+                | static_cast<std::uint8_t>(buf[buf_pointer + 1]);
+            buf_pointer += 2;
+        }
         add_friend(info);
     }
 
@@ -500,18 +512,20 @@ lookup:
             } else {
                 friends_[start_pos].dvc_addr_ = *result;
                 friend_device_address_mapping_.emplace(friends_[start_pos].dvc_addr_, start_pos);
-
-                refresh_friend_info_async_impl(start_pos + 1, callback);
             }
+
+            refresh_friend_info_async_impl(start_pos + 1, callback);
         });
     }
 
     void midman_inet::refresh_friend_infos_async(std::function<void()> callback) {
         if (discovery_mode_ == DISCOVERY_MODE_OFF) {
+            callback();
             return;
         }
 
         if (friend_info_cached_ || (friends_.size() == 0)) {
+            callback();
             return;
         }
 
@@ -765,6 +779,12 @@ lookup:
         const std::lock_guard<std::mutex> guard(friends_lock_);
         if (observer == current_active_observer_) {
             current_active_observer_ = nullptr;
+
+            if (!pending_observers_.empty()) {
+                current_active_observer_ = pending_observers_.front();
+                pending_observers_.erase(pending_observers_.begin());
+                send_call_for_strangers();
+            }
             return;
         }
 

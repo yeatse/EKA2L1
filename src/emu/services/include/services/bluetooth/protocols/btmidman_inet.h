@@ -107,6 +107,7 @@ namespace eka2l1::epoc::bt {
 
         std::shared_ptr<uvw::udp_handle> lan_discovery_call_listener_socket_;
         std::shared_ptr<uvw::tcp_handle> matching_server_socket_;
+        std::vector<char> matching_server_receive_buffer_;
 
         std::shared_ptr<uvw::udp_handle> bluetooth_queries_server_socket_;
         std::shared_ptr<uvw::timer_handle> hearing_timeout_timer_;
