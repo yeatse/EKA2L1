@@ -132,7 +132,9 @@ actually costs:
 
 The last two are the only source changes; everything else is workflow-only. All four jobs
 are green and produce artifacts (run 31935443699 on this fork), and the Android job was
-confirmed to take the unsigned path when no signing secret is present.
+confirmed to take the unsigned path when no signing secret is present. The change went
+upstream as PR 583, where the `pull_request` run is green on all four jobs and
+`roll-release` correctly skips.
 
 Two paths are still unproven, both by construction. The signing branch needs the secrets,
 and `roll-release` only runs on a push to upstream `master` — including the forced move of
