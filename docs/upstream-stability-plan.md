@@ -136,11 +136,10 @@ confirmed to take the unsigned path when no signing secret is present. The chang
 upstream as PR 583, where the `pull_request` run is green on all four jobs and
 `roll-release` correctly skips.
 
-Two paths are still unproven, both by construction. The signing branch needs the secrets,
-and `roll-release` only runs on a push to upstream `master` — including the forced move of
-the `continous` tag, which will fail if that tag is protected. `softprops/action-gh-release`
-overwrites same-named assets by default, but it does not move a tag itself, which is why
-the move is a separate step.
+Two paths could not be exercised from a fork — the signing branch needs the secrets, and
+`roll-release` only runs on a push to `master`. Both were settled when upstream merged the
+PR: that push signed the APK with `apksigner` (build tools 37.0.0), moved the `continous`
+tag to the merge commit, and refreshed all four release assets.
 
 Two things are deliberately left for the maintainer to decide:
 
