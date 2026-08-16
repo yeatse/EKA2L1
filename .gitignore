@@ -19,7 +19,8 @@ cmake-build-*
 # Local agent / harness state, not project source.
 .claude/
 # Local ROMs and SIS packages used for iOS porting validation.
-roms/
+artifacts/
+crashes/
 
 # MetalANGLE download/patch scratch (see scripts/fetch_metalangle.sh)
 .angle_stage/
