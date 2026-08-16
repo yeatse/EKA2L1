@@ -112,6 +112,35 @@ on infrastructure that still exists.
 
 *Acceptance:* a pull request from a fork produces a green build on every matrix entry.
 
+**Status: done and verified**, on branch `ci/modernize-build-workflow` (based on upstream
+`master`, five commits). Four rounds on this fork's Actions were needed, because each fix
+uncovered the next failure — worth recording, since it is what "CI has not run in months"
+actually costs:
+
+1. Deprecated actions replaced → jobs finally reach a step.
+2. Linux missed `qtbase5-private-dev` (`displaywidget.cpp` includes the Qt private header
+   `qpa/qplatformnativeinterface.h`); macOS could not configure because CMake 4 refuses
+   capstone's `cmake_policy(SET CMP0048 OLD)`; `tools_openssl_x64` no longer exists.
+3. CMake pinned to 3.31.6 and Windows moved to `windows-2022` — the vendored dependency
+   tree cannot be configured by CMake 4 at all (capstone's policy, plus glm, fmt, spdlog
+   and dynarmic declaring a minimum below 3.5), and CMake 3.31 predates the Visual Studio
+   2026 that `windows-latest` switched to in June 2026.
+4. macOS then failed to compile: the bundled boost uses `std::unary_function`, which
+   libc++ no longer declares, and miniBAE's old C trips `-Wint-conversion` and
+   `-Wimplicit-function-declaration`, errors by default since Clang 16.
+
+The last two are the only source changes; everything else is workflow-only. All four jobs
+are green and produce artifacts (run 31935443699 on this fork).
+
+Two things are deliberately left for the maintainer to decide:
+
+- **Windows has no TLS backend.** Qt retired `tools_openssl_x64` with OpenSSL 1.1, and
+  Qt 5.15.2 cannot load the OpenSSL 3 package that replaced it, so the in-app updater
+  cannot reach api.github.com. Shipping an unusable library instead would only hide it.
+  The real fix is a Qt bump.
+- **The CMake and Visual Studio pins are a holding action.** They should come off once the
+  vendored submodules configure under CMake 4.
+
 ### A1. Fix `ekatests`, then run it in CI
 
 Split the repair described in
