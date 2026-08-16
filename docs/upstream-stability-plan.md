@@ -167,6 +167,30 @@ rest of it: the fixes *are* the evidence for what a dormant test target costs.
 *Acceptance:* `ctest` green on all desktop platforms; a deliberately reverted bug fix
 turns it red.
 
+**Status: done and verified**, on branch `ci/ekatests-in-ci`, six commits — the build
+repair, one commit per shared-code bug, and the CI wiring. Ported onto upstream's tree by
+building there and following the failures, not by cherry-picking the fork's commit; the
+`as_int()` result is byte-identical to the fork's, and each headless stub was checked
+against upstream's own declaration.
+
+Both halves of the acceptance criterion hold: `ctest` reports `100% tests passed` on
+Windows, macOS and Linux, and reverting only the allocator fix turns all three red with
+`64 test cases | 60 passed | 4 failed`. That second run also answers a question the first
+cannot — the suite really executes, rather than matching zero tests and exiting 0.
+
+Two things the port surfaced that are not in the fork's commit:
+
+- On Windows the test executable is not built next to the runtime DLLs the frontend build
+  copies into `bin`, so `ctest` failed with `0xC0000135` until the test's `PATH` was
+  pointed at them, and the fixtures are copied next to the executable, which on a
+  multi-config generator is not where CTest runs from.
+- The suite cannot be built on a current macOS toolchain at all: SDK 26 no longer declares
+  `stat64`, which `fileutils.cpp` uses on every POSIX target. CI did not catch it because
+  its image is older. Worth its own small PR.
+
+Upstream merged A0 as PR 583, so this went out as a standalone PR rather than a stacked
+one.
+
 ### A2. Run the interpreter differential harness in CI
 
 `dyncom_difftest` needs no ROM and no GPU, so it belongs in Track A as-is. Fixed-seed
