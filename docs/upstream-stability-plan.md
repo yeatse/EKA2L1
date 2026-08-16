@@ -101,8 +101,9 @@ The triggers are already right; nothing about them needs changing. What needs ch
 everything the workflow depends on: actions bumped to v4, `::set-output` replaced with
 `$GITHUB_OUTPUT`, retired runner images replaced (`ubuntu-24.04`, and `macos-15-intel` to
 keep the x86_64 Qt 5.15.2 build that arm64 `macos-latest` cannot provide), the Windows
-OpenSSL runtime taken from Qt's own `tools_openssl_x64` instead of a dead host, APK
-signing done inline with `apksigner` instead of an unmaintained action — and, so that fork
+OpenSSL download dropped because the host serving it no longer resolves and Qt has no
+replacement package, APK signing done inline with `apksigner` instead of an unmaintained
+action — and, so that fork
 pull requests are not red by construction, signing skipped with an unsigned APK uploaded
 when the secrets are absent. `fail-fast: false` stays, so one platform's failure still
 reports the others. Rolling releases stay restricted to a push on `master`.
