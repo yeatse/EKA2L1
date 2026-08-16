@@ -105,7 +105,7 @@ jobs:
     env:
       cache-version: v1
       config: Release
-      MACOSX_DEPLOYMENT_TARGET: 10.15
+      MACOSX_DEPLOYMENT_TARGET: 11.0
 
     strategy:
       fail-fast: false

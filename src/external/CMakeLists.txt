@@ -172,9 +172,36 @@ add_subdirectory(cubeb)
 
 
 # FFMPEG
-add_subdirectory(ffmpeg)
-if (APPLE)
-    target_link_libraries(ffmpeg INTERFACE "-framework CoreVideo" "iconv")
+if (APPLE AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+    # The bundled ffmpeg ships only x86_64 static libraries for macOS, so an
+    # Apple Silicon build has nothing to link against. Use Homebrew's ffmpeg@5,
+    # whose ABI matches the bundled headers, rather than dirtying the submodule
+    # or building ffmpeg from source.
+    set(FFMPEG5_PREFIX "/opt/homebrew/opt/ffmpeg@5")
+    if (NOT EXISTS "${FFMPEG5_PREFIX}/lib/libavcodec.dylib")
+        message(FATAL_ERROR
+            "An Apple Silicon build needs ffmpeg@5 from Homebrew: "
+            "`brew install ffmpeg@5` (expected at ${FFMPEG5_PREFIX}).")
+    endif()
+
+    add_library(ffmpeg INTERFACE)
+    target_include_directories(ffmpeg INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/include")
+
+    find_library(FFMPEG_AVFORMAT avformat PATHS "${FFMPEG5_PREFIX}/lib" NO_DEFAULT_PATH)
+    find_library(FFMPEG_AVCODEC avcodec PATHS "${FFMPEG5_PREFIX}/lib" NO_DEFAULT_PATH)
+    find_library(FFMPEG_AVUTIL avutil PATHS "${FFMPEG5_PREFIX}/lib" NO_DEFAULT_PATH)
+    find_library(FFMPEG_SWSCALE swscale PATHS "${FFMPEG5_PREFIX}/lib" NO_DEFAULT_PATH)
+    find_library(FFMPEG_SWRESAMPLE swresample PATHS "${FFMPEG5_PREFIX}/lib" NO_DEFAULT_PATH)
+
+    target_link_libraries(ffmpeg INTERFACE
+            ${FFMPEG_AVFORMAT} ${FFMPEG_AVCODEC} ${FFMPEG_SWSCALE}
+            ${FFMPEG_AVUTIL} ${FFMPEG_SWRESAMPLE} "z"
+            "-framework CoreVideo" "iconv")
+else()
+    add_subdirectory(ffmpeg)
+    if (APPLE)
+        target_link_libraries(ffmpeg INTERFACE "-framework CoreVideo" "iconv")
+    endif()
 endif()
 
 option(CAPSTONE_BUILD_SHARED "Build shared library" OFF)

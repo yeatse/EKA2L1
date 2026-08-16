@@ -6,7 +6,7 @@
 	url = https://github.com/glfw/glfw
 [submodule "src/external/capstone"]
 	path = src/external/capstone
-	url = https://github.com/aquynh/capstone
+	url = https://github.com/capstone-engine/capstone
 [submodule "src/external/yaml-cpp"]
 	path = src/external/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp
