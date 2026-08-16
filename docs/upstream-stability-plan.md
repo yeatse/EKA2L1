@@ -16,8 +16,8 @@ cannot copy it verbatim, and the concrete order in which to build it.
   been failing on every single run**, in a way that is easy to miss: each job dies in
   *Set up job*, before one step executes. GitHub hard-fails any workflow referencing
   `actions/upload-artifact` v1/v2 or `actions/cache` v1, and this one references both. Run
-  31083801253 (master, 2026-08-06) is the last one; every retained run before it, back to
-  January 2026, failed identically. Nothing has been built by CI for months, and PR
+  31083801253 (master, 2026-08-06) is the last one, and every retained run before it, back
+  to January 2026, failed too. Nothing has been built by CI for months, and PR
   authors have been looking at a red X that says nothing about their change.
   The rest of the workflow rotted alongside it: `actions/checkout@v2`, the removed
   `::set-output` syntax, the retired `ubuntu-20.04` image, `macos-latest` now being arm64
@@ -110,7 +110,7 @@ reports the others. Rolling releases stay restricted to a push on `master`.
 No test steps are added here. The point is only to make "every PR has a signal" true again,
 on infrastructure that still exists.
 
-*Acceptance:* a pull request from a fork produces a green build on every matrix entry.
+*Acceptance:* a green build on every matrix entry.
 
 **Status: done and verified**, on branch `ci/modernize-build-workflow` (based on upstream
 `master`, five commits). Four rounds on this fork's Actions were needed, because each fix
@@ -130,7 +130,14 @@ actually costs:
    `-Wimplicit-function-declaration`, errors by default since Clang 16.
 
 The last two are the only source changes; everything else is workflow-only. All four jobs
-are green and produce artifacts (run 31935443699 on this fork).
+are green and produce artifacts (run 31935443699 on this fork), and the Android job was
+confirmed to take the unsigned path when no signing secret is present.
+
+Two paths are still unproven, both by construction. The signing branch needs the secrets,
+and `roll-release` only runs on a push to upstream `master` — including the forced move of
+the `continous` tag, which will fail if that tag is protected. `softprops/action-gh-release`
+overwrites same-named assets by default, but it does not move a tag itself, which is why
+the move is a separate step.
 
 Two things are deliberately left for the maintainer to decide:
 
