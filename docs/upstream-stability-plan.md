@@ -12,11 +12,20 @@ cannot copy it verbatim, and the concrete order in which to build it.
 
 ## Where upstream stands today
 
-- `.github/workflows/build.yml` is `on: workflow_dispatch` only. **No pull request has
-  ever been built by CI.** The workflow has also bit-rotted while nobody ran it:
-  `actions/checkout@v2`, `actions/upload-artifact@v1`/`@v2` (both disabled by GitHub in
-  early 2025), the removed `::set-output` syntax, and `ubuntu-20.04`, whose hosted runner
-  has been retired. "Turn CI back on" is really "rebuild CI".
+- `.github/workflows/build.yml` does trigger on `push` and `pull_request` — and **it has
+  been failing on every single run**, in a way that is easy to miss: each job dies in
+  *Set up job*, before one step executes. GitHub hard-fails any workflow referencing
+  `actions/upload-artifact` v1/v2 or `actions/cache` v1, and this one references both. Run
+  31083801253 (master, 2026-08-06) is the last one; every retained run before it, back to
+  January 2026, failed identically. Nothing has been built by CI for months, and PR
+  authors have been looking at a red X that says nothing about their change.
+  The rest of the workflow rotted alongside it: `actions/checkout@v2`, the removed
+  `::set-output` syntax, the retired `ubuntu-20.04` image, `macos-latest` now being arm64
+  (which open-source Qt 5.15.2 has no binaries for), signing and release actions pinned to
+  Node versions Actions no longer runs, and a Windows OpenSSL download from a host that no
+  longer resolves. "Turn CI back on" is really "rebuild CI".
+  *(Note for anyone reading this in the fork: the fork's own copy was switched to
+  `workflow_dispatch` so it would stop firing here. Upstream's is not.)*
 - `EKA2L1_BUILD_TESTS` defaults to `ON` and `src/tests/CMakeLists.txt` registers
   `ekatests` with CTest — but the workflow builds only the `eka2l1_qt` target and never
   invokes `ctest`. The unit tests are configured, never built, never run.
@@ -86,13 +95,20 @@ demand that every contributor own a ROM.
 
 ## Track A — four steps, each a standalone PR
 
-### A0. Modernise the workflow and trigger it on pull requests
+### A0. Make the workflow run again
 
-`on: push` (master, tags) `+ pull_request`; actions bumped to v4; `ubuntu-20.04` replaced
-with a supported runner; `::set-output` replaced with `$GITHUB_OUTPUT`; `fail-fast: false`
-kept so one platform's failure still reports the others. Release rolling stays restricted
-to `master`. No test steps are added here — the point is only to make "every PR has a
-signal" true, on infrastructure that still exists.
+The triggers are already right; nothing about them needs changing. What needs changing is
+everything the workflow depends on: actions bumped to v4, `::set-output` replaced with
+`$GITHUB_OUTPUT`, retired runner images replaced (`ubuntu-24.04`, and `macos-15-intel` to
+keep the x86_64 Qt 5.15.2 build that arm64 `macos-latest` cannot provide), the Windows
+OpenSSL runtime taken from Qt's own `tools_openssl_x64` instead of a dead host, APK
+signing done inline with `apksigner` instead of an unmaintained action — and, so that fork
+pull requests are not red by construction, signing skipped with an unsigned APK uploaded
+when the secrets are absent. `fail-fast: false` stays, so one platform's failure still
+reports the others. Rolling releases stay restricted to a push on `master`.
+
+No test steps are added here. The point is only to make "every PR has a signal" true again,
+on infrastructure that still exists.
 
 *Acceptance:* a pull request from a fork produces a green build on every matrix entry.
 
@@ -216,7 +232,7 @@ Worth doing eventually, wrong thing to attach to this plan:
 
 | Step | Track | Can be PR'd as-is | Needs maintainer buy-in |
 |---|---|---|---|
-| A0 workflow modernisation + PR trigger | A | yes | discuss first (their CI) |
+| A0 workflow repair (it fails at job set-up today) | A | yes | discuss first (their CI) |
 | A1 `ekatests` repair + `ctest` in CI | A | yes | no |
 | A2 `dyncom_difftest` in CI | A | yes | no |
 | A3 ASan/UBSan job | A | yes | no |
