@@ -166,8 +166,8 @@ rest of it: the fixes *are* the evidence for what a dormant test target costs.
 *Acceptance:* `ctest` green on all desktop platforms; a deliberately reverted bug fix
 turns it red.
 
-**Status: done and verified**, on branch `ci/ekatests-in-ci`, six commits — the build
-repair, one commit per shared-code bug, and the CI wiring. Ported onto upstream's tree by
+**Status: done and verified**, on branch `ci/ekatests-in-ci`, squashed into one commit
+covering the build repair, the three shared-code bugs and the CI wiring. Ported onto upstream's tree by
 building there and following the failures, not by cherry-picking the fork's commit; the
 `as_int()` result is byte-identical to the fork's, and each headless stub was checked
 against upstream's own declaration.
