@@ -283,6 +283,35 @@ Two options, and the second costs upstream nothing:
   description. For a project with essentially one maintainer this is far more realistic
   than asking them to run each batch themselves, and it needs no upstream change at all.
 
+## What has gone up so far
+
+The graphics batch was started first, because its bugs sit in pure decoding functions and
+so could carry the kind of test the rest of this document argues for.
+
+| PR | What | Tests added | Fork commits it covers |
+|---|---|---|---|
+| #589 | MBM index bounds check, colour-key icon mask read as a stencil, lunasvg 3.5.0 | 8 (`fbs/bitmap`, `svg_icon`, `loader/mbm`) | `3f29c98d`, the mask half of the icon work, the lunasvg bump |
+| #590 | Four NVG path decoding bugs: signed coordinates, close-path, relative dispatch, missing `VG_SCWARC_TO` | 5 (`loader/nvg`) | the decoder half of `9271a231`, all of `2a53883f`'s NVG half |
+
+`ekatests` went from 203 assertions / 64 cases to **251 / 77** across the two.
+
+Two habits came out of these that apply to every later batch:
+
+- **Sweep the whole file, not the commit.** Picking `9271a231` apart gave three of the four
+  NVG bugs; the fourth (`VG_SCWARC_TO` absent from the command table, so a small clockwise
+  arc was skipped *without* consuming its five coordinates and every later segment read
+  the wrong values) came from an earlier commit touching the same file. `git log
+  master..ios -- <file>` before starting, then `git diff HEAD ios -- <file>` before opening
+  the PR — an empty diff means the file is fully upstreamed and cannot conflict later.
+- **Revert-verify each fix on its own.** Both PRs stated, per fix, which cases fail when
+  only that fix is undone. This is what makes a test more than decoration, and it is cheap
+  when the code under test is a pure function.
+
+The remaining graphics work needs the FBS server and so cannot be tested this way: NVG
+extended bitmaps blitted guest-side and skin item overrides (the other two thirds of
+`9271a231`), the NVG colour plane (`15045245`), empty-redraw blanking (`f4bf86ab`), and
+CJK linked fonts (`5679fd6c`, which already carries 528 lines of its own tests).
+
 ## What is left in the fork
 
 Measured on 2026-08-17, with `master` at the merge of #586. The fork is 328 commits ahead
@@ -313,7 +342,7 @@ by subsystem:
 
 | Batch | A | B | C | Depends on | Verified by | Start with |
 |---|---|---|---|---|---|---|
-| Graphics, window server, fonts | 15 | 12 | 4 | — | Track B, per device | `3f29c98d` MBM index bounds check (one-line crash fix, self-contained) |
+| Graphics, window server, fonts | 15 | 12 | 4 | — | Track B, per device | started — #589 and #590 landed; next is the FBS half of `9271a231` plus `15045245` |
 | Kernel objects and lifetimes | 19 | 5 | 3 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
 | Audio and video | 10 | 3 | 5 | — | Track B, audible checks | `92137f22` stop the hardware stream before freeing callback state |
 | Interpreter performance | 18 | 0 | 0 | **A2** (`dyncom_difftest` in CI) | difftest + FPS measurements | `985fabb4` ASID-tagged instruction cache |
@@ -330,7 +359,9 @@ Three things the table does not say on its own:
   UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
   races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
   three unrelated root causes. One root cause per PR means unpicking them first, and the
-  estimates above count commits, not PRs.
+  estimates above count commits, not PRs. `2a53883f` and `9271a231` have now been split
+  this way — their NVG decoder halves went up as #590, and what is left of each is the
+  memory-model UAF and the FBS-dependent icon work respectively.
 - **The interpreter batch is the reason A2 matters.** Eighteen optimisations to the
   interpreter cannot be reviewed by reading them. The difftest harness is in the same
   batch (it was written alongside them) and should go first, as its own PR, so everything
