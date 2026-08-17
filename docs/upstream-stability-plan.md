@@ -6,7 +6,9 @@ services, the interpreter — where a regression is invisible until somebody run
 application that used to work. Upstream currently has no automated way to notice that.
 
 So the batches should not start with behaviour. They should start with the net that
-catches a bad batch. This document is the plan for that net: what exists, what PPSSPP
+catches a bad batch. That net is now in place: #583 brought CI back from the dead, #584
+made it run the unit tests, #586 got the whole thing onto current toolchains and runner
+images, and #585 fixed a startup crash found while checking that the macOS artifact opens. This document is the plan for that net: what exists, what PPSSPP
 (the emulator project with the most mature regression story) actually does, why EKA2L1
 cannot copy it verbatim, and the concrete order in which to build it.
 
@@ -190,6 +192,24 @@ Two things the port surfaced that are not in the fork's commit:
 Upstream merged A0 as PR 583, so this went out as a standalone PR rather than a stacked
 one.
 
+### A1b. Modernise the toolchain (unplanned, but it blocked everything else)
+
+Not in the original plan: the pins #583 had to introduce — CMake 3.31, Visual Studio 2022,
+an Intel macOS runner — were holding CI on retiring ground, and the tree did not build on a
+current toolchain at all. Sent as #586: capstone/fmt/spdlog/glm bumped, the policy floor
+relaxed for the vendored subtree instead of pinning CMake, Qt 6 (which the frontend already
+supported, and which gives Windows its TLS backend back), all three runners on `latest`,
+arm64 ffmpeg built from the submodule's own script, and Discord's Game SDK replaced with
+discord-rpc so nothing prebuilt or network-fetched is left in a build.
+
+Checking that the macOS artifact actually opens turned up four more: a signature invalidated
+by the bundle fixups (Apple Silicon kills the process), the Qt platform plugin never copied
+under Qt 6, an SDL2 framework copied in a way codesign rejects, and guest memory commits
+failing on 16 KB host pages under W^X. A fifth, a null dispatcher when no device is
+installed, was not architecture specific and went out separately as #585.
+
+*Status: merged.*
+
 ### A2. Run the interpreter differential harness in CI
 
 `dyncom_difftest` needs no ROM and no GPU, so it belongs in Track A as-is. Fixed-seed
@@ -262,6 +282,61 @@ Two options, and the second costs upstream nothing:
   results — the intests summary, screenshots, the relevant log excerpts — in the
   description. For a project with essentially one maintainer this is far more realistic
   than asking them to run each batch themselves, and it needs no upstream change at all.
+
+## What is left in the fork
+
+Measured on 2026-08-17, with `master` at the merge of #586. The fork is 328 commits ahead
+and 17 behind. **171 of those commits touch shared emulator code** — everything outside
+`src/emu/ios`, the iOS workflows and the docs. Of those:
+
+- 5 have already landed upstream in another shape: the `ekatests` repair (#584), the
+  dependency bumps, the host-page `mprotect` alignment and the `PROT_EXEC` strip (#586,
+  where the last two were rewritten to key off the host page size rather than the
+  platform).
+- 2 pairs cancel out — a dyncom translation cache and an EKA1 screen-mode change, each
+  reverted in the fork.
+
+**162 remain.** They are not equally sendable, and the useful split is by that rather than
+by subsystem:
+
+- **A — cross-platform fixes.** Nothing iOS about them; a Qt or Android user hits the same
+  bug. These can be sent today. **91 commits.**
+- **B — found on iOS, shared benefit.** Real fixes in shared code, but discovered through
+  an iOS symptom, so each PR has to answer "is this a bug on Qt and Android too?" — often
+  yes, sometimes the answer is that the iOS backend is the only caller that gets there.
+  **29 commits.**
+- **C — the iOS port's own plumbing in shared files.** EAGL and MetalANGLE contexts, the
+  AudioUnit driver, CoreMotion and AVFoundation backends, the bundle resource layout, the
+  `#if EKA2L1_IOS` branches in shared CMake. These only mean anything alongside the port
+  itself, so they are not a queue to work through — they wait on whether upstream wants
+  the iOS frontend at all, which is the maintainer's call. **42 commits.**
+
+| Batch | A | B | C | Depends on | Verified by | Start with |
+|---|---|---|---|---|---|---|
+| Graphics, window server, fonts | 15 | 12 | 4 | — | Track B, per device | `3f29c98d` MBM index bounds check (one-line crash fix, self-contained) |
+| Kernel objects and lifetimes | 19 | 5 | 3 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
+| Audio and video | 10 | 3 | 5 | — | Track B, audible checks | `92137f22` stop the hardware stream before freeing callback state |
+| Interpreter performance | 18 | 0 | 0 | **A2** (`dyncom_difftest` in CI) | difftest + FPS measurements | `985fabb4` ASID-tagged instruction cache |
+| Services and packaging | 13 | 2 | 3 | — | `src/intests` once B2 exists | `1af1eefb` SIS targets without a drive letter |
+| Netplay | 8 | 0 | 4 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
+| Memory model | 4 | 0 | 0 | — | `ekatests` + Track B | `51bbb0fd` fail chunk creation instead of returning a hollow chunk |
+| Scripting patches | 3 | 0 | 1 | upstream's scripting build state | Track B | `1093f038` resolve ROM hooks by fingerprint |
+| Camera | 0 | 3 | 1 | the iOS camera backend | device test | — (B/C only) |
+| iOS port plumbing | 1 | 4 | 21 | **maintainer decision on the port** | — | — |
+
+Three things the table does not say on its own:
+
+- **Some commits have to be split.** `4a9f96d3` (fbs allocator race plus two teardown
+  UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
+  races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
+  three unrelated root causes. One root cause per PR means unpicking them first, and the
+  estimates above count commits, not PRs.
+- **The interpreter batch is the reason A2 matters.** Eighteen optimisations to the
+  interpreter cannot be reviewed by reading them. The difftest harness is in the same
+  batch (it was written alongside them) and should go first, as its own PR, so everything
+  after it lands behind a gate.
+- **The netplay batch is the one place order is load-bearing.** The later fixes assume the
+  earlier ones; sending them out of order produces PRs that do not make sense on their own.
 
 ## How the batches themselves should be sent
 
