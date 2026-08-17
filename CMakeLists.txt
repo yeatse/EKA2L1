@@ -35,9 +35,9 @@ if (EKA2L1_SANITIZER AND NOT EKA2L1_SANITIZER MATCHES "^(address|thread)$")
     message(FATAL_ERROR "EKA2L1_SANITIZER must be 'address', 'thread', or empty (got '${EKA2L1_SANITIZER}')")
 endif()
 
-# Stage-0 iOS build: force-off options that the iOS port does not yet support.
-# These are silently overridden so a user passing -DEKA2L1_BUILD_TESTS=ON for
-# another platform does not have to special-case iOS in their scripts.
+# Options the iOS port does not support. They are overridden silently so a user
+# passing -DEKA2L1_BUILD_TESTS=ON for another platform does not have to
+# special-case iOS in their scripts.
 if (EKA2L1_IOS)
     set(EKA2L1_IOS_SIMULATOR OFF)
     if (CMAKE_OSX_SYSROOT MATCHES "[Ii][Pp]honeSimulator")
@@ -106,6 +106,7 @@ if (EKA2L1_IOS)
     message(STATUS "iOS build: tools/tests/vulkan/patch/dmg/discord forced OFF; scripting is native-patch only (no LuaJIT)")
 endif()
 
+
 set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set (ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -122,6 +123,12 @@ if (MSVC)
     add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
     add_definitions(-D_DISABLE_VECTOR_ANNOTATION)
 endif(MSVC)
+
+if (APPLE)
+    # The bundled boost (pulled in by dynarmic) still uses std::unary_function,
+    # which libc++ no longer declares in C++17 and later modes.
+    add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1)
+endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Limit to C-family languages so that swiftc (enabled for the iOS target)
@@ -175,7 +182,7 @@ if (EKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER)
     set(ENABLE_SEH_HANDLER 1)
 endif (EKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER)
 
-if (EKA2L1_ENABLE_DISCORD_RICH_PRESENCE AND NOT ANDROID AND NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU"))
+if (EKA2L1_ENABLE_DISCORD_RICH_PRESENCE AND NOT ANDROID)
     set(ENABLE_DISCORD_RICH_PRESENCE 1)
 else()
     set(ENABLE_DISCORD_RICH_PRESENCE 0)

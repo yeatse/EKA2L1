@@ -158,7 +158,7 @@ namespace eka2l1::ios {
         return [NSString stringWithUTF8String:message.c_str()];
     }
 
-    // 3.6 icon decoder. Mirrors src/emu/android/.../launcher.cpp::get_app_icon
+    // Icon decoder. Mirrors src/emu/android/.../launcher.cpp::get_app_icon
     // but writes the rendered RGBA buffer straight into a CFData → CGImage →
     // UIImage → PNG round-trip so SwiftUI can consume it as plain Data.
     //
@@ -353,9 +353,8 @@ namespace eka2l1::ios {
     // C++ side of the iOS emulator state. Lives behind the Obj-C facade
     // EKA2L1Emulator so SwiftUI never sees the C++ types directly.
     //
-    // Stage-2 scope (see IOS_PORTING_TASKS.md): no audio, sensor, vibration
-    // or camera drivers — those land in stage 3. This struct only wires what
-    // is needed for "select ROM → applist scan → launch app → render → tap".
+    // Owns everything the app needs for one emulator instance: the system, its
+    // drivers, and the two threads behind the frame loop.
     struct emulator {
         std::unique_ptr<eka2l1::system> symsys;
         std::unique_ptr<config::app_settings> settings;
@@ -376,7 +375,7 @@ namespace eka2l1::ios {
         // otherwise. The os_thread idles until this flips true.
         std::atomic<bool> mounted{false};
 
-        // Frame loop / lifecycle (task 2.9). Two threads sit behind the
+        // Frame loop / lifecycle. Two threads sit behind the
         // singleton — one feeds drivers::graphics_driver::run() (must own
         // the EAGL context), the other ticks symsys->loop().
         std::unique_ptr<std::thread> os_thread;
@@ -932,8 +931,8 @@ namespace eka2l1::ios {
         stringByAppendingPathComponent:@"emures"];
     eka2l1::set_runtime_resource_root(bundleResourceRoot.UTF8String);
 
-    // Builds up to 12d5452ca staged copies (later symlinks) of those resources
-    // into the sandbox. Nothing reads them anymore, so drop the leftovers rather
+    // Earlier builds copied those resources into the sandbox instead of reading
+    // them from the bundle. Nothing reads the copies anymore, so drop them rather
     // than leaving ~1MB of dead weight in the user's backed-up Documents.
     for (NSString *stale in @[@"resources", @"patch"]) {
         [fm removeItemAtPath:[dataRoot stringByAppendingPathComponent:stale] error:nil];
@@ -996,12 +995,11 @@ namespace eka2l1::ios {
 
     _state->settings = std::make_unique<eka2l1::config::app_settings>(&_state->conf);
 
-    // 3.7: instantiate the cubeb iOS AudioUnit (RemoteIO) backend up front so
-    // services that fan out audio_driver at startup (KeySound, MediaClient,
-    // DSP shared streams) get a real instance instead of the nullptr the
-    // stage-2 sandbox used. cubeb_init -> audiounit_init in the iOS shim
-    // configures AVAudioSession (Playback category, mix-with-others) on the
-    // first call.
+    // Instantiate the audio driver up front, so services that fan out
+    // audio_driver at startup (KeySound, MediaClient, DSP shared streams) get a
+    // real instance rather than a null one. On iOS the cubeb backend selector
+    // resolves to the native AURemoteIO driver, which configures AVAudioSession
+    // (Playback category, mix-with-others) on the first call.
     eka2l1::drivers::player_type midi_be = eka2l1::drivers::player_type_tsf;
     _state->audio_driver = eka2l1::drivers::make_audio_driver(
         eka2l1::drivers::audio_driver_backend::cubeb,

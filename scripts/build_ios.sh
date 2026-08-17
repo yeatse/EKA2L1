@@ -70,7 +70,10 @@ configure_one() {
     local jit="${5:-OFF}"
     local build_dir="build/ios-${label}"
 
-    scripts/build_ios_ffmpeg.sh "${label}"
+    # ffmpeg is not shipped prebuilt for iOS; its own script produces the slice.
+    if [ ! -f "src/external/ffmpeg/ios/${label}/lib/libavcodec.a" ]; then
+        (cd src/external/ffmpeg && EKA2L1_IOS_DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-16.0}" sh ios-build.sh "${label}")
+    fi
 
     # MetalANGLE (GLES->Metal) is fetched/packaged out-of-tree (the binary is not
     # vendored in git, mirroring the FFmpeg approach). Pull it on demand when the
@@ -93,7 +96,6 @@ configure_one() {
         -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
         -DEKA2L1_IOS_DEVELOPMENT_TEAM="${team}" \
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
-        -DEKA2L1_IOS_FFMPEG_ROOT="${ROOT_DIR}/${build_dir}/ios-ffmpeg" \
         -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
         -DEKA2L1_IOS_DYNARMIC="${jit}" \
         -DEKA2L1_SANITIZER="${EKA2L1_SANITIZER:-}" \

@@ -324,6 +324,7 @@ namespace eka2l1 {
         explicit applist_server(system *sys);
         ~applist_server() override;
 
+
         /**
          * @brief       Get the legacy level of the server.
          */

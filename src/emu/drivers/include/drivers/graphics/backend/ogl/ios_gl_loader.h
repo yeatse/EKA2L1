@@ -1,6 +1,6 @@
 // iOS GLES3 shim that stands in for <glad/glad.h>.
 //
-// glad is not built on iOS (task 0.5). The ogl backend was originally written
+// glad is not built on iOS. The ogl backend was originally written
 // against desktop GL / GLES via glad's function-pointer table. On iOS we link
 // directly against OpenGLES.framework, which exposes GLES3 symbols at link
 // time, and emulate the small set of glad APIs and desktop-only enums the
@@ -16,8 +16,7 @@
 #endif
 
 // OpenGLES.framework is deprecated since iOS 12 but still ships; silence the
-// avalanche of deprecation warnings — the long-term Metal port is out of scope
-// for stage 2.
+// avalanche of deprecation warnings. A Metal backend is out of scope here.
 #ifndef GLES_SILENCE_DEPRECATION
 #define GLES_SILENCE_DEPRECATION 1
 #endif

@@ -103,6 +103,12 @@
 [submodule "src/external/freetype"]
 	path = src/external/freetype
 	url = https://github.com/freetype/freetype
+[submodule "src/external/discord-rpc"]
+	path = src/external/discord-rpc
+	url = https://github.com/discord/discord-rpc
+[submodule "src/external/rapidjson"]
+	path = src/external/rapidjson
+	url = https://github.com/Tencent/rapidjson
 [submodule "src/external/xz"]
 	path = src/external/xz
 	url = https://github.com/tukaani-project/xz

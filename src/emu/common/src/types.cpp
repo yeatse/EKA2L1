@@ -74,18 +74,17 @@ int translate_protection(prot cprot) {
         tprot = -1;
     }
 
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-    // Apple Silicon (iOS / macOS arm64) enforces W^X — mprotect with PROT_EXEC on a
-    // non-MAP_JIT page silently strips PROT_WRITE, so the page reads RX and any later
-    // write traps with KERN_PROTECTION_FAILURE / SIGBUS. The guest pages here (e.g.
-    // dispatcher trampoline chunks) are never executed by the host CPU; dynarmic
-    // manages its own MAP_JIT'd code blocks via oaknut. Drop PROT_EXEC so these
-    // chunks commit as plain RW and writes (std::fill, memcpy of ARM_TRAMPOLINE_ASM)
-    // succeed.
-    if (tprot != -1 && tprot != PROT_NONE) {
+#if EKA2L1_PLATFORM(DARWIN) && defined(__aarch64__)
+    // Apple Silicon enforces W^X: mprotect with PROT_EXEC on a page that was
+    // not mapped MAP_JIT silently strips PROT_WRITE, so the page ends up RX and
+    // the next guest write traps with SIGBUS. The host CPU never executes guest
+    // pages -- dynarmic manages its own executable buffers -- so PROT_EXEC is
+    // redundant here. Dropping it lets chunks that ask for RWX commit as RW.
+    if ((tprot != -1) && (tprot != PROT_NONE)) {
         tprot &= ~PROT_EXEC;
+
         if (tprot == 0) {
-            tprot = PROT_READ;
+            tprot = PROT_NONE;
         }
     }
 #endif

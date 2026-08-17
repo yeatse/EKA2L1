@@ -22,6 +22,8 @@
 #include <common/platform.h>
 #include <common/virtualmem.h>
 
+#include <cstdint>
+
 #if EKA2L1_PLATFORM(WIN32)
 #include <Windows.h>
 #elif EKA2L1_PLATFORM(UNIX) || EKA2L1_PLATFORM(DARWIN)
@@ -33,6 +35,50 @@
 #endif
 
 namespace eka2l1::common {
+#if !EKA2L1_PLATFORM(WIN32)
+    // The Symbian memory model works in 4 KB pages, but a host page can be
+    // larger: 16 KB on Apple Silicon, 16 or 64 KB on some aarch64 Linux
+    // kernels. mprotect(2) rejects a range that is not a whole number of host
+    // pages with EINVAL, which used to leave the page PROT_NONE and take the
+    // next guest write out with SIGBUS. On a 4 KB host all of this is the
+    // identity.
+    static std::size_t host_page_size() {
+        static const std::size_t size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        return size;
+    }
+
+    // Widen the range to the host pages containing it. Only ever touches pages
+    // belonging to the same chunk, whose reservation is host-page aligned.
+    static void grow_to_host_pages(void *&ptr, std::size_t &size) {
+        const std::size_t mask = host_page_size() - 1;
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
+        const std::uintptr_t aligned = addr & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t head = addr - aligned;
+
+        ptr = reinterpret_cast<void *>(aligned);
+        size = (size + head + mask) & ~mask;
+    }
+
+    // Shrink the range to the host pages it fully covers, so taking one guest
+    // page away never revokes a neighbour that is still live. Returns false if
+    // nothing is left to act on.
+    static bool shrink_to_host_pages(void *&ptr, std::size_t &size) {
+        const std::size_t mask = host_page_size() - 1;
+        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
+        const std::uintptr_t aligned = (addr + mask) & ~static_cast<std::uintptr_t>(mask);
+        const std::size_t head = aligned - addr;
+
+        if (size <= head) {
+            return false;
+        }
+
+        ptr = reinterpret_cast<void *>(aligned);
+        size = (size - head) & ~mask;
+
+        return size != 0;
+    }
+#endif
+
     void *map_memory(const std::size_t size) {
 #if EKA2L1_PLATFORM(WIN32)
         return VirtualAlloc(nullptr, size,
@@ -59,25 +105,6 @@ namespace eka2l1::common {
         return true;
     }
 
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-    // Apple Silicon (iOS / macOS arm64) uses 16 KB host pages, but the Symbian
-    // memory model is built around 4 KB pages. mprotect(2) rejects ranges that
-    // aren't a multiple of the host page size with EINVAL, so widen both ends
-    // of any sub-host-page request to the surrounding host page. The mmap'd
-    // region the chunk lives in is always at least host-page sized (max_size
-    // is page-table aligned), so this only ever touches pages that are part
-    // of the same chunk.
-    static inline void align_to_host_page(void *&ptr, std::size_t &size) {
-        const std::size_t host_page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-        const std::size_t mask = host_page - 1;
-        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
-        const std::uintptr_t aligned_addr = addr & ~static_cast<std::uintptr_t>(mask);
-        const std::size_t head = addr - aligned_addr;
-        ptr = reinterpret_cast<void *>(aligned_addr);
-        size = (size + head + mask) & ~mask;
-    }
-#endif
-
     bool commit(void *ptr, const std::size_t size, const prot commit_prot) {
 #if EKA2L1_PLATFORM(WIN32)
         DWORD oldprot = 0;
@@ -89,17 +116,8 @@ namespace eka2l1::common {
 #else
         void *mp_ptr = ptr;
         std::size_t mp_size = size;
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-        // TODO(ios): Apple Silicon hosts use 16 KB host pages but the emu's
-        // memory model still operates at 4 KB granularity. mprotect rejects
-        // len-not-page-multiple ranges with EINVAL, which previously left the
-        // page PROT_NONE and tripped SIGBUS on the next guest write (see
-        // 3.2.1). Round ptr DOWN, size UP to the host page so the syscall
-        // covers the full guest range. This widens the protection by at most
-        // one extra host page on each side, which is safe because the
-        // surrounding memory belongs to the same chunk.
-        align_to_host_page(mp_ptr, mp_size);
-#endif
+        grow_to_host_pages(mp_ptr, mp_size);
+
         const int result = mprotect(mp_ptr, mp_size, translate_protection(commit_prot));
 
         if (result == -1) {
@@ -118,26 +136,10 @@ namespace eka2l1::common {
 #else
         void *mp_ptr = ptr;
         std::size_t mp_size = size;
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-        // On 16K-page hosts, only decommit the *fully covered* host pages so
-        // we never wipe a neighbouring guest page that's still live. Round
-        // ptr UP and size DOWN to host-page granularity; if nothing's left,
-        // skip the syscall (the perms stay whatever they were — that's safe
-        // because the chunk still owns the address range).
-        const std::size_t host_page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-        const std::size_t mask = host_page - 1;
-        const std::uintptr_t addr = reinterpret_cast<std::uintptr_t>(ptr);
-        const std::uintptr_t aligned_addr = (addr + mask) & ~static_cast<std::uintptr_t>(mask);
-        const std::size_t head = aligned_addr - addr;
-        if (size <= head) {
+        if (!shrink_to_host_pages(mp_ptr, mp_size)) {
             return true;
         }
-        mp_ptr = reinterpret_cast<void *>(aligned_addr);
-        mp_size = (size - head) & ~mask;
-        if (mp_size == 0) {
-            return true;
-        }
-#endif
+
         const auto result = mprotect(mp_ptr, mp_size, PROT_NONE);
 
         if (result == -1) {
@@ -159,10 +161,8 @@ namespace eka2l1::common {
 #else
         void *mp_ptr = ptr;
         std::size_t mp_size = size;
-#if EKA2L1_PLATFORM(IOS) || (EKA2L1_PLATFORM(MACOS) && defined(__aarch64__))
-        // TODO(ios): see commit() — same 16 KB host-page alignment dance.
-        align_to_host_page(mp_ptr, mp_size);
-#endif
+        grow_to_host_pages(mp_ptr, mp_size);
+
         const int result = mprotect(mp_ptr, mp_size, translate_protection(new_prot));
 
         if (result == -1) {

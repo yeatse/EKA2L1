@@ -157,8 +157,15 @@ namespace eka2l1 {
             bool uninstall_package(package::object &pkg);
             bool remove_registeration(package::object &pkg);
 
+            /**
+             * \brief Install a package.
+             *
+             * \param silent    Do not ask the user anything; pick defaults instead.
+             * \param as_stub   The package is a stub describing software already in
+             *                   the ROM, so it must not be reported as removable.
+             */
             package::installation_result install_package(const std::u16string &path, const drive_number drive, progress_changed_callback progress_cb = nullptr,
-                cancel_requested_callback cancel_cb = nullptr, const bool silent = false);
+                cancel_requested_callback cancel_cb = nullptr, const bool silent = false, const bool as_stub = false);
         };
     }
 }

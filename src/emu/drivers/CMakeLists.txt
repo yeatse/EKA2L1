@@ -4,12 +4,12 @@ if (BUILD_WITH_VULKAN)
             src/graphics/backend/vulkan/graphics_vulkan.cpp)
 endif ()
 
-# Audio backends. iOS uses a native AURemoteIO / AVAudioSession driver
-# (task 3.7) instead of cubeb — cubeb's macOS AudioUnit code path leaks
+# Audio backends. iOS uses a native AURemoteIO / AVAudioSession driver instead
+# of cubeb — cubeb's macOS AudioUnit code path leaks
 # CoreAudio HAL types that the iOS SDK doesn't ship, so a direct
 # implementation is both smaller and easier to keep in sync with the iOS
 # audio APIs. Desktop / Android continue to use cubeb. FFmpeg is built
-# separately for iOS by scripts/build_ios_ffmpeg.sh, then linked here when
+# separately for iOS by the ffmpeg submodule's ios-build.sh, then linked here when
 # EKA2L1_HAVE_FFMPEG is enabled by src/external.
 if (EKA2L1_IOS)
     set(DRIVERS_AUDIOUNIT_IOS_SRC
@@ -40,7 +40,7 @@ endif ()
 
 # The OGL graphics backend was originally written against desktop GL via glad.
 # On iOS we substitute ios_gl_loader.h for <glad/glad.h> in each ogl source
-# (task 2.1) and link OpenGLES.framework directly below — glad itself stays
+# and link OpenGLES.framework directly below — glad itself stays
 # unbuilt.
 set(DRIVERS_OGL_SRC
         include/drivers/graphics/backend/ogl/buffer_ogl.h
@@ -171,7 +171,7 @@ if(WIN32)
 
     target_link_libraries(drivers PRIVATE opengl32.lib Mfuuid.lib Propsys.lib)
 elseif (EKA2L1_IOS)
-    # EAGL-backed GLES3 context (task 2.2) plus emu_window_ios (task 2.3).
+    # EAGL-backed GLES3 context plus emu_window_ios.
     # The frontend's EAGLView hands a CAEAGLLayer in via emu_window_ios, which
     # surfaces it on window_system_info::render_surface for the context.
     target_sources(drivers PRIVATE
@@ -229,6 +229,12 @@ add_library(miniBAE_EMU STATIC ${MINIBAE_SHARED_SOURCES})
 target_include_directories(miniBAE_EMU
     PRIVATE include/drivers/audio/backend/minibae ${MINIBAE_INTERNAL_INCLUDE_DIRS})
 target_link_libraries(miniBAE_EMU PRIVATE common)
+
+# miniBAE is old C that assigns integers to pointers and calls functions before
+# declaring them. Clang 16 turned both into errors by default.
+if (NOT MSVC)
+    target_compile_options(miniBAE_EMU PRIVATE -Wno-int-conversion -Wno-implicit-function-declaration)
+endif()
 
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)

@@ -39,9 +39,9 @@
 #endif
 
 #if EKA2L1_PLATFORM(DARWIN)
-// macOS and iOS use 64-bit off_t natively; there is no separate stat64 type
-// in their SDKs. Alias to the regular stat so the shared POSIX path below
-// keeps compiling without per-call branching.
+// Apple's off_t has always been 64-bit, so their SDKs never declared the
+// separate stat64 type the other POSIX targets use, and SDK 26 stopped
+// providing it entirely. Alias it so the shared POSIX path below still builds.
 #define stat64 stat
 #endif
 
