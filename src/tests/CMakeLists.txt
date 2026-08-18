@@ -19,7 +19,8 @@ target_link_libraries(ekatests PRIVATE
     epockern
     epocloader
     epocpkg
-    epocservs)
+    epocservs
+    lunasvg)
 
 # The fixtures are copied next to the executable, and the tests open them by a
 # relative path. Multi-config generators put the executable in a per-config
