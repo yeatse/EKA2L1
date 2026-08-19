@@ -1,18 +1,30 @@
 # A stability net for upstreaming this fork
 
-This fork is roughly 300 commits ahead of upstream `master`, and the intent is to send
-those changes back in batches. Most of them touch shared emulator code — kernel, IPC,
-services, the interpreter — where a regression is invisible until somebody runs the one
-application that used to work. Upstream currently has no automated way to notice that.
+This fork carries several hundred commits' worth of change over upstream `master`, and the
+intent is to send it back in batches. Most of it touches shared emulator code — kernel,
+IPC, services, the interpreter — where a regression is invisible until somebody runs the
+one application that used to work. Upstream had no automated way to notice that.
 
 So the batches should not start with behaviour. They should start with the net that
 catches a bad batch. That net is now in place: #583 brought CI back from the dead, #584
 made it run the unit tests, #586 got the whole thing onto current toolchains and runner
-images, and #585 fixed a startup crash found while checking that the macOS artifact opens. This document is the plan for that net: what exists, what PPSSPP
-(the emulator project with the most mature regression story) actually does, why EKA2L1
-cannot copy it verbatim, and the concrete order in which to build it.
+images, #585 fixed a startup crash found while checking that the macOS artifact opens, and
+#588 gave branch protection one stable check to require. This document is the plan for
+that net: what exists, what PPSSPP (the emulator project with the most mature regression
+story) actually does, why EKA2L1 cannot copy it verbatim, and the concrete order in which
+to build it.
+
+Two things have changed since the plan was written, and both are recorded in place below:
+the net's first two rungs are built and merged, and **upstream accepted the iOS port
+itself (#587, 17 Aug 2026)** — which was the open question the whole "iOS plumbing" batch
+was waiting on. See [What is left in the fork](#what-is-left-in-the-fork), remeasured on
+19 Aug 2026.
 
 ## Where upstream stands today
+
+*This section describes upstream as of 16 Aug 2026, before A0 landed. It is kept as the
+starting position the rest of the document is measured against; the per-step statuses say
+what has since changed.*
 
 - `.github/workflows/build.yml` does trigger on `push` and `pull_request` — and **it has
   been failing on every single run**, in a way that is easy to miss: each job dies in
@@ -187,7 +199,8 @@ Two things the port surfaced that are not in the fork's commit:
   multi-config generator is not where CTest runs from.
 - The suite cannot be built on a current macOS toolchain at all: SDK 26 no longer declares
   `stat64`, which `fileutils.cpp` uses on every POSIX target. CI did not catch it because
-  its image is older. Worth its own small PR.
+  its image is older. *Since fixed upstream — `fileutils.cpp` now maps `stat64` onto
+  `stat` on Apple targets, and `ekatests` builds and passes on a current macOS SDK.*
 
 Upstream merged A0 as PR 583, so this went out as a standalone PR rather than a stacked
 one.
@@ -221,6 +234,11 @@ cursor) can be upstreamed responsibly.
 *Acceptance:* the harness exits non-zero on the first divergence and the failing seed is
 in the log.
 
+**Status: not started, and now the critical path.** The infrastructure steps ahead of it
+(A0, A1, A1b) are all merged, and the interpreter batch — the single largest block of
+shared code still in the fork, at 16 files and +2795 lines — is gated on this and on
+nothing else.
+
 ### A3. A sanitiser job
 
 One Linux clang build with `-fsanitize=address,undefined`, running `ekatests` and the
@@ -230,6 +248,9 @@ patch-DLL decompression was found exactly this way, under ASan.
 
 *Acceptance:* the job is red on a known-bad commit and green on its fix.
 
+**Status: not started.** Cheap next to A2 and independent of it — one job on an existing
+workflow, no new target.
+
 ### A4. Grow the unit tests with the batches, not separately
 
 No coverage target. One rule instead: **every shared-code bug fixed in an upstreamed
@@ -238,6 +259,12 @@ boundaries, region arithmetic, the INI tokenizer's quoted-comma handling, the
 `lower_bound` hit that was never validated — all of these are testable with no ROM and no
 device. This is also the most direct answer to "how do we trust a large machine-assisted
 batch": each fix arrives with a test that fails without it.
+
+**Status: in force, and it is holding.** Every graphics batch sent so far carried its
+tests: `loader/nvg.cpp` and `services/ui/skin/skn.cpp` with #589/#591, `loader/svgb.cpp`
+with #593, `loader/gdr.cpp` and `services/fbs/linkedfont.cpp` with #594. Upstream's
+`src/tests/epoc` now holds 19 test files against the fork's 23, and the rule cost nothing
+to follow — the fixtures were synthesised, not extracted from a ROM.
 
 ## Track B — guest-level regression, gated on a ROM
 
@@ -285,54 +312,63 @@ Two options, and the second costs upstream nothing:
 
 ## What is left in the fork
 
-Measured on 2026-08-17, with `master` at the merge of #586. The fork is 328 commits ahead
-and 17 behind. **171 of those commits touch shared emulator code** — everything outside
-`src/emu/ios`, the iOS workflows and the docs. Of those:
+Remeasured on 2026-08-19, with `master` at the merge of #598. **The earlier count — 162
+commits split 91/29/42 — is superseded, and not by arithmetic.** Fifteen PRs landed
+between 16 and 19 August, and none of them was a cherry-pick: each was rebuilt on
+upstream's tree and reviewed there, so a fork commit's content can be fully upstream while
+the commit itself still shows as "ahead". Commit counts stopped being a valid unit of
+measurement the moment that started happening. What follows is measured with
+`git diff master...ios-next` — by file and by line, which is what actually still differs.
 
-- 5 have already landed upstream in another shape: the `ekatests` repair (#584), the
-  dependency bumps, the host-page `mprotect` alignment and the `PROT_EXEC` strip (#586,
-  where the last two were rewritten to key off the host page size rather than the
-  platform).
-- 2 pairs cancel out — a dyncom translation cache and an EKA1 screen-mode change, each
-  reverted in the fork.
+Two things closed out entirely:
 
-**162 remain.** They are not equally sendable, and the useful split is by that rather than
-by subsystem:
+- **The iOS port is upstream (#587).** That was the open maintainer question the whole
+  "iOS plumbing" batch (42 commits in the old table) was blocked on, and it is answered.
+  `src/emu/ios` now differs by 4 files and +69/-7 — the font-import and netplay changes
+  made after the PR was cut. There is no port-sized decision left to wait for.
+- **Graphics is substantially done.** #589 (icon decode), #590 (NVG path decoding), #591
+  (Symbian^3 skin overrides and NVG rasterisation), #593 (SVGB text), #594 (CJK linked
+  typefaces and imported fonts) and #597 (the icon mask contract) took the bulk of it.
 
-- **A — cross-platform fixes.** Nothing iOS about them; a Qt or Android user hits the same
-  bug. These can be sent today. **91 commits.**
-- **B — found on iOS, shared benefit.** Real fixes in shared code, but discovered through
-  an iOS symptom, so each PR has to answer "is this a bug on Qt and Android too?" — often
-  yes, sometimes the answer is that the iOS backend is the only caller that gets there.
-  **29 commits.**
-- **C — the iOS port's own plumbing in shared files.** EAGL and MetalANGLE contexts, the
-  AudioUnit driver, CoreMotion and AVFoundation backends, the bundle resource layout, the
-  `#if EKA2L1_IOS` branches in shared CMake. These only mean anything alongside the port
-  itself, so they are not a queue to work through — they wait on whether upstream wants
-  the iOS frontend at all, which is the maintainer's call. **42 commits.**
+What remains, by area:
 
-| Batch | A | B | C | Depends on | Verified by | Start with |
-|---|---|---|---|---|---|---|
-| Graphics, window server, fonts | 15 | 12 | 4 | — | Track B, per device | `3f29c98d` MBM index bounds check (one-line crash fix, self-contained) |
-| Kernel objects and lifetimes | 19 | 5 | 3 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
-| Audio and video | 10 | 3 | 5 | — | Track B, audible checks | `92137f22` stop the hardware stream before freeing callback state |
-| Interpreter performance | 18 | 0 | 0 | **A2** (`dyncom_difftest` in CI) | difftest + FPS measurements | `985fabb4` ASID-tagged instruction cache |
-| Services and packaging | 13 | 2 | 3 | — | `src/intests` once B2 exists | `1af1eefb` SIS targets without a drive letter |
-| Netplay | 8 | 0 | 4 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
-| Memory model | 4 | 0 | 0 | — | `ekatests` + Track B | `51bbb0fd` fail chunk creation instead of returning a hollow chunk |
-| Scripting patches | 3 | 0 | 1 | upstream's scripting build state | Track B | `1093f038` resolve ROM hooks by fingerprint |
-| Camera | 0 | 3 | 1 | the iOS camera backend | device test | — (B/C only) |
-| iOS port plumbing | 1 | 4 | 21 | **maintainer decision on the port** | — | — |
+| Area | Files | Lines | Depends on | Verified by | Start with |
+|---|---|---|---|---|---|
+| Services (non-graphics) | 38 | +2695/-216 | — | `src/intests` once B2 exists | `centralrepo.cpp` (+685) — the INI reader rewritten to match Symbian's own, with a doc |
+| Interpreter | 16 | +2795/-246 | **A2** (`dyncom_difftest` in CI) | difftest + FPS measurements | `985fabb4` ASID-tagged instruction cache |
+| Kernel objects and lifetimes | 23 | +989/-186 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
+| Dispatch / GLES HLE | 19 | +772/-76 | — | Track B, per device | — |
+| Netplay and Bluetooth | 21 | +719/-92 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
+| Graphics, window server, fonts (remainder) | 34 | +681/-77 | — | Track B, per device | — |
+| Common, vfs, utils, system, config | 26 | +577/-87 | — | `ekatests` | `flate.cpp` (+18) — the inflate tail-word overread; needs a test written for it (A4) |
+| Audio and video | 12 | +444/-104 | — | Track B, audible checks | `92137f22` stop the hardware stream before freeing callback state |
+| Scripting patches | 7 | +448/-63 | upstream's scripting build state | Track B | `1093f038` resolve ROM hooks by fingerprint |
+| Package | 6 | +439/-148 | — | `ekatests` (SIS fixtures exist) | `1af1eefb` SIS targets without a drive letter |
+| Patch DLLs | 17 | +401/-21 | a Symbian toolchain to rebuild the binaries | Track B | — |
+| Qt / Android frontends | 5 | +369/-411 | — | desktop run | — |
+| Memory model | 8 | +143/-37 | — | `ekatests` + Track B | `51bbb0fd` fail chunk creation instead of returning a hollow chunk |
+| iOS frontend | 4 | +69/-7 | — | device build | whole remainder, one PR |
+| Camera | 2 | +5/-1 | — | device test | — |
+
+Two areas are deliberately not rows above, because neither is a batch:
+
+- **`src/tests`** — 23 files, +981 lines. Under A4 each case travels with the batch whose
+  bug it reproduces, so this is not a PR of its own. It is also the one number that should
+  *shrink to zero* as a side effect of everything else going out.
+- **`docs/`** — 120 files of per-bug write-ups, which are PR material rather than a batch.
 
 Three things the table does not say on its own:
 
+- **Memory model is the cheapest first behavioural PR.** Eight files, +143 lines, nothing
+  iOS-specific, and `ctest` now gates every upstream PR — so the acceptance argument is
+  already built.
 - **Some commits have to be split.** `4a9f96d3` (fbs allocator race plus two teardown
   UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
   races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
-  three unrelated root causes. One root cause per PR means unpicking them first, and the
-  estimates above count commits, not PRs.
-- **The interpreter batch is the reason A2 matters.** Eighteen optimisations to the
-  interpreter cannot be reviewed by reading them. The difftest harness is in the same
+  three unrelated root causes. One root cause per PR means unpicking them first, so the
+  file counts above are not PR counts either.
+- **The interpreter batch is the reason A2 matters.** +2795 lines of optimisation to a
+  CPU interpreter cannot be reviewed by reading them. The difftest harness is in the same
   batch (it was written alongside them) and should go first, as its own PR, so everything
   after it lands behind a gate.
 - **The netplay batch is the one place order is load-bearing.** The later fixes assume the
@@ -342,7 +378,8 @@ Three things the table does not say on its own:
 
 1. **Infrastructure first**, in order: A0 → A1 → A2/A3 → B1. Every later behavioural batch
    then lands behind a gate that already exists. These PRs also carry no behavioural risk,
-   which makes them the cheapest way to establish trust.
+   which makes them the cheapest way to establish trust. *A0 and A1 are done; A2 is the
+   next one, and the interpreter batch is waiting on it.*
 2. **iOS-only changes and shared-emulator changes never share a PR.** A shared-code PR must
    be able to explain why the bug is also a bug on Qt and Android.
 3. **A checklist per PR**: Track A green; Track B shadow results attached; the affected
@@ -367,15 +404,20 @@ Worth doing eventually, wrong thing to attach to this plan:
 
 ## Sequencing
 
-| Step | Track | Can be PR'd as-is | Needs maintainer buy-in |
-|---|---|---|---|
-| A0 workflow repair (it fails at job set-up today) | A | yes | discuss first (their CI) |
-| A1 `ekatests` repair + `ctest` in CI | A | yes | no |
-| A2 `dyncom_difftest` in CI | A | yes | no |
-| A3 ASan/UBSan job | A | yes | no |
-| A4 regression tests alongside each batch | A | yes | no |
-| B1 headless frontend | B | yes | discuss first (new target) |
-| B2 intests driver + committed SIS | B | yes | no |
-| B3 screenshot/MSE harness | B | yes | no |
-| B4 self-hosted runner | B | no | required |
-| B4′ shadow CI on this fork | B | n/a | none |
+| Step | Track | Status | Can be PR'd as-is | Needs maintainer buy-in |
+|---|---|---|---|---|
+| A0 workflow repair | A | **merged** (#583) | — | discussed first (their CI) |
+| A1 `ekatests` repair + `ctest` in CI | A | **merged** (#584) | — | no |
+| A1b toolchain modernisation (unplanned) | A | **merged** (#586, #585) | — | no |
+| A2 `dyncom_difftest` in CI | A | **next up** | yes | no |
+| A3 ASan/UBSan job | A | not started | yes | no |
+| A4 regression tests alongside each batch | A | **in force** since #589 | yes | no |
+| B1 headless frontend | B | not started | yes | discuss first (new target) |
+| B2 intests driver + committed SIS | B | not started | yes | no |
+| B3 screenshot/MSE harness | B | not started | yes | no |
+| B4 self-hosted runner | B | not started | no | required |
+| B4′ shadow CI on this fork | B | not started | n/a | none |
+
+Outside the plan, the port itself went out and was accepted: #587 (the iOS frontend), #592
+and #596 (its CI job), plus #588, which gave upstream one stable required check for branch
+protection.
