@@ -262,17 +262,36 @@ TEST_CASE("linked_font_adapter_dispatches_per_glyph", "fbs") {
     REQUIRE(!linked.get_face_attrib(1, reported));
 }
 
+TEST_CASE("linked_font_adapter_sends_a_glyph_index_to_the_canonical_font", "fbs") {
+    // Shaping hands back glyph indices rather than codepoints, flagged with the
+    // high bit, and an index only means anything to the face that produced it --
+    // which is the canonical component, the one that did the shaping. Routing an
+    // index by "codepoint" lands it in whichever component claims that number
+    // and draws an unrelated glyph.
+    fake_font_adapter latin({ LATIN_CODE, static_cast<std::int32_t>(0x80000000 | LATIN_CODE) }, 7);
+    fake_font_adapter cjk({ CJK_CODE }, 13);
+
+    // The CJK font is canonical here, so a misrouted index is visible.
+    epoc::adapter::linked_font_file_adapter linked({ { &latin, 0 }, { &cjk, 0 } }, 1, {});
+
+    REQUIRE(linked.get_glyph_advance(0, 0x80000000 | LATIN_CODE, 12, false) == 13);
+
+    // The same number without the flag is a codepoint, and does go to Latin.
+    REQUIRE(linked.get_glyph_advance(0, LATIN_CODE, 12, false) == 7);
+}
+
 TEST_CASE("linked_font_adapter_keeps_the_canonical_font_in_charge", "fbs") {
-    // The arrangement a user-imported font is attached with: the device's own
-    // face is canonical and the import only trails it, so nothing about the
-    // device font's look or metrics changes.
+    // link.ini marks one component canonical, and that is the face the linked
+    // typeface presents as -- its attributes and its metrics. The others are
+    // reachable only for glyphs the canonical one does not have, so nothing
+    // about the device font's look changes.
     fake_font_adapter device({ LATIN_CODE }, 7);
-    fake_font_adapter imported({ CJK_CODE }, 13);
+    fake_font_adapter cjk({ CJK_CODE }, 13);
 
     epoc::open_font_face_attrib attrib{};
     attrib.style = epoc::open_font_face_attrib::serif;
 
-    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &imported, 0 } }, 0, attrib);
+    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &cjk, 0 } }, 0, attrib);
 
     std::uint32_t metric_identifier = 0;
     const std::optional<epoc::open_font_metrics> metrics = linked.get_nearest_supported_metric(0, 17, &metric_identifier, true);
@@ -285,7 +304,7 @@ TEST_CASE("linked_font_adapter_keeps_the_canonical_font_in_charge", "fbs") {
     REQUIRE(linked.get_face_attrib(0, reported));
     REQUIRE(reported.style == epoc::open_font_face_attrib::serif);
 
-    // Only what the device face cannot draw reaches the import.
+    // Only what the device face cannot draw reaches the CJK one.
     REQUIRE(linked.get_glyph_advance(0, LATIN_CODE, 17, false) == 7);
     REQUIRE(linked.get_glyph_advance(0, CJK_CODE, 17, false) == 13);
 }
@@ -348,11 +367,12 @@ TEST_CASE("linked_font_adapter_translates_metric_identifiers", "fbs") {
     // A metric identifier is only meaningful to the adapter that issued it, and
     // the per-glyph calls only ever carry the canonical's. Handing a gdr bitmap
     // index to FreeType as a pixel size renders the glyph a couple of pixels
-    // tall, which is what an EKA1 device did with an imported font.
+    // tall, which is what a device pairing a gdr Latin face with a scalable CJK
+    // one would draw.
     indexed_font_adapter device({ LATIN_CODE }, 7);
-    fake_font_adapter imported({ CJK_CODE }, 13);
+    fake_font_adapter cjk({ CJK_CODE }, 13);
 
-    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &imported, 0 } }, 0, {});
+    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &cjk, 0 } }, 0, {});
 
     std::uint32_t metric_identifier = 0;
     REQUIRE(linked.get_nearest_supported_metric(0, 17, &metric_identifier, true).has_value());
@@ -364,9 +384,9 @@ TEST_CASE("linked_font_adapter_translates_metric_identifiers", "fbs") {
     REQUIRE(linked.get_glyph_advance(0, LATIN_CODE, metric_identifier, false) == 7);
     REQUIRE(device.last_metric_identifier_ == 1);
 
-    // ...while the import is addressed the way it expects, by size.
+    // ...while the other component is addressed the way it expects, by size.
     REQUIRE(linked.get_glyph_advance(0, CJK_CODE, metric_identifier, false) == 13);
-    REQUIRE(imported.last_metric_identifier_ == 17);
+    REQUIRE(cjk.last_metric_identifier_ == 17);
 }
 
 TEST_CASE("linked_font_adapter_asks_components_for_the_face_format", "fbs") {
@@ -374,9 +394,9 @@ TEST_CASE("linked_font_adapter_asks_components_for_the_face_format", "fbs") {
     // the face declares -- FreeType can rasterise monochrome itself, hinted,
     // which is far kinder to a small CJK glyph than thresholding a grey one.
     fake_font_adapter device({ LATIN_CODE }, 7);
-    fake_font_adapter imported({ CJK_CODE }, 13);
+    fake_font_adapter cjk({ CJK_CODE }, 13);
 
-    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &imported, 0 } }, 0, {});
+    epoc::adapter::linked_font_file_adapter linked({ { &device, 0 }, { &cjk, 0 } }, 0, {});
 
     int width = 0;
     int height = 0;
@@ -387,11 +407,11 @@ TEST_CASE("linked_font_adapter_asks_components_for_the_face_format", "fbs") {
     std::uint8_t *bitmap = linked.get_glyph_bitmap(0, CJK_CODE, 12, &width, &height, total_size, &bmp_type, metric);
 
     REQUIRE(bitmap);
-    REQUIRE(imported.requested_bitmap_type_ == epoc::monochrome_glyph_bitmap);
+    REQUIRE(cjk.requested_bitmap_type_ == epoc::monochrome_glyph_bitmap);
     REQUIRE(bmp_type == epoc::monochrome_glyph_bitmap);
 
     linked.free_glyph_bitmap(bitmap);
-    REQUIRE(imported.live_bitmaps_ == 0);
+    REQUIRE(cjk.live_bitmaps_ == 0);
 }
 
 TEST_CASE("linked_font_adapter_frees_bitmap_through_its_owner", "fbs") {
