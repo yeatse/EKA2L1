@@ -88,9 +88,15 @@ on:
 permissions:
   contents: write
 
+# Upstream-tracking runs share one group and never cancel each other: a build
+# takes longer than the poll interval, so cancelling in progress meant every
+# tick killed the previous one and nothing was ever uploaded. GitHub keeps at
+# most one queued run per group, and a queued run re-checks upstream when it
+# starts, so a burst of ticks collapses into one build rather than a backlog.
+# Branch pushes keep the old behaviour, where a newer push does supersede.
 concurrency:
-  group: ios-testflight-${{ github.ref }}
-  cancel-in-progress: true
+  group: ios-testflight-${{ (github.event_name == 'schedule' || inputs.track_upstream == true) && 'upstream' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' && inputs.track_upstream != true }}
 
 jobs:
   upload:
