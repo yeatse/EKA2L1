@@ -248,8 +248,12 @@ patch-DLL decompression was found exactly this way, under ASan.
 
 *Acceptance:* the job is red on a known-bad commit and green on its fix.
 
-**Status: not started.** Cheap next to A2 and independent of it — one job on an existing
-workflow, no new target.
+**Status: not started, and now evidence-backed.** Cheap next to A2 and independent of it —
+one job on an existing workflow, no new target. The argument stopped being hypothetical
+while #599 was being prepared: running the existing suite under ASan for the first time
+turned up an uninitialised-member defect that reproduces on upstream's own tree (see
+[Sending the first behavioural batch](#sending-the-first-behavioural-batch)). The suite it
+would run already exists and already passes under the sanitiser.
 
 ### A4. Grow the unit tests with the batches, not separately
 
@@ -312,16 +316,19 @@ Two options, and the second costs upstream nothing:
 
 ## What is left in the fork
 
-Remeasured on 2026-08-19, with `master` at the merge of #598. **The earlier count — 162
-commits split 91/29/42 — is superseded, and not by arithmetic.** Fifteen PRs landed
+Remeasured on 2026-08-19, with `master` at the merge of #599. **The earlier count — 162
+commits split 91/29/42 — is superseded, and not by arithmetic.** Sixteen PRs landed
 between 16 and 19 August, and none of them was a cherry-pick: each was rebuilt on
 upstream's tree and reviewed there, so a fork commit's content can be fully upstream while
 the commit itself still shows as "ahead". Commit counts stopped being a valid unit of
 measurement the moment that started happening. What follows is measured with
 `git diff master...ios-next` — by file and by line, which is what actually still differs.
 
-Two things closed out entirely:
+Three things closed out entirely:
 
+- **The memory model batch is upstream (#599).** Chunk creation, chunk lifetime across
+  processes and CPU TLB invalidation, plus a defect that predated the fork. `src/emu/mem`
+  now differs by one file, and that file belongs to the interpreter batch.
 - **The iOS port is upstream (#587).** That was the open maintainer question the whole
   "iOS plumbing" batch (42 commits in the old table) was blocked on, and it is answered.
   `src/emu/ios` now differs by 4 files and +69/-7 — the font-import and netplay changes
@@ -336,7 +343,7 @@ What remains, by area:
 |---|---|---|---|---|---|
 | Services (non-graphics) | 38 | +2695/-216 | — | `src/intests` once B2 exists | `centralrepo.cpp` (+685) — the INI reader rewritten to match Symbian's own, with a doc |
 | Interpreter | 16 | +2795/-246 | **A2** (`dyncom_difftest` in CI) | difftest + FPS measurements | `985fabb4` ASID-tagged instruction cache |
-| Kernel objects and lifetimes | 23 | +989/-186 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
+| Kernel objects and lifetimes | 21 | +930/-164 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
 | Dispatch / GLES HLE | 19 | +772/-76 | — | Track B, per device | — |
 | Netplay and Bluetooth | 21 | +719/-92 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
 | Graphics, window server, fonts (remainder) | 34 | +681/-77 | — | Track B, per device | — |
@@ -346,7 +353,6 @@ What remains, by area:
 | Package | 6 | +439/-148 | — | `ekatests` (SIS fixtures exist) | `1af1eefb` SIS targets without a drive letter |
 | Patch DLLs | 17 | +401/-21 | a Symbian toolchain to rebuild the binaries | Track B | — |
 | Qt / Android frontends | 5 | +369/-411 | — | desktop run | — |
-| Memory model | 8 | +143/-37 | — | `ekatests` + Track B | `51bbb0fd` fail chunk creation instead of returning a hollow chunk |
 | iOS frontend | 4 | +69/-7 | — | device build | whole remainder, one PR |
 | Camera | 2 | +5/-1 | — | device test | — |
 
@@ -359,9 +365,10 @@ Two areas are deliberately not rows above, because neither is a batch:
 
 Three things the table does not say on its own:
 
-- **Memory model is the cheapest first behavioural PR.** Eight files, +143 lines, nothing
-  iOS-specific, and `ctest` now gates every upstream PR — so the acceptance argument is
-  already built.
+- **The memory model batch is done — it was the first behavioural PR, and it is worth
+  reading before sending the next one.** It went out as #599 and merged the same day. What
+  it cost, and what it settled, is in [Sending the first behavioural
+  batch](#sending-the-first-behavioural-batch) below.
 - **Some commits have to be split.** `4a9f96d3` (fbs allocator race plus two teardown
   UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
   races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
@@ -373,6 +380,45 @@ Three things the table does not say on its own:
   after it lands behind a gate.
 - **The netplay batch is the one place order is load-bearing.** The later fixes assume the
   earlier ones; sending them out of order produces PRs that do not make sense on their own.
+
+## Sending the first behavioural batch
+
+The memory model went out as #599 and merged the same day. It is the only behavioural
+batch sent so far, so what it cost is the best estimate available for the ones after it.
+
+**It was sent as one PR, not one per root cause.** Five defects, all on the subject of who
+owns a chunk struct and when the CPU may still hold a translation into it. Rule 4 below
+still stands as the default, but two of the five could not have been separated: releasing
+a chunk slot on failure moves a destructor to the moment of failure, which changes when a
+second, pre-existing defect fires. Bundling was the honest choice there, and saying so in
+the PR body cost nothing.
+
+**Porting was by rebuild, not cherry-pick.** Branch from upstream, apply each commit's
+hunks, and check the result with `git diff ios-next` — the remainder should be only what
+was deliberately left behind (here, one interpreter commit that happened to touch
+`mem/src/mmu.cpp`). That check is what makes "the branch matches the fork's final state"
+an assertion rather than a hope.
+
+**Running the suite under ASan for the first time found a defect on upstream's tree.**
+`multiple_mem_model_chunk` initialised none of its members, while its destructor opens
+with `decommit(0, max_size_)` — so a chunk whose creation failed walked a page table array
+with a garbage size. It reproduces on an unmodified tree, and it had been sitting behind
+the fact that nothing ever ran these tests under a sanitiser. Two lessons:
+
+- **A3 is not a nice-to-have.** One ASan run on an existing test suite produced a
+  reproducible SEGV in shared code. That is the whole argument for the job, made in a
+  single afternoon.
+- **Reviewing your own batch before sending it pays.** The same pass found two dead
+  branches in the fork's own fix — a loop guard defending against a case that cannot reach
+  it, and a hand-off of a field (`flexible_mem_model_chunk::owner_`) that nothing in the
+  tree ever reads.
+
+**"Not testable without a ROM" deserves one attempt before it is asserted.** The batch's
+lifetime fixes looked device-only and were described that way in the first draft of the PR.
+They are not: two mem-model processes, one attaching to the other's global chunk, is enough
+to reproduce the use-after-free — silently on an ordinary build, precisely under ASan. The
+TLB half really does need a device, and that distinction is worth drawing per fix rather
+than per batch.
 
 ## How the batches themselves should be sent
 
@@ -410,7 +456,7 @@ Worth doing eventually, wrong thing to attach to this plan:
 | A1 `ekatests` repair + `ctest` in CI | A | **merged** (#584) | — | no |
 | A1b toolchain modernisation (unplanned) | A | **merged** (#586, #585) | — | no |
 | A2 `dyncom_difftest` in CI | A | **next up** | yes | no |
-| A3 ASan/UBSan job | A | not started | yes | no |
+| A3 ASan/UBSan job | A | not started (**found a real bug in a trial run**) | yes | no |
 | A4 regression tests alongside each batch | A | **in force** since #589 | yes | no |
 | B1 headless frontend | B | not started | yes | discuss first (new target) |
 | B2 intests driver + committed SIS | B | not started | yes | no |
@@ -420,4 +466,4 @@ Worth doing eventually, wrong thing to attach to this plan:
 
 Outside the plan, the port itself went out and was accepted: #587 (the iOS frontend), #592
 and #596 (its CI job), plus #588, which gave upstream one stable required check for branch
-protection.
+protection. The first behavioural batch has also landed — #599, the memory model.
