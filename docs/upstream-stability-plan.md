@@ -255,7 +255,15 @@ patch-DLL decompression was found exactly this way, under ASan.
 
 *Acceptance:* the job is red on a known-bad commit and green on its fix.
 
-**Status: not started, and now the last unbuilt rung of Track A.** Cheap next to A2 and
+**Status: sent as #609**, with the four defects its first run reported (a negative
+shift in `bitmap_allocator::force_fill`, `chunkyseri` offsetting a null pointer to measure
+a serialisation, and thirteen descending drive loops stepping one below `drive_a`, which
+leaves the enum's value range). Leak detection is off in the job: the suite ends with
+objects the emulator never frees on purpose. The first CI run also turned up that the
+vendored `xz` refuses `-fsanitize=` unless `XZ_SANDBOX=no` is passed — Landlock and the
+sanitisers cannot both be on, and macOS never hits it.
+
+**Originally: not started, and the last unbuilt rung of Track A.** Cheap next to A2 and
 independent of it — one job on an existing workflow, no new target. The argument stopped
 being hypothetical while #599 was being prepared: running the existing suite under ASan for
 the first time turned up an uninitialised-member defect that reproduces on upstream's own
@@ -361,7 +369,7 @@ What remains, by area:
 
 | Area | Files | Lines | Depends on | Verified by | Start with |
 |---|---|---|---|---|---|
-| Services (non-graphics, non-netplay) | 30 | +1450/-75 | — | `src/intests` once B2 exists | `timezone.cpp` (+666) — the `!TzServer` HLE, with a doc |
+| Services (non-graphics, non-netplay) | 30 | +1450/-75 | — | `src/intests` once B2 exists | `timezone.cpp` — **sent as #610**, with the two `common/time.cpp` helpers it needs |
 | Kernel objects and lifetimes | 21 | +862/-162 | three commits must be unpicked first | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
 | Netplay and Bluetooth | 21 | +787/-91 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
 | Common, vfs, utils, system, config | 25 | +526/-74 | — | `ekatests` | `flate.cpp` (+18) — the inflate tail-word overread; needs a test written for it (A4) |
@@ -374,6 +382,12 @@ What remains, by area:
 | Qt / Android frontends | 4 | +23/-65 | — | desktop run | — |
 | Graphics, window server, fonts | 0 | — | — | — | **done** (#589–#597, #606) |
 | Interpreter (dyncom) | 0 | — | — | — | **done** (#604, #605) |
+
+#607, #609 and #610 are the batches sent after this remeasure. Two notes on the last two:
+the sanitiser job had to carry its own fixes, because a gate that is red on the day it
+lands is not a gate; and the time zone HLE could not go out alone, since the two
+`common/time.cpp` helpers it calls have no other caller upstream and would have been dead
+code in a PR of their own. Both are the same judgement call as #599's bundling.
 
 #607 is the first batch sent after this remeasure. Rebuilding it on upstream turned
 up four defects the fork's own version had, which is an argument for the rebuild
@@ -499,7 +513,7 @@ Worth doing eventually, wrong thing to attach to this plan:
 | A1 `ekatests` repair + `ctest` in CI | A | **merged** (#584) | — | no |
 | A1b toolchain modernisation (unplanned) | A | **merged** (#586, #585) | — | no |
 | A2 `dyncom_difftest` in CI | A | **merged** (#604, with the interpreter batch) | — | no |
-| A3 ASan/UBSan job | A | **next up** (**found a real bug in a trial run**) | yes | no |
+| A3 ASan/UBSan job | A | **sent as #609** (found four, all on master) | yes | no |
 | A4 regression tests alongside each batch | A | **in force** since #589 | yes | no |
 | B1 headless frontend | B | not started | yes | discuss first (new target) |
 | B2 intests driver + committed SIS | B | not started | yes | no |
