@@ -12,6 +12,15 @@
 #include <cpu/dyncom/armstate.h>
 
 namespace eka2l1::arm {
+#if defined(EKA2L1_DYNCOM_DIFFTEST)
+    // Test-only instrumentation for the translation-time loop accelerator. It
+    // only ever attaches during block translation, so a harness must be able to
+    // assert it was actually exercised rather than silently skipped.
+    void dyncom_reset_loop_accel_counters_for_test();
+    std::uint64_t dyncom_loop_accel_attaches_for_test();
+    std::uint64_t dyncom_loop_accel_bulk_iterations_for_test();
+#endif
+
     class dyncom_core final : public core {
     private:
         arm::exclusive_monitor *monitor_;

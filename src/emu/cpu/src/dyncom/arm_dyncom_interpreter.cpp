@@ -5,6 +5,7 @@
 #define CITRA_IGNORE_EXIT(x)
 
 #include <algorithm>
+#include <bit>
 #include <cinttypes>
 #include <common/log.h>
 #include <common/types.h>
@@ -18,6 +19,7 @@
 #include <cpu/dyncom/vfp/vfp.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include <cpu/arm_interface.h>
 
@@ -270,7 +272,7 @@ namespace {
 // induction registers (base pointers + counter), whose per-iteration deltas
 // the matcher proved constant. Any TLB miss simply stops the bulk step and
 // hands the remainder back to the interpreter, so faults and IPC unmapping
-// keep their interpreted behaviour. Disable with EKA2L1_NO_LOOP_ACCEL=1.
+// keep their interpreted behaviour.
 // ---------------------------------------------------------------------------
 
 // Dispatch index of the synthetic bulk-loop instruction. The label table ends
@@ -406,18 +408,33 @@ namespace {
     }
 }
 
-static bool loop_accel_disabled() {
-    static const bool disabled = (std::getenv("EKA2L1_NO_LOOP_ACCEL") != nullptr);
-    return disabled;
+#if defined(EKA2L1_DYNCOM_DIFFTEST)
+// Test-only instrumentation. The accelerator only ever attaches to block
+// translation, so a harness that never reaches it would score "no divergence"
+// while proving nothing about it; these let the harness assert it was exercised.
+static std::uint64_t g_loop_accel_attaches = 0;
+static std::uint64_t g_loop_accel_bulk_iterations = 0;
+
+namespace eka2l1::arm {
+    void dyncom_reset_loop_accel_counters_for_test() {
+        g_loop_accel_attaches = 0;
+        g_loop_accel_bulk_iterations = 0;
+    }
+
+    std::uint64_t dyncom_loop_accel_attaches_for_test() {
+        return g_loop_accel_attaches;
+    }
+
+    std::uint64_t dyncom_loop_accel_bulk_iterations_for_test() {
+        return g_loop_accel_bulk_iterations;
+    }
 }
+#endif
 
 // Symbolically simulate one iteration of the candidate Thumb loop at
 // [pc_start .. terminal Bcc]. Returns true and fills `out` when the body is a
 // provably uniform single-load copy/convert/fill loop.
 static bool analyze_thumb_bulk_loop(ARMul_State *cpu, std::uint32_t pc_start, loop_accel_inst &out) {
-    if (loop_accel_disabled())
-        return false;
-
     constexpr int MAX_BODY = 24;
 
     accel_sym sym[8];
@@ -947,12 +964,12 @@ static std::uint32_t run_accel_bulk(ARMul_State *cpu, const loop_accel_inst *d, 
                     break;
                 case 2: {
                     std::uint16_t t;
-                    __builtin_memcpy(&t, hs, 2);
+                    std::memcpy(&t, hs, 2);
                     lv = t;
                     break;
                 }
                 default: {
-                    __builtin_memcpy(&lv, hs, 4);
+                    std::memcpy(&lv, hs, 4);
                     break;
                 }
                 }
@@ -975,11 +992,11 @@ static std::uint32_t run_accel_bulk(ARMul_State *cpu, const loop_accel_inst *d, 
                     break;
                 case 2: {
                     const std::uint16_t t = static_cast<std::uint16_t>(v);
-                    __builtin_memcpy(p, &t, 2);
+                    std::memcpy(p, &t, 2);
                     break;
                 }
                 default:
-                    __builtin_memcpy(p, &v, 4);
+                    std::memcpy(p, &v, 4);
                     break;
                 }
             }
@@ -990,6 +1007,9 @@ static std::uint32_t run_accel_bulk(ARMul_State *cpu, const loop_accel_inst *d, 
         dst += it * static_cast<std::uint32_t>(d->dst_step);
         done += it;
     }
+#if defined(EKA2L1_DYNCOM_DIFFTEST)
+    g_loop_accel_bulk_iterations += done;
+#endif
     return done;
 }
 
@@ -1146,6 +1166,55 @@ static unsigned int DPO(RotateRightByRegister)(ARMul_State *cpu, unsigned int sh
     }
     return shifter_operand;
 }
+
+// Inlined shifter-operand evaluation. This used to be a statement expression so
+// it could stay usable where a plain expression was expected; MSVC has no such
+// extension, and a force-inlined function does the same job everywhere.
+static DYNCOM_FORCE_INLINE unsigned int compute_shifter_operand(ARMul_State *cpu,
+    const shtop_fp_t f_, const unsigned int so_) {
+    unsigned int v_;
+    if (f_ == DataProcessingOperandsImmediate) {
+        v_ = ROTATE_RIGHT_32(BITS(so_, 0, 7), BITS(so_, 8, 11) * 2);
+        cpu->shifter_carry_out = (BITS(so_, 8, 11) == 0) ? cpu->CFlag : BIT(v_, 31);
+    } else if (f_ == DataProcessingOperandsRegister) {
+        v_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));
+        cpu->shifter_carry_out = cpu->CFlag;
+    } else if (f_ == DataProcessingOperandsLogicalShiftLeftByImmediate) {
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));
+        const unsigned int imm_ = BITS(so_, 7, 11);
+        if (imm_ == 0) {
+            v_ = rm_;
+            cpu->shifter_carry_out = cpu->CFlag;
+        } else {
+            v_ = rm_ << imm_;
+            cpu->shifter_carry_out = BIT(rm_, 32 - imm_);
+        }
+    } else if (f_ == DataProcessingOperandsArithmeticShiftRightByImmediate) {
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));
+        const unsigned int imm_ = BITS(so_, 7, 11);
+        if (imm_ == 0) {
+            v_ = BIT(rm_, 31) ? 0xFFFFFFFF : 0;
+            cpu->shifter_carry_out = BIT(rm_, 31);
+        } else {
+            v_ = static_cast<unsigned int>(static_cast<int>(rm_) >> imm_);
+            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);
+        }
+    } else if (f_ == DataProcessingOperandsLogicalShiftRightByImmediate) {
+        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));
+        const unsigned int imm_ = BITS(so_, 7, 11);
+        if (imm_ == 0) {
+            v_ = 0;
+            cpu->shifter_carry_out = BIT(rm_, 31);
+        } else {
+            v_ = rm_ >> imm_;
+            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);
+        }
+    } else {
+        v_ = f_(cpu, so_);
+    }
+    return v_;
+}
+
 
 #define DEBUG_MSG                                        \
     LOG_DEBUG(eka2l1::CPU_DYNCOM, "inst is {:x}", inst); \
@@ -1523,14 +1592,7 @@ static void MLnS(RegisterPostIndexed)(ARMul_State *cpu, unsigned int inst,
 // Register count of an LDM/STM register list, replacing the former 1..16
 // iteration shift loop executed on every block transfer.
 static inline int CountSetBits16(unsigned int v) {
-#if defined(__GNUC__) || defined(__clang__)
-    return __builtin_popcount(v);
-#else
-    v = v - ((v >> 1) & 0x5555);
-    v = (v & 0x3333) + ((v >> 2) & 0x3333);
-    v = (v + (v >> 4)) & 0x0F0F;
-    return static_cast<int>((v + (v >> 8)) & 0x1F);
-#endif
+    return std::popcount(v & 0xFFFFu);
 }
 
 static void LdnStM(DecrementBefore)(ARMul_State *cpu, unsigned int inst, unsigned int &virt_addr) {
@@ -1823,6 +1885,9 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
             accel_base->cond = ConditionCode::AL;
             accel_base->br = TransExtData::NON_BRANCH;
             *reinterpret_cast<loop_accel_inst *>(accel_base->component) = accel_desc;
+#if defined(EKA2L1_DYNCOM_DIFFTEST)
+            ++g_loop_accel_attaches;
+#endif
         }
     }
 
@@ -1920,51 +1985,7 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
 // inline; register-specified shifts and rotates fall back. A
 // statement-expression keeps it usable wherever the old macro was an
 // expression.
-#define SHIFTER_OPERAND ({                                                          \
-    const shtop_fp_t f_ = inst_cream->shtop_func;                                   \
-    const unsigned int so_ = inst_cream->shifter_operand;                           \
-    unsigned int v_;                                                                \
-    if (f_ == DataProcessingOperandsImmediate) {                                    \
-        v_ = ROTATE_RIGHT_32(BITS(so_, 0, 7), BITS(so_, 8, 11) * 2);                \
-        cpu->shifter_carry_out = (BITS(so_, 8, 11) == 0) ? cpu->CFlag : BIT(v_, 31);\
-    } else if (f_ == DataProcessingOperandsRegister) {                              \
-        v_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));                                \
-        cpu->shifter_carry_out = cpu->CFlag;                                        \
-    } else if (f_ == DataProcessingOperandsLogicalShiftLeftByImmediate) {           \
-        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
-        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
-        if (imm_ == 0) {                                                            \
-            v_ = rm_;                                                               \
-            cpu->shifter_carry_out = cpu->CFlag;                                    \
-        } else {                                                                    \
-            v_ = rm_ << imm_;                                                       \
-            cpu->shifter_carry_out = BIT(rm_, 32 - imm_);                           \
-        }                                                                           \
-    } else if (f_ == DataProcessingOperandsArithmeticShiftRightByImmediate) {       \
-        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
-        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
-        if (imm_ == 0) {                                                            \
-            v_ = BIT(rm_, 31) ? 0xFFFFFFFF : 0;                                     \
-            cpu->shifter_carry_out = BIT(rm_, 31);                                  \
-        } else {                                                                    \
-            v_ = static_cast<unsigned int>(static_cast<int>(rm_) >> imm_);          \
-            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);                            \
-        }                                                                           \
-    } else if (f_ == DataProcessingOperandsLogicalShiftRightByImmediate) {          \
-        const unsigned int rm_ = CHECK_READ_REG15(cpu, BITS(so_, 0, 3));            \
-        const unsigned int imm_ = BITS(so_, 7, 11);                                 \
-        if (imm_ == 0) {                                                            \
-            v_ = 0;                                                                 \
-            cpu->shifter_carry_out = BIT(rm_, 31);                                  \
-        } else {                                                                    \
-            v_ = rm_ >> imm_;                                                       \
-            cpu->shifter_carry_out = BIT(rm_, imm_ - 1);                            \
-        }                                                                           \
-    } else {                                                                        \
-        v_ = f_(cpu, so_);                                                          \
-    }                                                                               \
-    v_;                                                                             \
-})
+#define SHIFTER_OPERAND compute_shifter_operand(cpu, inst_cream->shtop_func, inst_cream->shifter_operand)
 
 #define FETCH_INST                                 \
     if (inst_base->br != TransExtData::NON_BRANCH) \
@@ -2889,17 +2910,9 @@ BKPT_INST : {
         LOG_DEBUG(eka2l1::CPU_DYNCOM, "Breakpoint instruction hit. Immediate: {:#010X}", inst_cream->imm);
 
         // Call the handler
-        SAVE_NZCVT;
         cpu->RaiseException(eka2l1::arm::exception_type_breakpoint, cpu->Reg[15]);
 
         LOAD_NZCVT;
-
-        // A debugger or scripting hook may stop the core so it can restore and
-        // single-step the displaced instruction. In that case the breakpoint
-        // itself must not advance PC first.
-        if (cpu->NumInstrsToExecute == 0) {
-            goto END;
-        }
 
         if (cpu->Reg[15] != pc) {
             goto DISPATCH;
@@ -5655,6 +5668,7 @@ UNDEFINED_ADDRESSING_MODE : {
 
     return num_instrs;
 }
+
 END : {
     SAVE_NZCVT;
     cpu->NumInstrsToExecute = 0;

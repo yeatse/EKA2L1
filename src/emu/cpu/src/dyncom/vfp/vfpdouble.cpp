@@ -230,6 +230,26 @@ pack:
     return exceptions;
 }
 
+// See the single-precision counterpart: VMLA/VMLS are chained, so the product
+// is a double-precision value before it is accumulated. Rounds an intermediate
+// through a scratch slot that no guest instruction can observe.
+static std::uint32_t vfp_double_round_intermediate(ARMul_State *state, struct vfp_double *vd,
+    std::uint32_t fpscr, const char *func) {
+    constexpr int SCRATCH = 31; // d31: ExtReg has 64 single slots = 32 doubles
+    const std::uint32_t saved_lo = state->ExtReg[SCRATCH * 2];
+    const std::uint32_t saved_hi = state->ExtReg[SCRATCH * 2 + 1];
+    const std::uint32_t exceptions = vfp_double_normaliseround(state, SCRATCH, vd, fpscr, 0, func);
+    const std::uint64_t rounded = vfp_get_double(state, SCRATCH);
+    state->ExtReg[SCRATCH * 2] = saved_lo;
+    state->ExtReg[SCRATCH * 2 + 1] = saved_hi;
+
+    const std::uint32_t unpack_exceptions = vfp_double_unpack(vd, static_cast<std::int64_t>(rounded), fpscr);
+    if (vd->exponent == 0 && vd->significand)
+        vfp_double_normalise_denormal(vd);
+
+    return exceptions | unpack_exceptions;
+}
+
 /*
  * Propagate the NaN, setting exceptions if it is signalling.
  * 'n' is always a NaN.  'm' may be a number, NaN or infinity.
@@ -910,6 +930,11 @@ static std::uint32_t vfp_double_multiply_accumulate(ARMul_State *state, int dd, 
         vfp_double_normalise_denormal(&vdm);
 
     exceptions |= vfp_double_multiply(&vdp, &vdn, &vdm, fpscr);
+
+    // Chained, not fused: round the product to double precision before it is
+    // accumulated (ARM pseudocode FPAdd(D[d], FPMul(D[n], D[m]))).
+    exceptions |= vfp_double_round_intermediate(state, &vdp, fpscr, func);
+
     if (negate & NEG_MULTIPLY)
         vdp.sign = vfp_sign_negate(vdp.sign);
 
@@ -1178,7 +1203,7 @@ static struct op fops[] = {
 // comment in vfpsingle.cpp. Same envelope (scalar, default FPSCR mode,
 // normalized operands+result) where host arm64 IEEE-754 RN is bit-identical to
 // the softfloat reference.
-static const bool g_vfp_host_fast = (getenv("EKA2L1_NO_VFP_HOST") == nullptr);
+static constexpr bool g_vfp_host_fast = true;
 
 static inline bool vfp_f64_normalized(std::uint64_t bits) {
     const std::uint64_t e = bits & 0x7FF0000000000000ull;

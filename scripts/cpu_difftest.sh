@@ -2,10 +2,11 @@
 #
 # Build and run the dyncom interpreter differential test harness on the host.
 #
-# Configures a lean host build (dyncom only -- no dynarmic, no tools/tests/
-# scripting/Qt frontend), builds the dyncom_difftest target, and runs it.
+# Configures a lean host build (no tools/tests/scripting/Qt frontend), builds the
+# dyncom_difftest target, and runs it. dynarmic is built too: the harness uses it
+# as an independent oracle for whole-program cases.
 # Exits non-zero on the first divergence. This is the verification gate for the
-# harness-gated dyncom optimizations (see docs/dyncom_optimization_plan.md).
+# harness-gated dyncom optimizations.
 #
 # Usage:
 #   scripts/cpu_difftest.sh                 # default seed/count
@@ -24,12 +25,13 @@ cmake -S . -B "${BUILD_DIR}" \
     -DEKA2L1_BUILD_TESTS=OFF \
     -DEKA2L1_ENABLE_SCRIPTING_ABILITY=OFF \
     -DEKA2L1_ENABLE_DISCORD_RICH_PRESENCE=OFF \
-    -DEKA2L1_CPU_DYNCOM_ONLY=ON \
     -DEKA2L1_BUILD_DYNCOM_DIFFTEST=ON \
+    -DEKA2L1_CPU_DYNCOM_ONLY=OFF \
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     >/dev/null
 
-cmake --build "${BUILD_DIR}" --target dyncom_difftest -j"$(sysctl -n hw.ncpu)"
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+cmake --build "${BUILD_DIR}" --target dyncom_difftest -j"${JOBS}"
 
 BIN="$(find "${BUILD_DIR}" -name dyncom_difftest -type f -perm -111 | head -1)"
 if [ -z "${BIN}" ]; then

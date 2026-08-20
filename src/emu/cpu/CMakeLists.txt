@@ -149,12 +149,13 @@ target_link_libraries(cpu
 
 # Differential test harness for the dyncom interpreter (self-A/B + golden ALU
 # oracle over randomized instruction streams). Standalone host tool, default OFF;
-# see scripts/cpu_difftest.sh and docs/dyncom_optimization_plan.md.
+# see scripts/cpu_difftest.sh.
 option(EKA2L1_BUILD_DYNCOM_DIFFTEST "Build the dyncom interpreter differential test harness" OFF)
 if (EKA2L1_BUILD_DYNCOM_DIFFTEST)
     # The test-only VFP selector lets one process compare host-fast and
     # reference-softfloat execution without changing production state.
     target_compile_definitions(cpu PUBLIC EKA2L1_DYNCOM_DIFFTEST=1)
     add_executable(dyncom_difftest src/dyncom/tests/dyncom_difftest.cpp)
-    target_link_libraries(dyncom_difftest PRIVATE cpu common)
+    target_link_libraries(dyncom_difftest PRIVATE cpu common dynarmic)
+
 endif()

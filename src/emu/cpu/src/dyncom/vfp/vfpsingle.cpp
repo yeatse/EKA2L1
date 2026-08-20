@@ -52,6 +52,7 @@
  */
 
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <common/log.h>
@@ -229,6 +230,28 @@ pack:
     }
 
     return exceptions;
+}
+
+// Round an intermediate to single precision without committing it to a
+// register. Multiply-accumulate needs this: VFPv2/v3 VMLA/VMLS are chained,
+// not fused, so the product is a single-precision value before it is
+// accumulated. Reuses normaliseround by routing it through a scratch slot.
+static std::uint32_t vfp_single_round_intermediate(ARMul_State *state, struct vfp_single *vs,
+    std::uint32_t fpscr, const char *func) {
+    // ExtReg has 64 slots; the single-precision register file only uses the
+    // first 32, so the upper half is free for a scratch value that no guest
+    // instruction can observe.
+    constexpr int SCRATCH = 63;
+    const std::int32_t saved = state->ExtReg[SCRATCH];
+    const std::uint32_t exceptions = vfp_single_normaliseround(state, SCRATCH, vs, fpscr, 0, func);
+    const std::int32_t rounded = state->ExtReg[SCRATCH];
+    state->ExtReg[SCRATCH] = saved;
+
+    std::uint32_t unpack_exceptions = vfp_single_unpack(vs, rounded, fpscr);
+    if (vs->exponent == 0 && vs->significand)
+        vfp_single_normalise_denormal(vs);
+
+    return exceptions | unpack_exceptions;
 }
 
 /*
@@ -958,6 +981,14 @@ static std::uint32_t vfp_single_multiply_accumulate(ARMul_State *state, int sd, 
 
     exceptions |= vfp_single_multiply(&vsp, &vsn, &vsm, fpscr);
 
+    // VMLA/VMLS are chained multiply-accumulates, not fused ones (VFMA arrived
+    // in VFPv4): the ARM pseudocode is FPAdd(S[d], FPMul(S[n], S[m])), so the
+    // product is rounded to single precision here. Carrying the multiply's
+    // extra significand bits into the add instead makes `vmul` followed by
+    // `vmls` with the same operands leave a sub-ulp residue where the result
+    // must be exactly zero.
+    exceptions |= vfp_single_round_intermediate(state, &vsp, fpscr, func);
+
     if (negate & NEG_MULTIPLY)
         vsp.sign = vfp_sign_negate(vsp.sign);
 
@@ -1240,8 +1271,8 @@ static struct op fops[] = {
 // zero in or out, non-default mode, vectors) falls back to softfloat, which
 // keeps exact flag/special-value semantics. VFPv3 VMLA/VMLS retain extra
 // product precision, but are not IEEE fused-FMA; their packed fast helper below
-// mirrors that guard/sticky sequence directly. Set EKA2L1_NO_VFP_HOST=1 to
-// force the reference path (A/B).
+// mirrors that guard/sticky sequence directly. The differential
+// harness covers both paths (see scripts/cpu_difftest.sh).
 #if defined(EKA2L1_DYNCOM_DIFFTEST)
 static bool g_vfp_host_fast = true;
 static std::uint64_t g_vfp_host_fast_hits = 0;
@@ -1258,7 +1289,7 @@ std::uint64_t vfp_single_host_fast_hits_for_test() {
     return g_vfp_host_fast_hits;
 }
 #else
-static const bool g_vfp_host_fast = (getenv("EKA2L1_NO_VFP_HOST") == nullptr);
+static constexpr bool g_vfp_host_fast = true;
 #endif
 
 static inline bool vfp_f32_normalized(std::int32_t bits) {
@@ -1266,93 +1297,36 @@ static inline bool vfp_f32_normalized(std::int32_t bits) {
     return e != 0u && e != 0x7F800000u; // exclude zero/denormal (e==0) and Inf/NaN (e==0xFF)
 }
 
+// Host fast path for the multiply-accumulate family. Because VMLA/VMLS are
+// chained, the architectural result is exactly two correctly-rounded
+// single-precision operations, which is what the host gives natively -- no
+// significand bookkeeping needed. The envelope is the same as for the plain
+// arithmetic ops, extended to the rounded product: everything in and out must
+// be a normalized finite number, so the softfloat reference keeps every
+// denormal / overflow / underflow / NaN case along with its exception flags.
+// Like the other fast-path operations it does not raise the INEXACT cumulative
+// flag; the reference path does. (The previous packed implementation raised it
+// for MAC only, which was inconsistent with add/sub/mul/div.)
 static inline bool vfp_host_f32_mac(std::int32_t nb, std::int32_t mb,
-    std::int32_t ab, std::uint32_t negate, std::int32_t &rb,
-    std::uint32_t &exceptions) {
-    auto exponent = [](std::uint32_t bits) -> int {
-        return static_cast<int>((bits >> 23) & 0xFFu);
-    };
-    auto significand = [](std::uint32_t bits) -> std::uint32_t {
-        return ((bits & 0x007FFFFFu) | 0x00800000u) << VFP_SINGLE_LOW_BITS;
-    };
+    std::int32_t ab, std::uint32_t negate, std::int32_t &rb) {
+    float fn, fm, fa;
+    std::memcpy(&fn, &nb, sizeof(float));
+    std::memcpy(&fm, &mb, sizeof(float));
+    std::memcpy(&fa, &ab, sizeof(float));
 
-    const std::uint32_t nbits = static_cast<std::uint32_t>(nb);
-    const std::uint32_t mbits = static_cast<std::uint32_t>(mb);
-    const std::uint32_t abits = static_cast<std::uint32_t>(ab);
-    const std::uint32_t nsig = significand(nbits);
-    const std::uint32_t msig = significand(mbits);
+    float product = fn * fm;
+    std::int32_t pb;
+    std::memcpy(&pb, &product, sizeof(float));
+    if (!vfp_f32_normalized(pb))
+        return false;
 
-    std::uint32_t psig = vfp_hi64to32jamming(
-        static_cast<std::uint64_t>(nsig) * static_cast<std::uint64_t>(msig));
-    int pexp = exponent(nbits) + exponent(mbits) - 127 + 2;
-    bool psign = ((nbits ^ mbits) >> 31) != 0;
     if (negate & NEG_MULTIPLY)
-        psign = !psign;
-
-    std::uint32_t asig = significand(abits);
-    int aexp = exponent(abits);
-    bool asign = (abits >> 31) != 0;
+        product = -product;
     if (negate & NEG_SUBTRACT)
-        asign = !asign;
+        fa = -fa;
 
-    // vfp_single_add keeps the accumulator as N when exponents are equal.
-    std::uint32_t large_sig = asig, small_sig = psig;
-    int result_exp = aexp;
-    bool result_sign = asign, small_sign = psign;
-    if (aexp < pexp) {
-        large_sig = psig;
-        small_sig = asig;
-        result_exp = pexp;
-        result_sign = psign;
-        small_sign = asign;
-    }
-
-    const unsigned int exp_diff = static_cast<unsigned int>(
-        result_exp - ((aexp < pexp) ? aexp : pexp));
-    small_sig = vfp_shiftright32jamming(small_sig, exp_diff);
-
-    std::uint32_t result_sig;
-    if (result_sign != small_sign) {
-        result_sig = large_sig - small_sig;
-        if (static_cast<std::int32_t>(result_sig) < 0) {
-            result_sign = !result_sign;
-            result_sig = ~result_sig + 1;
-        } else if (result_sig == 0) {
-            result_sign = false; // round-to-nearest cancellation is +0
-        }
-    } else {
-        result_sig = large_sig + small_sig;
-    }
-
-    // Keep tiny/zero/overflow cases on the full softfloat path. For a normal
-    // result this is the RN portion of vfp_single_normaliseround, including
-    // ARM's guard/round/sticky tie handling.
-    if (result_sig == 0)
-        return false;
-    const unsigned int shift = static_cast<unsigned int>(__builtin_clz(result_sig));
-    result_exp -= static_cast<int>(shift);
-    result_sig <<= shift;
-    if (result_exp <= 0)
-        return false;
-
-    std::uint32_t increment = 1u << VFP_SINGLE_LOW_BITS;
-    if ((result_sig & (1u << (VFP_SINGLE_LOW_BITS + 1))) == 0)
-        --increment;
-    if (result_sig + increment < result_sig) {
-        ++result_exp;
-        result_sig = (result_sig >> 1) | (result_sig & 1u);
-        increment >>= 1;
-    }
-    if (result_exp >= 254)
-        return false;
-
-    exceptions = (result_sig & ((1u << (VFP_SINGLE_LOW_BITS + 1)) - 1u))
-        ? FPSCR_IXC : 0u;
-    result_sig += increment;
-    const std::uint32_t magnitude = (static_cast<std::uint32_t>(result_exp) << 23)
-        + (result_sig >> (VFP_SINGLE_LOW_BITS + 1));
-    const std::uint32_t packed = (result_sign ? 0x80000000u : 0u) | magnitude;
-    rb = static_cast<std::int32_t>(packed);
+    const float result = fa + product;
+    std::memcpy(&rb, &result, sizeof(float));
     return vfp_f32_normalized(rb);
 }
 
@@ -1434,13 +1408,12 @@ std::uint32_t vfp_single_cpdo(ARMul_State *state, std::uint32_t inst, std::uint3
                         negate = NEG_MULTIPLY | NEG_SUBTRACT;
 
                     std::int32_t rb;
-                    std::uint32_t mac_exceptions;
-                    if (vfp_host_f32_mac(nb, mb, ab, negate, rb, mac_exceptions)) {
+                    if (vfp_host_f32_mac(nb, mb, ab, negate, rb)) {
                         state->ExtReg[dest] = rb;
 #if defined(EKA2L1_DYNCOM_DIFFTEST)
                         ++g_vfp_host_fast_hits;
 #endif
-                        return mac_exceptions;
+                        return 0;
                     }
                     handled = false;
                 }
