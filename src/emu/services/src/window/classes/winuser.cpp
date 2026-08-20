@@ -1664,7 +1664,7 @@ namespace eka2l1::epoc {
         return true;
     }
 
-    bool bitmap_backed_canvas::execute_command(service::ipc_context &ctx, ws_cmd &cmd) {
+    bool bitmap_backed_canvas::execute_command(service::ipc_context &ctx, ws_cmd &cmd) {        
         // LOG_TRACE(SERVICE_WINDOW, "Backed up canvas opcode {}", cmd.header.op);
 
         bool did_it = false;

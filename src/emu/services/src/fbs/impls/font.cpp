@@ -1224,22 +1224,6 @@ namespace eka2l1 {
         }
     }
 
-    void fbs_server::load_fonts(eka2l1::io_system *io) {
-        // Search all drives
-        for (drive_number drv = drive_z; drv >= drive_a; drv = static_cast<drive_number>(static_cast<int>(drv) - 1)) {
-            if (io->get_drive_entry(drv)) {
-                const std::u16string fonts_folder_path = std::u16string{ drive_to_char16(drv) } + (kern->is_eka1() ? u":\\System\\Fonts\\" : u":\\Resource\\Fonts\\");
-                auto folder = io->open_dir(fonts_folder_path, {}, io_attrib_include_file);
-
-                if (folder) {
-                    LOG_TRACE(SERVICE_FBS, "Found font folder: {}", common::ucs2_to_utf8(fonts_folder_path));
-                    load_fonts_from_directory(io, folder.get());
-                }
-                // TODO: Implement FS callback
-            }
-        }
-    }
-
     void fbs_server::load_linked_fonts_from_directory(eka2l1::io_system *io, const std::u16string &fonts_folder_path) {
         const std::u16string link_path = fonts_folder_path + u"link.ini";
         symfile f = io->open_file(link_path, READ_MODE | BIN_MODE);
@@ -1262,6 +1246,22 @@ namespace eka2l1 {
             if (persistent_font_store.add_linked_font(spec.name, spec.component_names, spec.canonical)) {
                 LOG_TRACE(SERVICE_FBS, "Registered linked typeface {} from {}", common::ucs2_to_utf8(spec.name),
                     common::ucs2_to_utf8(link_path));
+            }
+        }
+    }
+
+    void fbs_server::load_fonts(eka2l1::io_system *io) {
+        // Search all drives
+        for (drive_number drv = drive_z; drv >= drive_a; drv = static_cast<drive_number>(static_cast<int>(drv) - 1)) {
+            if (io->get_drive_entry(drv)) {
+                const std::u16string fonts_folder_path = std::u16string{ drive_to_char16(drv) } + (kern->is_eka1() ? u":\\System\\Fonts\\" : u":\\Resource\\Fonts\\");
+                auto folder = io->open_dir(fonts_folder_path, {}, io_attrib_include_file);
+
+                if (folder) {
+                    LOG_TRACE(SERVICE_FBS, "Found font folder: {}", common::ucs2_to_utf8(fonts_folder_path));
+                    load_fonts_from_directory(io, folder.get());
+                }
+                // TODO: Implement FS callback
             }
         }
     }
