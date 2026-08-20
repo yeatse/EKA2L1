@@ -18,7 +18,7 @@ Two things have changed since the plan was written, and both are recorded in pla
 the net's first two rungs are built and merged, and **upstream accepted the iOS port
 itself (#587, 17 Aug 2026)** — which was the open question the whole "iOS plumbing" batch
 was waiting on. See [What is left in the fork](#what-is-left-in-the-fork), remeasured on
-20 Aug 2026, after #604 closed out Track A's last gate and the interpreter batch with it.
+21 Aug 2026, after #605 and #606 closed out the interpreter and the graphics batches.
 
 ## Where upstream stands today
 
@@ -325,9 +325,9 @@ Two options, and the second costs upstream nothing:
 
 ## What is left in the fork
 
-Remeasured on 2026-08-20, with `master` at the merge of #604. **The earlier count — 162
-commits split 91/29/42 — is superseded, and not by arithmetic.** Twenty-one PRs landed
-between 16 and 20 August, and none of them was a cherry-pick: each was rebuilt on
+Remeasured on 2026-08-21, with `master` at the merge of #606. **The earlier count — 162
+commits split 91/29/42 — is superseded, and not by arithmetic.** Twenty-three PRs landed
+between 16 and 21 August, and none of them was a cherry-pick: each was rebuilt on
 upstream's tree and reviewed there, so a fork commit's content can be fully upstream while
 the commit itself still shows as "ahead". Commit counts stopped being a valid unit of
 measurement the moment that started happening. What follows is measured with
@@ -339,35 +339,45 @@ Five things closed out entirely:
 - **The memory model batch is upstream (#599).** Chunk creation, chunk lifetime across
   processes and CPU TLB invalidation, plus a defect that predated the fork. `src/emu/mem`
   is now identical to upstream.
-- **The interpreter batch is upstream (#604)** — and with it A2, since the PR carried the
-  `dyncom-difftest` CI job as well as the harness. The whole +2795-line block is gone;
-  `src/emu/cpu` now differs by two files, and both are bug fixes rather than optimisations
-  (see the table).
+- **The interpreter is upstream (#604, #605)** — and with it A2, since #604 carried the
+  `dyncom-difftest` CI job as well as the harness, and #605 then went out behind that gate
+  with the three remaining defects (a null addressing function that used to be called, an
+  undecodable ARM instruction indexing the translate table with an uninitialised value, and
+  Thumb `BKPT` translated as `SVC`). `src/emu/cpu` is now identical to upstream.
 - **Audio is upstream (#602, #603).** Stream lifetime, notification delivery, realtime-thread
   safety, and the intro-movie stutter. What is left of "audio and video" is two video files
   that belong to the dispatch/drivers rows.
 - **The iOS port is upstream (#587).** `src/emu/ios` differs by 4 files and +69/-7 — the
   font-import and netplay changes made after the PR was cut.
-- **Graphics is substantially done.** #589 (icon decode), #590 (NVG path decoding), #591
-  (Symbian^3 skin overrides and NVG rasterisation), #593 (SVGB text), #594 (CJK linked
-  typefaces and imported fonts) and #597 (the icon mask contract) took the bulk of it.
+- **Graphics, the window server and the font store are upstream.** #589 (icon decode),
+  #590 (NVG path decoding), #591 (Symbian^3 skin overrides and NVG rasterisation),
+  #593 (SVGB text), #594 (CJK linked typefaces and imported fonts), #597 (the icon mask
+  contract) and finally #606 — window-server redraw and DSA rescale, the FBS font store,
+  the screen driver, the AknIconServer contract and the `scdv` patch DLL's C++ source.
+  `src/emu/services/src/{window,fbs,ui}` are now identical to upstream. What is still
+  graphics work below lives in `dispatch` and `drivers`, which are separate rows.
 
 What remains, by area:
 
 | Area | Files | Lines | Depends on | Verified by | Start with |
 |---|---|---|---|---|---|
-| Services (non-graphics) | 32 | +1707/-76 | — | `src/intests` once B2 exists | `timezone.cpp` (+666) — the `!TzServer` HLE, with a doc |
-| Graphics, window server, fonts | 40 | +990/-85 | — | Track B, per device | `icon.cpp` (+280) — answer every AknIconServer request |
-| Kernel objects and lifetimes | 21 | +862/-162 | — | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
-| Netplay and Bluetooth | 19 | +542/-91 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
+| Services (non-graphics, non-netplay) | 30 | +1450/-75 | — | `src/intests` once B2 exists | `timezone.cpp` (+666) — the `!TzServer` HLE, with a doc |
+| Kernel objects and lifetimes | 21 | +862/-162 | three commits must be unpicked first | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
+| Netplay and Bluetooth | 21 | +787/-91 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
 | Common, vfs, utils, system, config | 25 | +526/-74 | — | `ekatests` | `flate.cpp` (+18) — the inflate tail-word overread; needs a test written for it (A4) |
 | Scripting patches | 7 | +448/-63 | upstream's scripting build state | Track B | `1093f038` resolve ROM hooks by fingerprint |
 | Package | 6 | +439/-148 | — | `ekatests` (SIS fixtures exist) | `1af1eefb` SIS targets without a drive letter |
-| Patch DLLs | 17 | +401/-21 | a Symbian toolchain to rebuild the binaries | Track B | — |
-| Dispatch / GLES HLE | 16 | +363/-40 | — | Track B, per device | — |
+| Patch DLLs | 5 | +342/-0 | a Symbian toolchain to rebuild the binaries | Track B | — |
+| Dispatch / GLES HLE | 16 | +289/-33 | — | Track B, per device | — |
+| Drivers (graphics and camera backends) | 15 | +247/-15 | — | Track B, per device | — |
 | iOS frontend | 4 | +69/-7 | — | device build | whole remainder, one PR |
-| Interpreter (dyncom) | 2 | +39/-6 | — (A2 exists now) | the difftest itself | **sent as #605** |
 | Qt / Android frontends | 4 | +23/-65 | — | desktop run | — |
+| Graphics, window server, fonts | 0 | — | — | — | **done** (#589–#597, #606) |
+| Interpreter (dyncom) | 0 | — | — | — | **done** (#604, #605) |
+
+The netplay row counts `services/{bluetooth,socket,internet}` plus the Bluetooth notifier;
+the services row is everything else under `src/emu/services`. Earlier measures split those
+two differently, so compare their sum (51 files, +2237/-166) rather than either row.
 
 Three areas are deliberately not rows above, because none of them is a batch:
 
@@ -382,22 +392,23 @@ Three areas are deliberately not rows above, because none of them is a batch:
 
 Three things the table does not say on its own:
 
-- **`src/emu/cpu` is two bug fixes away from zero.** A null addressing function from
-  `GetAddressingOp()` used to be *called* (host death at pc = 0, TestFlight 260812), and an
-  undecodable ARM instruction used to index the translate table with an uninitialised value.
-  Both were deliberately kept out of #604, which was an optimisation PR. They are small,
-  cross-platform by construction (a guest running off into data is fatal on Qt and Android
-  too), have a triage doc ready to be a PR body — and now land behind the difftest gate #604
-  itself installed. **Sent as #605**, with the Thumb `BKPT` translation fix (a guest
-  breakpoint was being translated to `SVC`) in the same PR and its own revert row.
-  Writing the cases turned up a fourth defect, in the harness: without scripting
+- **Two areas have now reached zero, and both did it the same way.** `src/emu/cpu` went
+  out as #604 (the optimisations, carrying A2) and #605 (the three defects the
+  optimisation PR deliberately left behind), each behind the gate the previous PR had
+  installed. Graphics went out as seven PRs over six days, ending with #606. The pattern
+  worth repeating: send the gate first, then send the behaviour that the gate covers, and
+  keep bug fixes out of a PR whose subject is performance.
+  Writing #605's cases turned up a defect in the harness itself: without scripting
   enabled `COND_CHECK` does not guard `log::filterings`, so any path under test that
-  logs took the harness down — which is why nothing had ever reached these paths.
-- **Some commits have to be split.** `4a9f96d3` (fbs allocator race plus two teardown
-  UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
-  races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
-  three unrelated root causes. One root cause per PR means unpicking them first, so the
-  file counts above are not PR counts either.
+  logs took the harness down — which is why nothing had ever reached those paths.
+- **Some commits have to be split.** `b1153e25` (a batch of TestFlight crashes) and
+  `061cc4d3` (four ThreadSanitizer races) each carry several unrelated root causes, and
+  both sit in the kernel row. One root cause per PR means unpicking them first, so the
+  file counts above are not PR counts either. Two other split candidates —
+  `4a9f96d3` (fbs allocator race plus two teardown UAFs) and `2a53883f` (an NVG icon
+  abort plus a memory-model UAF) — have had their graphics and memory-model halves
+  upstreamed already, so what is left of them is kernel-only and no longer needs
+  splitting.
 - **The netplay batch is the one place order is load-bearing.** The later fixes assume the
   earlier ones; sending them out of order produces PRs that do not make sense on their own.
 
@@ -488,4 +499,5 @@ Outside the plan, the port itself went out and was accepted: #587 (the iOS front
 and #596 (its CI job), plus #588, which gave upstream one stable required check for branch
 protection. Behavioural batches landed so far: #599 (memory model), #600 (the central
 repository INI reader), #601 (the domain manager), #602 and #603 (audio and video), and
-#604 (the interpreter, which carried A2 with it).
+#604 and #605 (the interpreter, the first of which carried A2 with it), and #606
+(the window server, the font store and the screen driver).
