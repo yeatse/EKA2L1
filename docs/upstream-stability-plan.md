@@ -366,7 +366,7 @@ What remains, by area:
 | Netplay and Bluetooth | 21 | +787/-91 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
 | Common, vfs, utils, system, config | 25 | +526/-74 | — | `ekatests` | `flate.cpp` (+18) — the inflate tail-word overread; needs a test written for it (A4) |
 | Scripting patches | 7 | +448/-63 | upstream's scripting build state | Track B | `1093f038` resolve ROM hooks by fingerprint |
-| Package | 6 | +439/-148 | — | `ekatests` (SIS fixtures exist) | `1af1eefb` SIS targets without a drive letter |
+| Package | 6 | +439/-148 | — | `ekatests` (SIS fixtures exist) | **sent as #607** |
 | Patch DLLs | 5 | +342/-0 | a Symbian toolchain to rebuild the binaries | Track B | — |
 | Dispatch / GLES HLE | 16 | +289/-33 | — | Track B, per device | — |
 | Drivers (graphics and camera backends) | 15 | +247/-15 | — | Track B, per device | — |
@@ -374,6 +374,18 @@ What remains, by area:
 | Qt / Android frontends | 4 | +23/-65 | — | desktop run | — |
 | Graphics, window server, fonts | 0 | — | — | — | **done** (#589–#597, #606) |
 | Interpreter (dyncom) | 0 | — | — | — | **done** (#604, #605) |
+
+#607 is the first batch sent after this remeasure. Rebuilding it on upstream turned
+up four defects the fork's own version had, which is an argument for the rebuild
+rule on its own: the guard meant to keep uninstall away from ROM files compared
+`towlower(target[0])` against `drive_to_char16(drive_z)`, which returns an
+uppercase letter, so it never fired; `package::object::in_rom` had no initialiser,
+so the flag a new refusal reads was stack garbage on the SIS v1 path, both for a
+fresh install and for every registry that path had already written; and the
+lowercase fix for case-sensitive hosts turned out to be untestable on macOS
+(case-insensitive FS) until the suite was run on a case-sensitive volume, where it
+fails six cases. The fork still carries all four; they come back with the next
+merge from master.
 
 The netplay row counts `services/{bluetooth,socket,internet}` plus the Bluetooth notifier;
 the services row is everything else under `src/emu/services`. Earlier measures split those
