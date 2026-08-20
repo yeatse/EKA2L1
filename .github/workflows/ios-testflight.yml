@@ -60,7 +60,9 @@ name: iOS TestFlight
 # shows is a regression upstream users would get.
 #
 # The upload is skipped when upstream's master has not moved since the last one,
-# tracked by a `tf-upload/<sha>` tag in this repository. Only the current
+# tracked by a `tf-upload/<sha>` tag in this repository. Only the tag's name
+# carries meaning; it points at an empty marker commit rather than at the
+# upstream commit itself (see the marking step for why). Only the current
 # upstream HEAD is ever considered: if several commits land between two runs,
 # the intermediate ones are not backfilled, because a rolling TestFlight build
 # of a superseded commit has no audience.
@@ -301,6 +303,16 @@ jobs:
 
       # Only after a successful upload, so a failed run is retried on the next
       # tick instead of being recorded as done.
+      #
+      # The tag points at a parentless commit with an empty tree, not at the
+      # upstream commit it names. Pushing a ref that makes new commits reachable
+      # is rejected outright when any of them touches `.github/workflows/`
+      # ("refusing to allow a GitHub App to create or update workflow ...
+      # without `workflows` permission"), which GITHUB_TOKEN cannot be granted.
+      # Every upstream merge that carries a CI change would therefore fail to be
+      # recorded, and the next tick would rebuild and re-upload the same commit,
+      # every half hour, forever. Only the tag's name is ever read back, so the
+      # object it points at may as well contain nothing at all.
       - name: Mark this upstream commit as uploaded
         if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true' && steps.target.outputs.tag != ''
         env:
@@ -308,7 +320,11 @@ jobs:
           SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
-          git tag -f "${TAG}" "${SHA}"
+          EMPTY_TREE="$(git hash-object -w -t tree /dev/null)"
+          MARKER="$(git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "${EMPTY_TREE}" -m "TestFlight upload of ${SHA}")"
+          git tag -f "${TAG}" "${MARKER}"
           git push -f origin "refs/tags/${TAG}"
 
       - name: Clean up signing material
