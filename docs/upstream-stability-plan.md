@@ -366,7 +366,7 @@ What remains, by area:
 | Patch DLLs | 17 | +401/-21 | a Symbian toolchain to rebuild the binaries | Track B | — |
 | Dispatch / GLES HLE | 16 | +363/-40 | — | Track B, per device | — |
 | iOS frontend | 4 | +69/-7 | — | device build | whole remainder, one PR |
-| Interpreter (dyncom) | 2 | +39/-6 | — (A2 exists now) | the difftest itself | whole remainder, one PR |
+| Interpreter (dyncom) | 2 | +39/-6 | — (A2 exists now) | the difftest itself | **sent as #605** |
 | Qt / Android frontends | 4 | +23/-65 | — | desktop run | — |
 
 Three areas are deliberately not rows above, because none of them is a batch:
@@ -388,7 +388,11 @@ Three things the table does not say on its own:
   Both were deliberately kept out of #604, which was an optimisation PR. They are small,
   cross-platform by construction (a guest running off into data is fatal on Qt and Android
   too), have a triage doc ready to be a PR body — and now land behind the difftest gate #604
-  itself installed. The Thumb `BKPT` translation fix rides along or goes separately.
+  itself installed. **Sent as #605**, with the Thumb `BKPT` translation fix (a guest
+  breakpoint was being translated to `SVC`) in the same PR and its own revert row.
+  Writing the cases turned up a fourth defect, in the harness: without scripting
+  enabled `COND_CHECK` does not guard `log::filterings`, so any path under test that
+  logs took the harness down — which is why nothing had ever reached these paths.
 - **Some commits have to be split.** `4a9f96d3` (fbs allocator race plus two teardown
   UAFs), `b1153e25` (a batch of TestFlight crashes), `061cc4d3` (four ThreadSanitizer
   races) and `2a53883f` (an NVG icon abort plus a memory-model UAF) each carry two or
