@@ -369,7 +369,7 @@ What remains, by area:
 
 | Area | Files | Lines | Depends on | Verified by | Start with |
 |---|---|---|---|---|---|
-| Services (non-graphics, non-netplay) | 30 | +1450/-75 | — | `src/intests` once B2 exists | `timezone.cpp` — **sent as #610**, with the two `common/time.cpp` helpers it needs |
+| Services (non-graphics, non-netplay) | 30 | +1450/-75 | — | `src/intests` once B2 exists | **sent as #610-#625**, one PR per root cause; what is left of the row is the notifier plumbing that belongs to netplay |
 | Kernel objects and lifetimes | 21 | +862/-162 | three commits must be unpicked first | `ekatests` + Track B | `e57f9e7e` IPC message refcount (full triage doc, reproducible crash) |
 | Netplay and Bluetooth | 21 | +787/-91 | internal order (fixes stack on earlier work) | two-instance manual test | whole batch, in fork order |
 | Common, vfs, utils, system, config | 25 | +526/-74 | — | `ekatests` | `flate.cpp` (+18) — the inflate tail-word overread; needs a test written for it (A4) |
@@ -382,6 +382,28 @@ What remains, by area:
 | Qt / Android frontends | 4 | +23/-65 | — | desktop run | — |
 | Graphics, window server, fonts | 0 | — | — | — | **done** (#589–#597, #606) |
 | Interpreter (dyncom) | 0 | — | — | — | **done** (#604, #605) |
+
+The whole services row went out on 21 August as sixteen PRs, #610 through #625,
+split by root cause rather than by file: three touch the IPC framework itself
+(object lookup by id, null descriptor arguments, completing requests nothing
+implements), three the file server, and the rest one service each -- etel, alarm,
+featmgr, loader, accessory, applist twice, sensor, msv, the time zone HLE and the
+disk-space properties.
+
+Rebuilding them on upstream turned up things the fork had wrong, which is the
+argument for the rebuild rule stated again:
+
+- **A feature id was mislabelled.** The fork enabled featmgr id 1012 under the name
+  "app menu show images". Symbian's `publicruntimeids.hrh` says 1012 is
+  `KFeatureIdHelp`. The fix works either way -- AVKON adjusts a menu pane on it --
+  but the PR now names and explains it correctly.
+- **`applist`'s duplicate-registration guard covered one of the two insertion
+  paths.** The fork patched the EKA1 loader; the modern one still appended blind.
+- **The sensor callback fix depended on `kernel::is_wiping()`**, which lives in the
+  fork's kernel batch. The session-pointer check alone carries it upstream.
+- **The time zone tests needed a portable way to pin `TZ`.** MSVC has no `setenv`,
+  and its CRT takes a POSIX TZ string rather than a zone name, so the
+  transition-shape test is Linux and macOS only.
 
 #607, #609 and #610 are the batches sent after this remeasure. Two notes on the last two:
 the sanitiser job had to carry its own fixes, because a gate that is red on the day it
