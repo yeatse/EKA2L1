@@ -32,8 +32,8 @@ namespace eka2l1 {
         /**
          * \brief Runtime probe for whether the host can host a JIT.
          *
-         * Stage 1 hard-wires this to false on iOS (no MAP_JIT / W^X plumbing yet).
-         * Stage 4 will replace the iOS branch with a real MAP_JIT probe.
+         * On iOS this answers whether the process was granted the right to map
+         * executable memory; a jailed App Store process never is.
          */
         bool host_can_jit();
 
