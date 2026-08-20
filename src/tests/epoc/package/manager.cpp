@@ -31,6 +31,7 @@
 #include <vfs/vfs.h>
 
 #include <cstdio>
+#include <fstream>
 
 using namespace eka2l1;
 
@@ -52,22 +53,32 @@ namespace {
     static constexpr manager::uid EMBEDDER_PACKAGE_UID = 0xE1234570;
     static constexpr manager::uid EMBEDDED_PACKAGE_UID = 0xE1234571;
 
-    // A package manager backed by a throwaway host folder mounted as drive C.
+    // A package manager backed by a throwaway host folder mounted as drive C, with
+    // a second one mounted read-only as drive Z to stand in for the ROM.
     struct package_test_env {
         std::string root;
+        std::string rom_root;
         io_system io;
         config::state conf;
         std::unique_ptr<manager::packages> packages;
 
         explicit package_test_env(const std::string &name)
-            : root(add_path("packagetestenv", name + eka2l1::get_separator())) {
+            // The uppercase letters are deliberate: on a case-sensitive host they
+            // catch anything that lowercases a resolved host path rather than the
+            // guest-relative half of it.
+            : root(add_path("PackageTestEnv", name + eka2l1::get_separator()))
+            , rom_root(add_path("PackageTestEnv", name + "_rom" + eka2l1::get_separator())) {
             common::delete_folder(root);
+            common::delete_folder(rom_root);
             common::create_directories(root);
+            common::create_directories(rom_root);
 
             file_system_inst physical_fs = create_physical_filesystem(epocver::epoc94, "");
             io.add_filesystem(physical_fs);
             io.mount_physical_path(drive_number::drive_c, drive_media::physical, io_attrib_internal,
                 common::utf8_to_ucs2(root));
+            io.mount_physical_path(drive_number::drive_z, drive_media::physical,
+                io_attrib_internal | io_attrib_write_protected, common::utf8_to_ucs2(rom_root));
 
             conf.storage = root;
             packages = std::make_unique<manager::packages>(&io, &conf, drive_number::drive_c);
@@ -76,6 +87,7 @@ namespace {
         ~package_test_env() {
             packages.reset();
             common::delete_folder(root);
+            common::delete_folder(rom_root);
         }
 
         bool install_sis(const char *path) {
@@ -97,6 +109,16 @@ namespace {
             const char content[] = "data";
             file->write_file(content, sizeof(content), 1);
             file->close();
+        }
+
+        // Drive Z takes no writes through the io system, so its content is laid
+        // down on the host the way a ROM dump already carries it.
+        void write_rom_file(const std::string &relative) {
+            const std::string path = add_path(rom_root, relative);
+            common::create_directories(eka2l1::file_directory(path));
+
+            std::ofstream file(path, std::ios::binary);
+            file << "data";
         }
 
         bool owns_file(package::object &pkg, const std::u16string &target) const {
@@ -331,7 +353,7 @@ TEST_CASE("package_owning_file_refuses_an_ambiguous_name", "package_manager") {
     REQUIRE(env.packages->add_package(other, nullptr));
 
     REQUIRE(env.packages->package_owning_file(u"C:\\system\\programs\\base.txt") == nullptr);
-    // The exact path still resolves — it names one package on its own.
+    // The exact path still resolves: it names one package on its own.
     package::object *owner = env.packages->package_owning_file(u"C:\\eka2l1test\\base.txt");
     REQUIRE(owner != nullptr);
     REQUIRE(owner->uid == IF_BLOCK_PACKAGE_UID);
@@ -370,6 +392,29 @@ TEST_CASE("uninstall_refuses_rom_and_non_removable_packages", "package_manager")
     REQUIRE(fixed_package != nullptr);
     REQUIRE_FALSE(env.packages->uninstall_package(*fixed_package));
     REQUIRE(env.packages->package(0xE1234581, 0) != nullptr);
+}
+
+TEST_CASE("a_registry_from_before_in_rom_was_set_still_uninstalls", "package_manager") {
+    package_test_env env("legacy_registry_in_rom");
+    REQUIRE(env.install_if_block_sis());
+
+    package::object *pkg = env.packages->package(IF_BLOCK_PACKAGE_UID, 0);
+    REQUIRE(pkg != nullptr);
+
+    // The SIS v1 installer never set in_rom, so a registry written by an older
+    // build carries whatever the stack held there. Anything but 1 has to read back
+    // as "not in ROM", or a package installed by that build could never be removed
+    // now that uninstall refuses ROM packages.
+    pkg->in_rom = 0x2A;
+    REQUIRE(env.packages->save_package(*pkg));
+
+    manager::packages reloaded(&env.io, &env.conf, drive_number::drive_c);
+    reloaded.load_registries();
+
+    package::object *loaded = reloaded.package(IF_BLOCK_PACKAGE_UID, 0);
+    REQUIRE(loaded != nullptr);
+    REQUIRE(loaded->in_rom == 0);
+    REQUIRE(reloaded.uninstall_package(*loaded));
 }
 
 TEST_CASE("uninstall_takes_embedded_packages_with_it", "package_manager") {
@@ -447,6 +492,28 @@ TEST_CASE("invalid_target_paths_are_rejected", "package_manager") {
     // Executables are resolved by name system-wide; a non-ASCII one cannot be.
     REQUIRE_FALSE(package::is_valid_target_path(u"C:\\sys\\bin\\\u4e2d\u6587.exe"));
     REQUIRE(package::is_valid_target_path(u"C:\\resource\\apps\\\u4e2d\u6587.rsc"));
+}
+
+TEST_CASE("uninstall_leaves_rom_files_alone", "package_manager") {
+    package_test_env env("uninstall_rom_file");
+    REQUIRE(env.install_if_block_sis());
+
+    env.write_rom_file("eka2l1test/rom.txt");
+    REQUIRE(env.io.exist(u"Z:\\eka2l1test\\rom.txt"));
+
+    package::object *pkg = env.packages->package(IF_BLOCK_PACKAGE_UID, 0);
+    REQUIRE(pkg != nullptr);
+
+    // A package that upgrades ROM content registers the ROM file as one of its
+    // own. Removing the package does not remove that file: it is not the
+    // package's, and the emulated Z drive maps straight onto the user's ROM dump.
+    package::file_description rom_file;
+    rom_file.target = u"Z:\\eka2l1test\\rom.txt";
+    rom_file.operation = static_cast<std::uint32_t>(loader::ss_op::install);
+    pkg->file_descriptions.push_back(rom_file);
+
+    REQUIRE(env.packages->uninstall_package(*pkg));
+    REQUIRE(env.io.exist(u"Z:\\eka2l1test\\rom.txt"));
 }
 
 TEST_CASE("uninstall_leaves_invalid_targets_alone", "package_manager") {

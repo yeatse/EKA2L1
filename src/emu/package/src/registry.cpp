@@ -19,6 +19,7 @@
 
 #include <common/algorithm.h>
 #include <common/chunkyseri.h>
+#include <common/path.h>
 #include <package/registry.h>
 
 #include <utils/des.h>
@@ -27,31 +28,41 @@
 
 namespace eka2l1::package {
     bool is_valid_target_path(const std::u16string &target) {
+        // KMaxFileName.
         static constexpr std::size_t MAX_TARGET_LENGTH = 0x100;
+
         if (target.empty() || (target.length() > MAX_TARGET_LENGTH)) {
             return false;
         }
 
-        // A drive letter, then the root: anything else is not a path a package
-        // is allowed to name.
-        if ((target.length() < 3) || !std::iswalpha(target[0]) || (target[1] != u':')
-            || ((target[2] != u'\\') && (target[2] != u'/'))) {
+        // A drive letter and the root of that drive, and nothing else.
+        if ((target.length() < 3) || !std::iswalpha(target[0]) || (target[1] != u':') || !eka2l1::is_separator(target[2])) {
             return false;
         }
 
-        if ((target.find(u"\\\\", 2) != std::u16string::npos) || (target.find(u"//", 2) != std::u16string::npos)) {
-            return false;
+        // No doubled separator, and no way back up out of the target directory. SWI
+        // searches for the "\\\\" and "..\\" substrings; matching a whole path
+        // component instead keeps a legitimate name that happens to end in two dots,
+        // and covers the forward slash the emulated filesystem accepts as well.
+        for (std::size_t i = 2; i < target.length(); i++) {
+            if (!eka2l1::is_separator(target[i])) {
+                continue;
+            }
+
+            if (((i + 1) < target.length()) && eka2l1::is_separator(target[i + 1])) {
+                return false;
+            }
+
+            if (((i + 2) < target.length()) && (target[i + 1] == u'.') && (target[i + 2] == u'.')) {
+                return false;
+            }
         }
 
-        if (target.find(u"..\\") != std::u16string::npos) {
-            return false;
-        }
-
-        // Executables are looked up by name all over the system; a non-ASCII one
-        // is a mismatch waiting to happen, so SWI rejects it outright.
-        const std::u16string target_lower = common::lowercase_ucs2_string(target);
-        if (target_lower.find(u":\\sys\\bin") != std::u16string::npos) {
+        // An executable is looked up by name all over the system, and a non-ASCII
+        // name is a mismatch waiting to happen, so SWI rejects one outright.
+        if (common::lowercase_ucs2_string(target).find(u":\\sys\\bin") != std::u16string::npos) {
             const std::size_t name_start = target.find_last_of(u"\\/");
+
             for (std::size_t i = (name_start == std::u16string::npos) ? 0 : name_start; i < target.length(); i++) {
                 if (target[i] > 0x7F) {
                     return false;
@@ -183,6 +194,13 @@ namespace eka2l1::package {
         seri.absorb(install_type);
 
         seri.absorb(in_rom);
+
+        if (seri.get_seri_mode() == common::SERI_MODE_READ) {
+            // A registry written before this field was initialised carries whatever
+            // the stack held at the time. Only 0 and 1 ever meant anything, and
+            // uninstall refuses a package this says is in ROM.
+            in_rom = (in_rom == 1) ? 1 : 0;
+        }
         seri.absorb(deletable_preinstalled);
         seri.absorb(signed_);
         seri.absorb(trust);

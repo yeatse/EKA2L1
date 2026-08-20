@@ -78,12 +78,12 @@ namespace eka2l1 {
             void traverse_tree_and_add_packages(loader::sis_registry_tree &tree);
             void install_sis_stubs();
 
-            // Remove "<drive>:\private\<sid>\" from every writable drive, the data
-            // directory an executable that was just uninstalled owned.
+            // Delete "<drive>:\private\<sid>\" on every writable drive: the data
+            // directory that belongs to an executable which has just been removed.
             void remove_private_directories(const epoc::uid sid);
 
-            // Files an installed package owns that its new version does not, deleted
-            // so an upgrade does not keep dragging the old version's leftovers along.
+            // Delete the files an installed package owns that its replacement does
+            // not, so an upgrade stops dragging the old version's leftovers along.
             void remove_stale_files(package::object &installed, const package::object &replacement);
 
         public:
@@ -113,37 +113,6 @@ namespace eka2l1 {
 
             // No thread safe
             package::object *package(const uid app_uid, const std::int32_t index = 0);
-
-            /**
-             * @brief Find the package that installed an executable with this secure ID.
-             *
-             * An app's UID3 is the SID of the executable it runs from, so this identifies
-             * the package owning an app even though Symbian does not require the package's
-             * UID to match (Opera Mobile registers app 0x2002AA96 from package 0x2002AA97).
-             * Registries written before executable SIDs were resolved hold none, in which
-             * case package_owning_file() is the way in.
-             *
-             * @param secure_id Secure ID to look for; 0 never matches.
-             * @returns The owning package, or nullptr when no package claims the SID.
-             */
-            package::object *package_owning_executable(const uid secure_id);
-
-            /**
-             * @brief Find the package that installed a given file.
-             *
-             * Symbian does not require a package's UID to match the UID3 of the app it
-             * installs (Opera Mobile registers app 0x2002AA96 from package 0x2002AA97),
-             * so a frontend that only knows an app can't reliably find its package by
-             * UID. The app binary it launches from does identify the package.
-             *
-             * @param file_path Virtual path of the file, matched case-insensitively. When no
-             *                  package holds that exact path, a package holding the same file
-             *                  name on the same drive answers instead — the directory applist
-             *                  rebuilds for an app rarely matches the installed one — provided
-             *                  it is the only package with that name.
-             * @returns The owning package, or nullptr when no package claims the file.
-             */
-            package::object *package_owning_file(const std::u16string &file_path);
             package::object *package(const uid app_uid, const std::u16string package_name, const std::u16string vendor_name);
             std::vector<package::object *> augmentations(const uid app_uid);
             std::vector<package::object *> dependents(const uid app_uid);
@@ -154,6 +123,22 @@ namespace eka2l1 {
 
             bool add_package(package::object &pkg, const controller_info *controller_info);
             bool save_package(package::object &pkg);
+            /**
+             * \brief Find the package that installed an executable, by its secure ID.
+             * \returns Null when no installed package claims it.
+             */
+            package::object *package_owning_executable(const uid secure_id);
+
+            /**
+             * \brief Find the package that installed a file, by its path.
+             *
+             * Falls back to matching drive and file name when the exact path is not
+             * claimed, and then only answers if exactly one package matches.
+             *
+             * \returns Null when no installed package claims it.
+             */
+            package::object *package_owning_file(const std::u16string &file_path);
+
             bool uninstall_package(package::object &pkg);
             bool remove_registeration(package::object &pkg);
 

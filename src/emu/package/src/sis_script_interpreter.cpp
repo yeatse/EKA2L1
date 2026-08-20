@@ -394,8 +394,8 @@ namespace eka2l1 {
             return pass;
         }
 
-        // Resolve a file description target to the drive the package installs on.
-        // A leading '!' means "the drive the user picked".
+        // Point a file description's target at the drive the package installs on.
+        // A leading '!' stands for the drive the user picked.
         static std::u16string resolve_file_target(const std::u16string &target, const drive_number drive) {
             std::u16string file_path = target;
 
@@ -406,9 +406,9 @@ namespace eka2l1 {
             return file_path;
         }
 
-        // Secure ID of an installed executable, 0 when the file is not one (or is
-        // not there yet). For a well-behaved app this is its UID3, which is what
-        // lets a package be traced back to the app it installs.
+        // Secure ID of an installed executable, 0 when the file is not one, or is
+        // not on the drive yet. For an app this is its UID3, which is what lets a
+        // package be traced back to the app it installs.
         static epoc::uid read_executable_sid(io_system *io, const std::u16string &target) {
             symfile exe_file = io->open_file(target, READ_MODE | BIN_MODE);
             if (!exe_file) {
@@ -433,16 +433,15 @@ namespace eka2l1 {
             return extended_header.info.secure_id;
         }
 
-        // Record a file the package owns, so that uninstalling it later deletes
-        // the file back. Also folds the file's drive into the package's drive mask.
+        // Record a file the package owns, so that uninstalling the package deletes
+        // it again. Folds the file's drive into the package's drive mask too.
         static void register_file_description(io_system *io, const loader::sis_file_des *file_des, const std::u16string &file_path,
             package::object &parent) {
             if (!file_path.empty() && (file_path[0] != '!')) {
-                // Some packages carry entries whose target does not start
-                // with a drive letter (e.g. empty targets on FILENULL/
-                // FILETEXT records); feeding those to char16_to_drive
-                // asserts on debug builds and corrupts the drive mask on
-                // release ones, so only accept real drive letters.
+                // Not every target starts with a drive letter -- FILENULL and
+                // FILETEXT records carry empty ones, for instance. char16_to_drive
+                // asserts on those in a debug build and returns a drive number out
+                // of range in a release one, corrupting the mask.
                 const char16_t drive_char = std::towlower(file_path[0]);
                 if ((drive_char >= u'a') && (drive_char <= u'z')) {
                     parent.drives |= 1 << (char16_to_drive(file_path[0]) - drive_a);
@@ -466,10 +465,10 @@ namespace eka2l1 {
             desc.sid = 0;
 
             if (!file_des->caps.raw_data.empty()) {
-                // It's an EXE file, so also gather the SID. This only succeeds for a
-                // file that is already on the drive (a stub SIS describing the ROM);
-                // for a real install the file does not exist until extraction, and
-                // resolve_missing_executable_sids picks it up afterwards.
+                // It's an executable, so also gather the SID. This only reads one for
+                // a file already on the drive -- a stub SIS describing the ROM. A real
+                // install has nothing to read until the files are extracted, which is
+                // what resolve_missing_executable_sids is for.
                 desc.sid = read_executable_sid(io, desc.target);
             }
 
@@ -585,11 +584,9 @@ namespace eka2l1 {
                 std::string install_path = "";
 
                 if (file->target.unicode_string.length() > 0) {
-                    // SWI validates every target it plans and fails the install on a
-                    // bad one. Skipping just the offending entry is the softer call:
-                    // a package that names a path it has no business naming should not
-                    // get it, but one entry we read differently than SWI would should
-                    // not cost the user the whole installation.
+                    // A package does not get to install to a path it has no business
+                    // naming. See is_valid_target_path for what that means, and why
+                    // the entry is skipped rather than the install failed.
                     if (!package::is_valid_target_path(resolve_file_target(file->target.unicode_string, install_drive))) {
                         LOG_ERROR(PACKAGE, "SIS names an invalid install target, skipping it: {}",
                             common::ucs2_to_utf8(file->target.unicode_string));
@@ -597,9 +594,6 @@ namespace eka2l1 {
                     }
 
                     install_path = get_install_path(file->target.unicode_string, install_drive);
-                    if (common::is_platform_case_sensitive()) {
-                        install_path = common::lowercase_string(install_path);
-                    }
 
                     const std::optional<std::u16string> raw_path_opt = io->get_raw_path(common::utf8_to_ucs2(install_path));
                     if (!raw_path_opt) {
@@ -609,11 +603,11 @@ namespace eka2l1 {
                     raw_path = common::ucs2_to_utf8(*raw_path_opt);
                 }
 
-                // Registering before the operation switch mirrors what
+                // Register before the operation switch, the way
                 // fill_controller_registeration does for the controller's own block:
-                // every entry the block owns is recorded, including the ones that
-                // only matter at uninstall time (FILENULL). Entries a text prompt
-                // asked to skip are not installed, so they are not ours to record.
+                // every entry it owns is recorded, including the ones that only
+                // matter at uninstall time (FILENULL). An entry a text prompt asked
+                // to skip is never installed, so it is not the package's to own.
                 if (register_files && !skip_next_file) {
                     register_file_description(io, file, resolve_file_target(file->target.unicode_string, install_drive),
                         parent_tree.package_info);
@@ -717,8 +711,8 @@ namespace eka2l1 {
                 sis_if *if_stmt = reinterpret_cast<sis_if *>(wrap_if_statement.get());
                 auto result = condition_passed(&if_stmt->expr);
 
-                // Files below a conditional are not part of the controller's own
-                // install block, so this is the only chance to register them.
+                // Files below a conditional are not in the controller's own install
+                // block, so this is the only chance to register them.
                 if (result) {
                     interpret(if_stmt->install_block, parent_tree, crr_blck_idx, true);
                 } else {
@@ -736,11 +730,12 @@ namespace eka2l1 {
             return true;
         }
 
-        // Executables get their SID read at registration time, which happens before
-        // the files are extracted, so the read fails and the SID stays 0. Now that
-        // the files are on the drive, resolve the ones still missing: an app's UID3
-        // is its executable's SID, and that is the only thing tying a package to the
-        // app it installs (package UIDs need not match, and often do not).
+        // Registration reads an executable's SID before the files are extracted, so
+        // the read finds nothing and the SID stays 0. The files are on the drive by
+        // the time this runs: resolve the ones still missing. An app's UID3 is its
+        // executable's SID, and with package UIDs free to differ from it (Opera
+        // Mobile registers app 0x2002AA96 from package 0x2002AA97), that is the only
+        // thing tying a package to the app it installs.
         static void resolve_missing_executable_sids(io_system *io, sis_registry_tree &tree) {
             for (package::file_description &desc : tree.package_info.file_descriptions) {
                 if (desc.sid || desc.target.empty()) {
