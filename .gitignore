@@ -16,6 +16,12 @@ out
 .metadata
 cmake-build-*
 .idea
+
+# Emulator log written by any binary that calls log::setup_log (including the
+# dyncom differential test harness).
+EKA2L1.log
+EKA2L1_TakeThis.log
+
 # Local agent / harness state, not project source.
 .claude/
 # Local ROMs and SIS packages used for iOS porting validation.
