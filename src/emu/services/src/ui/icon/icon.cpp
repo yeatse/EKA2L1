@@ -100,7 +100,6 @@ namespace eka2l1 {
         context.complete(epoc::error_none);
     }
 
-    // Load a .mif icon entry (SVG / NVG vector) into a renderable lunasvg document.
     // Open an icon container, resolving bare names (e.g. "Calcsoft.mif") against the
     // standard resource locations the way AknIconServer would.
     static symfile open_icon_container(io_system *io, const std::u16string &path) {
@@ -134,6 +133,7 @@ namespace eka2l1 {
         return nullptr;
     }
 
+    // Load a .mif icon entry (SVG / NVG vector) into a renderable lunasvg document.
     static std::unique_ptr<lunasvg::Document> load_mif_icon_document(io_system *io,
         const std::u16string &path, const int icon_index, const int want_w, const int want_h) {
         symfile f = open_icon_container(io, path);
@@ -174,8 +174,10 @@ namespace eka2l1 {
         return lunasvg::Document::loadFromData(svg_content);
     }
 
-    // Write a rendered RGBA buffer into an EColor16MU/EColor64K colour bitmap and an
-    // EGray256 alpha mask, both already created at (w, h).
+    // Write a rendered RGBA buffer into a colour bitmap and its alpha mask, both
+    // already created at (w, h). The server's configured icon mode decides the
+    // colour depth, and the mask is EGray256 or EGray2 depending on the ROM's own
+    // AknIcon configuration resource.
     static void blit_rgba_into_icon(fbs_server *fbss, epoc::bitwise_bitmap *colour,
         epoc::bitwise_bitmap *mask, const std::uint8_t *rgba, const int w, const int h) {
         std::uint8_t *cdata = colour ? colour->data_pointer(fbss) : nullptr;
@@ -184,6 +186,15 @@ namespace eka2l1 {
         const int mbw = mask ? mask->byte_width_ : 0;
         const epoc::display_mode cmode = colour ? colour->settings_.current_display_mode() : epoc::display_mode::none;
         const int cbpp = epoc::get_bpp_from_display_mode(cmode);
+        const epoc::display_mode mmode = mask ? mask->settings_.current_display_mode() : epoc::display_mode::none;
+        const int mbpp = mask ? epoc::get_bpp_from_display_mode(mmode) : 0;
+
+        // A 1bpp mask is stored as 32-bit words, one bit per pixel, bit (x % 32) of
+        // the word at (x / 32) -- the layout the bitmap converters read back. Start
+        // from a cleared mask so only the bits set below are opaque.
+        if (mdata && (mbpp == 1)) {
+            std::memset(mdata, 0, static_cast<std::size_t>(mbw) * h);
+        }
 
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
@@ -207,7 +218,14 @@ namespace eka2l1 {
                 }
 
                 if (mdata) {
-                    mdata[y * mbw + x] = a;
+                    if (mbpp == 1) {
+                        if (a >= 0x80) {
+                            std::uint32_t *word = reinterpret_cast<std::uint32_t *>(mdata + y * mbw) + (x / 32);
+                            *word |= 1u << (x & 0x1F);
+                        }
+                    } else if (mbpp == 8) {
+                        mdata[y * mbw + x] = a;
+                    }
                 }
             }
         }

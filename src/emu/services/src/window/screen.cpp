@@ -315,8 +315,8 @@ namespace eka2l1::epoc {
 
     void screen::restore_from_config(drivers::graphics_driver *driver,
         const eka2l1::config::app_setting &setting, window_server *winserv) {
-        if (setting.screen_mode >= 0 && setting.screen_mode < total_screen_mode()
-            && setting.screen_mode != crr_mode) {
+        if (winserv && (setting.screen_mode >= 0) && (setting.screen_mode < total_screen_mode())
+            && (setting.screen_mode != crr_mode)) {
             set_screen_mode(winserv, driver, setting.screen_mode);
         }
 
@@ -610,7 +610,7 @@ namespace eka2l1::epoc {
 
     std::uint32_t screen::screen_buffer_byte_width() const {
         const std::uint32_t bits_per_pixel = epoc::get_bpp_from_display_mode(disp_mode);
-        const std::uint32_t tight_pitch = size().x * sizeof(std::uint32_t);
+        const std::uint32_t tight_pitch = epoc::get_byte_width(size().x, bits_per_pixel);
 
         // ScreenPlay phones expose their 32-bit display framebuffer with a
         // 64-byte-aligned pitch. Keep older bitmap-screen architectures on

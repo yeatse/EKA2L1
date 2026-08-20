@@ -160,8 +160,13 @@ namespace eka2l1::epoc {
         void abort_all_dsas(const std::int32_t reason);
         void recalculate_visible_regions(bool dont_trigger_redraw = false);
 
+        // `winserv` is the server to notify when restoring the setting changes the
+        // screen mode. Pass null from callers that only want the scaling half of the
+        // setting re-applied (see the DSA upscale path); the mode is then left alone,
+        // since changing it without telling clients would leave them drawing for the
+        // old one.
         void restore_from_config(drivers::graphics_driver *driver, const eka2l1::config::app_setting &setting,
-            window_server *winserv = nullptr);
+            window_server *winserv);
         void store_to_config(drivers::graphics_driver *driver, eka2l1::config::app_setting &setting);
         void try_change_display_rescale(drivers::graphics_driver *driver, const float scale_factor);
 

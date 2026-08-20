@@ -261,7 +261,7 @@ namespace eka2l1 {
             CREATE_SERVER(sys, eikappui_server);
             // The AknIconServer HLE renders icons itself (lunasvg / mbm) instead of the guest
             // ROM server. It exists to work around N95-class S60v3 FP1 ROMs, whose guest icon
-            // server rasterises scalable NVG menu icons through software OpenVG — the emulator
+            // server rasterises scalable NVG menu icons through software OpenVG -- the emulator
             // has no GPU NVG, and that draw-device path only accepts 32bpp, so it leaves on the
             // standard 64K icon and aborts the Options menu. The HLE is not a complete drop-in
             // replacement, though: newer ROMs (e.g. Nokia 5320, FP2) render every icon fine via
