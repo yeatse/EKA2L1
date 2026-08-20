@@ -255,10 +255,13 @@ patch-DLL decompression was found exactly this way, under ASan.
 
 *Acceptance:* the job is red on a known-bad commit and green on its fix.
 
-**Status: sent as #609**, with the four defects its first run reported (a negative
-shift in `bitmap_allocator::force_fill`, `chunkyseri` offsetting a null pointer to measure
-a serialisation, and thirteen descending drive loops stepping one below `drive_a`, which
-leaves the enum's value range). Leak detection is off in the job: the suite ends with
+**Status: sent as #609**, with the five defects its first runs reported (a segment table
+allocated with `new[]` and freed with plain `delete`, a negative shift in
+`bitmap_allocator::force_fill`, `chunkyseri` offsetting a null pointer to measure a
+serialisation, and thirteen descending drive loops stepping one below `drive_a`, which
+leaves the enum's value range). The first of those is the argument for the job in one
+line: it is invisible on macOS, where ASan turns the alloc-dealloc-mismatch check off by
+default, and it took the job's first successful Linux run to surface it. Leak detection is off in the job: the suite ends with
 objects the emulator never frees on purpose. The first CI run also turned up that the
 vendored `xz` refuses `-fsanitize=` unless `XZ_SANDBOX=no` is passed — Landlock and the
 sanitisers cannot both be on, and macOS never hits it.
