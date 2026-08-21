@@ -21,7 +21,8 @@
 // scripts/*.lua on platforms with a LuaJIT runtime. LuaJIT cannot run on iOS
 // (its FFI callbacks need writable-executable memory, which the OS forbids on
 // non-jailbroken devices), so these builds compile the patch table directly in
-// C++. Each entry mirrors one shipped *.lua script; keep them in sync.
+// C++. Each entry mirrors one shipped *.lua script; keep them in sync, with
+// one deliberate omission noted at its place in the table below.
 
 #include <common/configure.h>
 
@@ -76,25 +77,6 @@ namespace eka2l1::manager {
         scripting::cpu::set_register(0, 3500);
     }
 
-    // --- S60v3 empty Avkon menu fix ---
-    // These Avkon builds index Count()-1 without checking for an empty
-    // menu-title array. Later versions end menu display through the existing
-    // cleanup path instead.
-    static void skip_empty_avkon_menu(const std::uint32_t cleanup_offset) {
-        if (static_cast<std::int32_t>(scripting::cpu::get_register(1)) < 0) {
-            scripting::cpu::set_register(7, 0);
-            scripting::cpu::set_register(15, scripting::cpu::get_pc() + cleanup_offset);
-        }
-    }
-
-    static void rm409_skip_empty_avkon_menu() {
-        skip_empty_avkon_menu(0xF4);
-    }
-
-    static void rm320_skip_empty_avkon_menu() {
-        skip_empty_avkon_menu(0x12C);
-    }
-
     void scripts::register_builtin_patches() {
         // The kernel-level hooks must be live for breakpoints to fire.
         register_kernel_hooks();
@@ -145,13 +127,15 @@ namespace eka2l1::manager {
             }
         }
 
-        // CEikMenuBar::StartDisplayingMenuBarL is export 70 in these Avkon
-        // builds. Resolve it dynamically and verify only that method's bytes;
-        // the hook offset is relative to the method, not a firmware address.
-        register_rom_export_breakpoint("eikcoctl.dll", 70, 0x39A36149,
-            0x182, 0, 0x1000489E, rm409_skip_empty_avkon_menu);
-        register_rom_export_breakpoint("eikcoctl.dll", 70, 0x1595EE13,
-            0x17E, 0, 0x1000489E, rm320_skip_empty_avkon_menu);
+        // s60v3_empty_avkon_menu_fix.lua is deliberately NOT mirrored here.
+        // It hooks a ROM export (CEikMenuBar::StartDisplayingMenuBarL), and
+        // dyncom -- which is what this build runs -- cannot resume from a
+        // breakpoint planted in Thumb ROM code: BKPT_INST reloads CPSR.T from
+        // a stale Cpsr and then advances PC past the instruction the handler
+        // just restored, so the guest reads Thumb code as ARM and dies on an
+        // undefined instruction two steps later. Merely planting the hook is
+        // enough; the callback never has to fire. Restore this once the
+        // breakpoint resume path is fixed.
 
         current_module = nullptr;
 
