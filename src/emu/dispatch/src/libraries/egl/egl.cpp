@@ -94,9 +94,11 @@ namespace eka2l1::dispatch {
     }
 
     BRIDGE_FUNC_LIBRARY(egl_boolean, egl_terminate_emu, egl_display display) {
+        // Every resource this display owns is released with the objects that hold
+        // it, so there is nothing left to tear down here.
         return EGL_TRUE;
     }
-    
+
     BRIDGE_FUNC_LIBRARY(egl_boolean, egl_get_configs_emu, egl_display display, egl_config *configs, std::int32_t config_array_size, std::int32_t *config_total_size) {        
         if (!config_total_size) {
             egl_push_error(sys, EGL_BAD_PARAMETER_EMU);
@@ -879,9 +881,9 @@ namespace eka2l1::dispatch {
             return EGL_FALSE;
         }
 
-        // EGL_NOK_resource_profiling2 returns a flat attribute/value array and
-        // reports its size in EGLint elements. EKA2L1 does not expose a fixed
-        // GPU memory heap, so report a stable virtual budget with no tracked use.
+        // EGL_NOK_resource_profiling2 returns a flat attribute/value array and reports
+        // its size in EGLint elements. There is no fixed GPU memory heap to report
+        // here, so the answer is a stable budget with no tracked use.
         constexpr std::int32_t PROFILING_DATA[] = {
             EGL_PROF_TOTAL_MEMORY_NOK_EMU, 64 * 1024 * 1024,
             EGL_PROF_USED_MEMORY_NOK_EMU, 0
@@ -901,6 +903,7 @@ namespace eka2l1::dispatch {
         for (std::int32_t i = 0; i < PROFILING_DATA_SIZE; ++i) {
             data[i] = PROFILING_DATA[i];
         }
+
         return EGL_TRUE;
     }
 

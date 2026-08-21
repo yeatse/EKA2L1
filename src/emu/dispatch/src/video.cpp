@@ -304,12 +304,10 @@ namespace eka2l1::dispatch {
     }
     
     void epoc_video_player::on_play_done(const int error) {
-        // Fired on the video decode thread. Completing a guest notify needs the
-        // kernel lock, and the requester thread may already be gone (app exit,
-        // player teardown): validate it against the live thread list and drop a
-        // stale notification, mirroring complete_audio_notify_if_alive in
-        // audio.cpp. The bridge calls that join the decode thread release the
-        // kernel lock around the join, so taking it here cannot deadlock.
+        // Fired on the decode thread. Completing a guest notify needs the kernel
+        // lock, and the requester may already be gone. The bridge calls that join
+        // this thread release the kernel lock around the join, so taking it here
+        // cannot deadlock.
         kern_->lock();
 
         if (!play_done_notify_.empty() && kern_->is_thread_alive(play_done_notify_.requester)) {

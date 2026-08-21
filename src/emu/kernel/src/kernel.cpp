@@ -139,12 +139,11 @@ namespace eka2l1 {
 
         for (std::size_t i = 0; i < msgs_.size(); i++) {
             if (msgs_[i]) {
-                // Sessions and servers are already freed above; a message
-                // leaked with a non-zero ref count must not run its unref
-                // side effects against them (session_msg_link/set_slot_free),
-                // nor against an owner thread that a stale completion may
-                // have caused to be destroyed early. Neutralize it so
-                // ~ipc_msg tears it down without touching those pointers.
+                // Sessions and servers are gone by now, so a message leaked with a
+                // non-zero reference count must not run its unref side effects
+                // against them, nor against an owner thread a stale completion may
+                // have destroyed early. Neutralise it so ~ipc_msg tears it down
+                // without touching those pointers.
                 msgs_[i]->own_thr = nullptr;
                 msgs_[i]->msg_session = nullptr;
                 msgs_[i]->ref_count = 0;
@@ -156,15 +155,15 @@ namespace eka2l1 {
         OBJECT_CONTAINER_CLEANUP_KEEP_OBJECTS(threads_);
         OBJECT_CONTAINER_CLEANUP_KEEP_OBJECTS(processes_);
         // Chunks must outlive processes: killing a process destroys its memory
-        // model, whose destructor walks the still-attached chunks (global /
+        // model, whose destructor walks the still-attached chunks (the global and
         // DLL-static ones opened into it) to detach its mappings.
         OBJECT_CONTAINER_CLEANUP(chunks_);
         OBJECT_CONTAINER_CLEANUP(libraries_);
         OBJECT_CONTAINER_CLEANUP(codesegs_);
 
-        // The codedump collector outlives the reboot but its intrusive lists
-        // point into the codesegs / attached infos destroyed just above.
-        // Forget them, or the first clean after reboot walks freed memory.
+        // The collector outlives a reboot, but its intrusive lists point into the
+        // codesegs and attached infos destroyed just above. Forget them, or the
+        // first clean after the reboot walks freed memory.
         codedump_collector_.wipe();
         OBJECT_CONTAINER_CLEANUP(message_queues_)
         OBJECT_CONTAINER_CLEANUP(logical_channels_);
@@ -819,10 +818,10 @@ namespace eka2l1 {
 
         auto res = locate();
 
-        // lower_bound lands on the first object with a greater or equal uid, so an object
-        // that is not (or no longer) in this container resolves to an unrelated live one.
-        // Destroying and erasing that one leaves everybody still referencing it with a
-        // dangling pointer, which is only paid for much later.
+        // lower_bound lands on the first object with a greater or equal uid, so an
+        // object that is not (or no longer) in this container resolves to an
+        // unrelated live one. Destroying and erasing that one leaves everybody still
+        // referencing it with a dangling pointer, paid for much later.
         if ((res == container.end()) || (res->get() != obj)) {
             return false;
         }
@@ -830,9 +829,9 @@ namespace eka2l1 {
         obj->destroy();
 
         // destroy() can destroy other objects of the same type: a codeseg drops the
-        // references it holds on its dependencies, a thread releases its owner. Each of
-        // those erases an element of this very vector, so the iterator taken above may now
-        // address a different - live - object. Locate the slot again before erasing it.
+        // references it holds on its dependencies, a thread releases its owner. Each
+        // of those erases an element of this very vector, so the iterator taken above
+        // may now address a different - live - object. Locate the slot again.
         res = locate();
 
         if ((res != container.end()) && (res->get() == obj)) {
@@ -848,8 +847,8 @@ namespace eka2l1 {
         }
 
         switch (obj->get_object_type()) {
-#define OBJECT_SEARCH(obj_type, obj_map)              \
-    case kernel::object_type::obj_type: {             \
+#define OBJECT_SEARCH(obj_type, obj_map)                  \
+    case kernel::object_type::obj_type: {                 \
         return destroy_object_in_container(obj_map, obj); \
     }
 
@@ -1068,13 +1067,13 @@ namespace eka2l1 {
     }
 
     void kernel_system::free_msg(ipc_msg_ptr msg) {
-        // A message still referenced is owned by an in-flight exchange (e.g. a
-        // server that has yet to complete it, while the client thread dies with
-        // its sync message pending). Forcing the slot free would let create_msg
-        // recycle it, and the late completion would then unref the new owner:
-        // its thread loses an access count it still needs, gets destroyed while
-        // other messages point at it, and the kernel teardown crashes on the
-        // dangling own_thr. Let the final unref release the message instead.
+        // A message that is still referenced belongs to an in-flight exchange: a
+        // server has yet to complete it while the client thread dies with its sync
+        // message pending. Forcing the slot free lets create_msg recycle it, and the
+        // late completion then unrefs the new owner - which loses an access count it
+        // still needs, is destroyed while other messages point at it, and takes the
+        // kernel teardown down with a dangling own_thr. Let the final unref release
+        // the message instead.
         if (msg->ref_count > 0) {
             return;
         }
@@ -1496,17 +1495,14 @@ namespace eka2l1 {
         const std::uint64_t raw = base_time_ + timing_->microseconds();
 
         // On EKA1 the kernel only refreshes the system clock from the 64Hz tick
-        // ISR, so User::UTCTime()/TTime::HomeTime() advance in whole tick
-        // periods (15.625ms). Games written for that granularity assume two
-        // reads within a tick return the same value. EKA2L1 otherwise sources a
-        // continuous microsecond clock, which lets sub-millisecond deltas slip
-        // through such code: e.g. N-Gage Call of Duty computes
-        // frames*100000/(elapsedUs/1000) during view startup, guards only on
-        // elapsedUs != 0, and divides by zero when 0 < elapsedUs < 1000 -- an
-        // unhandled EExcGeneral (KERN-EXEC 3). Quantizing to the tick period
-        // matches real EKA1 hardware and keeps the delta at either 0 or one full
-        // tick. EKA2 (Symbian 9 / ^3 / Belle) backs the clock with the fast
-        // counter and is genuinely fine-grained, so it is left untouched.
+        // interrupt, so User::UTCTime() and TTime::HomeTime() advance in whole tick
+        // periods. Code written for that granularity assumes two reads inside one
+        // tick return the same value: N-Gage Call of Duty computes
+        // frames * 100000 / (elapsed_us / 1000) during view startup, guards only on
+        // elapsed_us != 0, and divides by zero for any elapsed_us under a
+        // millisecond. EKA2L1 otherwise sources a continuous microsecond clock.
+        // EKA2 backs the clock with the fast counter and really is fine grained, so
+        // it is left alone.
         if (is_eka1()) {
             const std::uint64_t tick_us = common::microsecs_per_sec / epoc::TICK_TIMER_HZ;
             return raw / tick_us * tick_us;

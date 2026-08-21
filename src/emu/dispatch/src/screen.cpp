@@ -55,6 +55,8 @@ namespace eka2l1::dispatch {
             vsync_notifies_.erase(ite);
         }
 
+        // Completing a guest request needs the kernel lock; this runs on the posting
+        // thread, so take it here rather than signalling the guest unlocked.
         kernel_system *kern = info->requester ? info->requester->get_kernel_object_owner() : nullptr;
         if (kern) {
             kern->lock();
@@ -223,6 +225,8 @@ namespace eka2l1::dispatch {
                 const eka2l1::vec2 screen_size = mode_info.size;
 
                 const char *data_ptr = reinterpret_cast<const char *>(scr->screen_buffer_ptr());
+                // A ScreenPlay screen under an active DSA keeps its own row pitch, which
+                // is not the tightly packed one the texture upload assumes.
                 const std::uint32_t bits_per_pixel = epoc::get_bpp_from_display_mode(scr->disp_mode);
                 const std::size_t dsa_screen_pitch = scr->screen_buffer_byte_width();
                 const std::size_t tight_screen_pitch = mode_info.size.x * sizeof(std::uint32_t);

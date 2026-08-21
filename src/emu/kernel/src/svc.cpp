@@ -113,11 +113,11 @@ namespace eka2l1::epoc {
             return ss->get_full_path();
         }
 
-        // Statically-linked XIP DLLs run in place from ROM and only get a codeseg when
-        // they appear in an image's DLL reference (attach) chain, so an address inside
-        // e.g. gflm.dll won't resolve above. Fall back to the ROM file tree: XIP entries
-        // record their linear address range, letting us find the image containing the
-        // address (Dll::FileName is commonly used to derive the caller DLL's drive).
+        // A statically linked XIP DLL runs in place from ROM and only gets a codeseg
+        // once it appears in some image's DLL reference chain, so an address inside
+        // one (gflm.dll, say) does not resolve above. The ROM file tree records the
+        // linear address range of every XIP entry, which is enough to name the image
+        // the address belongs to.
         loader::rom *rom_info = kern->get_rom_info();
         if (rom_info) {
             std::u16string prefix(1, drive_to_char16(kern->get_lib_manager()->get_drive_rom()));
@@ -689,9 +689,9 @@ namespace eka2l1::epoc {
         full_path_ptr.get(crr_pr)->assign(crr_pr, path_utf8);
     }
 
-    // Exec::GetModuleNameFromAddress. Unlike Dll::FileName's exec it reports whether the
-    // address could be attributed at all, and callers (TExtendedLocale::GetLocaleDllName,
-    // and the SQL server on startup) branch on that code.
+    // Exec::GetModuleNameFromAddress. Unlike Dll::FileName's executive it reports
+    // whether the address could be attributed at all, and its callers branch on that
+    // code: TExtendedLocale::GetLocaleDllName, and the SQL server on startup.
     BRIDGE_FUNC(std::int32_t, get_module_name_from_address, std::int32_t addr, eka2l1::ptr<epoc::des8> module_name_ptr) {
         std::optional<std::u16string> full_path = get_dll_full_path(kern, addr);
 
@@ -854,9 +854,9 @@ namespace eka2l1::epoc {
         if ((int)msg->args.get_arg_type(param) & (int)ipc_arg_type::flag_des) {
             epoc::desc_base *base = eka2l1::ptr<epoc::desc_base>(msg->args.args[param]).get(msg->own_thr->owning_process());
 
-            // The slot is typed as a descriptor but the client may still have passed a
-            // null or unmapped address; Symbian answers KErrBadDescriptor rather than
-            // faulting the file server.
+            // The slot is typed as a descriptor, but the client may still have passed
+            // a null or unmapped address. Symbian answers KErrBadDescriptor there
+            // rather than faulting the server.
             if (!base) {
                 return epoc::error_bad_descriptor;
             }
@@ -3258,11 +3258,12 @@ namespace eka2l1::epoc {
 
         kernel::process *process_to_operate = thr_to_operate->owning_process();
 
-        // The byte count comes from the separate length argument, not from the descriptor: callers
-        // hand over a plain buffer (a TPtr8 built with the two-argument constructor still has a
-        // zero length) and let the command header say how much of it to transfer. So both
-        // directions are bounded by the descriptor's capacity, which get_max_length() reports as
-        // the length for the constant descriptor types that have no separate maximum.
+        // The byte count comes from the separate length argument, not from the
+        // descriptor: callers hand over a plain buffer (a TPtr8 built with the
+        // two-argument constructor still has a zero length) and let the command header
+        // say how much of it to transfer. Both directions are therefore bounded by the
+        // descriptor's capacity, which get_max_length() reports as the length for the
+        // constant descriptor types that have no separate maximum.
         if (len > static_cast<std::int32_t>(buf->get_max_length(crr))) {
             return is_write ? epoc::error_overflow : epoc::error_underflow;
         }
@@ -3288,8 +3289,8 @@ namespace eka2l1::epoc {
                 return epoc::error_none;
             }
 
-            // Fall through to the instruction cache flush below: a four byte write is exactly the
-            // size of an ARM instruction, and patching one is the whole point of this command.
+            // Fall through to the instruction cache flush below: four bytes is exactly
+            // one ARM instruction, and patching one is what this command is for.
         } else {
             std::uint8_t *dest_of_operate = reinterpret_cast<std::uint8_t *>(process_to_operate->get_ptr_on_addr_space(addr));
 
@@ -5798,6 +5799,7 @@ namespace eka2l1::epoc {
         return chn->do_request(request_nof_info, func, args[0], args[1], false);
     }
 
+    // TChannelCreateInfo8, as Exec::ChannelCreate receives it.
     struct logical_channel_create_info {
         epoc::version version;
         std::int32_t unit;
@@ -5849,6 +5851,9 @@ namespace eka2l1::epoc {
             owner == epoc::owner_process ? kernel::owner_type::process : kernel::owner_type::thread);
     }
 
+    // The emulated logical devices are built in, so there is no image to load. A
+    // channel is created straight from the factory instead, and E32Loader::DeviceLoad
+    // has nothing to do.
     BRIDGE_FUNC(std::int32_t, logical_device_load) {
         return epoc::error_not_supported;
     }
@@ -5887,9 +5892,6 @@ namespace eka2l1::epoc {
         return 0;
     }
 
-    BRIDGE_FUNC(std::int32_t, get_locale_dll_name) {
-        return epoc::error_none;
-    }
 
     const eka2l1::hle::func_map svc_register_funcs_v10 = {
         /* FAST EXECUTIVE CALL */
@@ -5959,7 +5961,7 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0x3A, request_signal),
         BRIDGE_REGISTER(0x3B, handle_name),
         BRIDGE_REGISTER(0x3C, handle_full_name),
-        BRIDGE_REGISTER(0x3E, handle_info),
+        BRIDGE_REGISTER(0x3D, handle_info),
         BRIDGE_REGISTER(0x3E, handle_count),
         BRIDGE_REGISTER(0x3F, after),
         BRIDGE_REGISTER(0x41, message_complete),
@@ -6060,7 +6062,6 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0xE0, leave_start),
         BRIDGE_REGISTER(0xE1, leave_end),
         BRIDGE_REGISTER(0xE3, get_module_name_from_address),
-        BRIDGE_REGISTER(0xE3, get_locale_dll_name),
         BRIDGE_REGISTER(0xE6, session_security_info),
         BRIDGE_REGISTER(0xE9, btrace_out),
         BRIDGE_REGISTER(0xF6, thread_user_exiting),

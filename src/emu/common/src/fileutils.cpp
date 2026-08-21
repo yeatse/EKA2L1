@@ -922,28 +922,39 @@ namespace eka2l1::common {
             return true;
         }
 
-        auto iterator = make_directory_iterator(target_folder, "");
-        if (!iterator) {
-            return false;
-        }
-
-        iterator->detail = true;
-
-        common::dir_entry entry;
-
-        while (iterator->next_entry(entry) == 0) {
-            std::string name = add_path(iterator->dir_name, entry.name);
-
-            if (entry.type == common::file_type::FILE_DIRECTORY) {
-                if ((entry.name != ".") && (entry.name != "..")) {
-                    name += eka2l1::get_separator();
-
-                    delete_folder(name);
-                }
+        {
+            auto iterator = make_directory_iterator(target_folder, "");
+            if (!iterator) {
+                return false;
             }
-            common::remove(name);
+
+            iterator->detail = true;
+
+            common::dir_entry entry;
+
+            while (iterator->next_entry(entry) == 0) {
+                std::string name = add_path(iterator->dir_name, entry.name);
+
+                if (entry.type == common::file_type::FILE_DIRECTORY) {
+                    if ((entry.name != ".") && (entry.name != "..")) {
+                        name += eka2l1::get_separator();
+
+                        delete_folder(name);
+                    }
+                }
+                common::remove(name);
+            }
         }
-        return common::remove(target_folder);
+
+        // remove() tells a directory from a file by the trailing separator, and the
+        // caller need not have supplied one. The iterator is also closed by now: a
+        // directory Windows still has a handle open on cannot be removed.
+        std::string folder_to_remove = target_folder;
+        if (folder_to_remove.empty() || !eka2l1::is_separator(folder_to_remove.back())) {
+            folder_to_remove += eka2l1::get_separator();
+        }
+
+        return common::remove(folder_to_remove);
     }
 
     FILE *open_c_file(const std::string &target_file, const char *mode) {

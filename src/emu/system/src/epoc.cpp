@@ -163,8 +163,8 @@ namespace eka2l1 {
         ~system_impl() {
             // Join the timer thread before anything else goes away: its event
             // callbacks (kernel timers, animation scheduler redraws) run
-            // concurrently and reach into the kernel, window server and font
-            // state that the teardown below frees.
+            // concurrently and reach into the kernel, window server and font state
+            // that the teardown below frees.
             if (timing_) {
                 timing_->stop();
             }
@@ -379,12 +379,9 @@ namespace eka2l1 {
 
                 dvcmngr_->clear();
 
-                // Lowercase to match the drive folder name every frontend's
-                // installer actually creates (e.g. "drives/z/", not
-                // "drives/Z/") - on a case-sensitive filesystem the two don't
-                // resolve to the same directory, so an uppercase probe here
-                // would silently find nothing and still persist the cleared
-                // (now empty) device list below.
+                // The installers create the drive folder in lower case ("drives/z/"),
+                // and on a case-sensitive filesystem an upper-case probe finds nothing
+                // and then persists the cleared device list below.
                 std::string rom_drive_name = common::lowercase_string(
                     std::string(1, static_cast<char>(drive_to_char16(romdrv))));
 
@@ -413,11 +410,9 @@ namespace eka2l1 {
                         std::string manu, firm_name, model;
                         loader::determine_rpkg_product_info(full_entry_path, manu, firm_name, model);
 
-                        // install_rom/install_rpkg save the resident ROM under
-                        // roms/<lowercase firmcode>/ (see firmcode_low in
-                        // rpkg.cpp); match that here or a case-sensitive
-                        // filesystem sees no SYM.ROM and deletes an otherwise
-                        // valid dump below.
+                        // install_rom/install_rpkg save the ROM under roms/<lowercase
+                        // firmcode>/, so match that or a case-sensitive filesystem sees
+                        // no SYM.ROM and deletes an otherwise valid dump below.
                         const std::string rom_directory = eka2l1::add_path(storage_path, eka2l1::add_path("roms", common::lowercase_string(firm_name) + "\\"));
                         const std::string rom_file = eka2l1::add_path(rom_directory, "SYM.ROM");
                         if (!common::exists(rom_file)) {
@@ -1007,10 +1002,8 @@ namespace eka2l1 {
         const std::string app_folder = eka2l1::add_path(system_apps_folder_path, specific_app + eka2l1::get_separator());
         std::string aif_file = eka2l1::add_path(app_folder, specific_app + ".aif");
         if (!common::exists(aif_file)) {
-            // Game-card dumps vary the registration file's extension casing
-            // (e.g. Call of Duty ships "6R48.AIF"). exists() only papers over
-            // that on a case-insensitive filesystem, so on case-sensitive
-            // storage (physical iOS device, Android, Linux) resolve the real
+            // Game-card dumps vary the registration file's extension casing (Call of
+            // Duty ships "6R48.AIF"), so on case-sensitive storage resolve the real
             // name before declaring the registration missing.
             const std::string real_aif_name = common::find_case_sensitive_file_name(
                 app_folder, specific_app + ".aif", common::FILE_REGULAR);

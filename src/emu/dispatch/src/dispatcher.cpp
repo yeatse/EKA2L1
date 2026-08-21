@@ -429,9 +429,9 @@ namespace eka2l1::dispatch {
             return ite->second;
         }
 
-        // Extension entry points obtained through eglGetProcAddress do not have
-        // a library ordinal, so patch_libraries() never creates their guest
-        // trampoline. Materialize one on first lookup for any registered symbol.
+        // An extension entry point reached through eglGetProcAddress has no library
+        // ordinal, so patch_libraries() never built its guest trampoline. Build one on
+        // first lookup for any symbol the dispatcher does register.
         for (const auto &dispatch_func : dispatch::dispatch_funcs) {
             if (!dispatch_func.second.second || symbol != std::string(dispatch_func.second.second)) {
                 continue;
@@ -447,6 +447,7 @@ namespace eka2l1::dispatch {
 
             symbol_lookup_.emplace(symbol, entry);
             trampoline_allocated_ += 12;
+
             return entry;
         }
 

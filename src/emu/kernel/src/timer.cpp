@@ -132,7 +132,7 @@ namespace eka2l1 {
             }
 
             // EKA1 does not carry the active/pending request-status flags, so the
-            // race below cannot be detected; complete immediately as before.
+            // race below cannot be detected there and the request completes at once.
             kernel::thread *requester = info.done_nof.requester;
             if (requester && !kern->is_eka1() && (activate_defer_count_ < TIMER_ACTIVATE_DEFER_LIMIT)) {
                 epoc::request_status *sts = info.done_nof.sts.get(requester->owning_process());
