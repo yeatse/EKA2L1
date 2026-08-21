@@ -1,8 +1,6 @@
-#include <common/platform.h>
+#include <drivers/graphics/backend/ogl/buffer_ogl.h>
 #include <drivers/graphics/buffer.h>
 #include <drivers/graphics/graphics.h>
-
-#include <drivers/graphics/backend/ogl/buffer_ogl.h>
 
 namespace eka2l1::drivers {
     std::unique_ptr<buffer> make_buffer(graphics_driver *driver) {

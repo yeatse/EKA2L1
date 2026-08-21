@@ -109,20 +109,7 @@ namespace eka2l1::common {
     void *align_address_to_host_page(void *original);
 
     /**
-     * \brief Returns true if the platform doesn't allow write and executable
-     *        memory at the same time **for code that the host CPU will run**.
-     *
-     * Only the JIT / `block_of_code` path (dynarmic, 12L1R) needs to honour
-     * this. Non-executable guest data — kernel chunks, ROM image, dispatcher
-     * trampolines that are only ever read by the dyncom interpreter — commits
-     * as plain RW even on Apple Silicon; `translate_protection()` strips
-     * PROT_EXEC there so a regular `commit(...)` of `prot_read_write_exec`
-     * lands as PROT_READ|PROT_WRITE rather than tripping W^X.
-     *
-     * The executable side of this (MAP_JIT mappings, `pthread_jit_write_-
-     * protect_np` toggling, JIT entitlement on signed builds) is intentionally
-     * not implemented here — it lives with the dynarmic enablement work in
-     * stage 4 of `IOS_PORTING_PLAN.md`.
+     * \brief Returns true if the platform doesn't allow write and executable memory at the same time.
     */
     bool is_memory_wx_exclusive();
 }

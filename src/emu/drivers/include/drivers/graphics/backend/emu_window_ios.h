@@ -15,7 +15,7 @@ namespace eka2l1::drivers {
     // so window_system_info::render_surface can be threaded into the EAGL
     // graphics context. The frontend updates dimensions from
     // viewDidLayoutSubviews; pointer events bypass emu_window and go through
-    // IosEmulator directly (task 2.8).
+    // IosEmulator directly.
     class emu_window_ios final : public emu_window {
     public:
         emu_window_ios();

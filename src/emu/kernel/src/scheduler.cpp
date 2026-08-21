@@ -122,6 +122,7 @@ namespace eka2l1::kernel {
             }
 
             run_core->load_context(crr_thread->ctx);
+            //LOG_TRACE(KERNEL, "Switched to {}", crr_thread->name());
         } else {
             // No current thread is eligible to run. Let the core that this scheduler currently handle sleeps.
             crr_thread = nullptr;

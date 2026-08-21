@@ -288,7 +288,6 @@ if (EKA2L1_IOS)
     set(EKA2L1_IOS_FFMPEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/ios/${EKA2L1_IOS_FFMPEG_SLICE}"
         CACHE PATH "Path to an iOS FFmpeg install prefix with include/ and lib/")
 
-
     if (EKA2L1_IOS_ENABLE_FFMPEG)
         if (NOT EXISTS "${EKA2L1_IOS_FFMPEG_ROOT}/lib/libavcodec.a")
             message(FATAL_ERROR

@@ -19,6 +19,7 @@
  */
 
 #include <algorithm>
+#include <atomic>
 #include <queue>
 #include <thread>
 
@@ -379,9 +380,7 @@ namespace eka2l1 {
                 return true;
             }
 
-            LOG_ERROR(KERNEL, "Access violation {} address 0x{:X} in thread {}",
-                (exception_type == arm::exception_type_access_violation_read) ? "reading" : "writing",
-                exception_data, crr_thread()->name());
+            LOG_ERROR(KERNEL, "Access violation {} address 0x{:X} in thread {}", (exception_type == arm::exception_type_access_violation_read) ? "reading" : "writing", exception_data, crr_thread()->name());
             break;
 
         case arm::exception_type_undefined_inst:

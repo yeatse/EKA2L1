@@ -18,7 +18,7 @@ namespace eka2l1::drivers::graphics {
     // EAGL-backed GLES3 context for the iOS frontend.
     //
     // Constructed with `window_system_info::render_surface` pointing at a
-    // CAEAGLLayer (set up by the iOS frontend's EAGLView in task 2.7). The
+    // CAEAGLLayer (set up by the iOS frontend's EAGLView). The
     // class owns the EAGLContext, a framebuffer-object, and the colour /
     // depth-stencil renderbuffers bound to that layer; swap_buffers presents
     // the colour renderbuffer to the layer's drawable.

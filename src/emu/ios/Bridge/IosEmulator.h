@@ -220,7 +220,7 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 - (void)resume;
 
 // Input -------------------------------------------------------------------
-// Single-touch dispatch from EAGLView (task 2.8).
+// Single-touch dispatch from EAGLView.
 typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
     EKA2L1PointerPhaseBegan = 0,
     EKA2L1PointerPhaseMoved = 1,
@@ -306,7 +306,7 @@ typedef NS_ENUM(NSInteger, EKA2L1PointerPhase) {
 @property(nonatomic, readonly) BOOL jitAvailable;
 - (uint64_t)renderedFrameCount;
 
-// 3.6: decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)
+// Decode an app's registered icon (MIF / MBM / NVG / SVGB / SVG)
 // and return a square RGBA PNG sized `sizePx` per side. Returns nil if
 // the registration has no icon or all decode attempts fail. Safe to
 // call from a background queue; SwiftUI consumes the NSData via

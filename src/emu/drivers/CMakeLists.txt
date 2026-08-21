@@ -181,13 +181,6 @@ elseif (EKA2L1_IOS)
         src/graphics/backend/emu_window_ios.mm
         src/ui/input_dialog_ios.mm
     )
-    if (EKA2L1_IOS_USE_ANGLE)
-        # MetalANGLE (GLES->Metal) context; make_gl_context selects it when
-        # EKA2L1_IOS_ANGLE is defined (context_eagl stays compiled but unused).
-        target_sources(drivers PRIVATE
-            src/graphics/backend/context_angle.h
-            src/graphics/backend/context_angle.mm)
-    endif()
 elseif(APPLE)
     target_sources(drivers PRIVATE
         src/graphics/backend/context_agl.h
@@ -239,7 +232,7 @@ endif()
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU)
 if (EKA2L1_IOS)
     # glad is not linked on iOS — the ogl backend compiles against
-    # OpenGLES.framework via ios_gl_loader.h (task 2.1). Audio goes
+    # OpenGLES.framework via ios_gl_loader.h. Audio goes
     # through the native AURemoteIO driver (DRIVERS_AUDIOUNIT_IOS_SRC).
     target_link_libraries(drivers PRIVATE
         "-framework OpenGLES"

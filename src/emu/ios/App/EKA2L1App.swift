@@ -1,4 +1,4 @@
-// Stage-2 SwiftUI shell for the EKA2L1 iOS port.
+// SwiftUI shell for the EKA2L1 iOS port.
 //
 // scenePhase is the iOS contract for "app is foreground / background". The
 // emulator must stop touching the EAGL context the moment we leave .active

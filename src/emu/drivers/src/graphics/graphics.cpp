@@ -17,11 +17,11 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <common/log.h>
-#include <common/platform.h>
+#include <drivers/graphics/backend/ogl/graphics_ogl.h>
 #include <drivers/graphics/graphics.h>
 
-#include <drivers/graphics/backend/ogl/graphics_ogl.h>
+#include <common/log.h>
+#include <common/platform.h>
 
 namespace eka2l1::drivers {
     graphics_driver_ptr create_graphics_driver(const graphic_api api, const window_system_info &info) {

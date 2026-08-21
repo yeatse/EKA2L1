@@ -134,7 +134,7 @@ target_include_directories(common PUBLIC
         "${COMMON_GENERATED_INCLUDE_DIR}"
         include)
 target_link_libraries(common PUBLIC fmt miniz spdlog)
-target_link_libraries(common PRIVATE archive_static pugixml re2::re2)
+target_link_libraries(common PRIVATE archive_static pugixml miniupnpc::miniupnpc re2::re2)
 target_link_libraries(common PRIVATE miniupnpc::miniupnpc)
 
 if (UNIX OR APPLE)

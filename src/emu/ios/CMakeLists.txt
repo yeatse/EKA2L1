@@ -21,7 +21,7 @@ set(EKA2L1_IOS_APP EKA2L1)
 set(EKA2L1_IOS_BUNDLE_ID "com.eka2l1.emulator" CACHE STRING "iOS bundle identifier")
 
 # Apple Development team for real-device installs. Leave empty for the
-# unsigned stage-0 build (simulator / "build graph compiles" CI). Set it to a
+# unsigned build (simulator / CI). Set it to a
 # team id (e.g. via -DEKA2L1_IOS_DEVELOPMENT_TEAM=XXXXXXXXXX or the
 # EKA2L1_IOS_DEVELOPMENT_TEAM env passed through build_ios.sh) to flip the
 # target into automatic code signing so the .app can be sideloaded onto a
@@ -138,23 +138,6 @@ target_link_libraries(${EKA2L1_IOS_APP} PRIVATE
     yaml-cpp
     "-framework GameController")
 
-# --- MetalANGLE (GLES -> Metal) opt-in backend --------------------------------
-# Off by default: the app keeps the EAGL GLES path. When ON (option lives in the
-# root CMakeLists so the drivers lib sees it too) we link + embed the vendored
-# MetalANGLE.xcframework. See docs/ios_metal_angle_plan.md.
-if (EKA2L1_IOS_USE_ANGLE)
-    set(EKA2L1_METALANGLE_XCFRAMEWORK
-        "${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework")
-    message(STATUS "EKA2L1 iOS: MetalANGLE enabled (${EKA2L1_METALANGLE_XCFRAMEWORK})")
-    target_compile_definitions(${EKA2L1_IOS_APP} PRIVATE EKA2L1_IOS_ANGLE=1)
-    target_link_libraries(${EKA2L1_IOS_APP} PRIVATE "${EKA2L1_METALANGLE_XCFRAMEWORK}")
-    set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
-        XCODE_EMBED_FRAMEWORKS "${EKA2L1_METALANGLE_XCFRAMEWORK}"
-        XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY "YES"
-        # The framework is embedded in <app>/Frameworks; make dyld look there
-        # (the default rpath only covers the Swift runtime paths).
-        XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "$(inherited) @executable_path/Frameworks")
-endif()
 
 # ---------------------------------------------------------------------------
 # App icon (Apple Icon Composer "Liquid Glass" .icon, Xcode 26).
@@ -200,7 +183,7 @@ set_target_properties(${EKA2L1_IOS_APP} PROPERTIES
     XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)")
 
 if (EKA2L1_IOS_DEVELOPMENT_TEAM STREQUAL "")
-    # Stage-0 builds are unsigned. Developers can flip these by passing
+    # Unsigned by default. Developers can flip these by passing
     # -DEKA2L1_IOS_DEVELOPMENT_TEAM=<team> (see above) or by opening the
     # generated Xcode project and selecting a team.
     set_target_properties(${EKA2L1_IOS_APP} PROPERTIES

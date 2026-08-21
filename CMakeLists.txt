@@ -73,25 +73,6 @@ if (EKA2L1_IOS)
         message(STATUS "iOS build: Dynarmic JIT compiled in")
     endif()
 
-    # MetalANGLE (GLES -> Metal) backend. Defined here (not just in the ios app
-    # CMake) so the drivers library -- which owns make_gl_context / the context
-    # backends -- also sees the flag and the MetalANGLE headers. The xcframework
-    # is fetched out-of-tree by scripts/fetch_metalangle.sh (build_ios.sh runs it
-    # on demand). See docs/ios_metal_angle_plan.md.
-    option(EKA2L1_IOS_USE_ANGLE "Use MetalANGLE (GLES->Metal) backend on iOS" OFF)
-    if (EKA2L1_IOS_USE_ANGLE)
-        add_compile_definitions(EKA2L1_IOS_ANGLE=1)
-        if (EKA2L1_IOS_SIMULATOR)
-            set(EKA2L1_METALANGLE_SLICE "ios-arm64-simulator")
-        else()
-            set(EKA2L1_METALANGLE_SLICE "ios-arm64")
-        endif()
-        # Framework header search path for `#import <MetalANGLE/...>` (the slice
-        # headers are identical; the app target links the xcframework per-platform).
-        add_compile_options("-F${CMAKE_SOURCE_DIR}/src/external/metalangle/MetalANGLE.xcframework/${EKA2L1_METALANGLE_SLICE}")
-        message(STATUS "iOS: MetalANGLE backend enabled (slice ${EKA2L1_METALANGLE_SLICE})")
-    endif()
-
     set(EKA2L1_BUILD_TOOLS OFF CACHE BOOL "Disabled on iOS" FORCE)
     set(EKA2L1_BUILD_TESTS OFF CACHE BOOL "Disabled on iOS" FORCE)
     # iOS keeps the scripting engine (for the built-in native game patches) but
@@ -124,12 +105,6 @@ if (MSVC)
     add_definitions(-D_DISABLE_VECTOR_ANNOTATION)
 endif(MSVC)
 
-if (APPLE)
-    # The bundled boost (pulled in by dynarmic) still uses std::unary_function,
-    # which libc++ no longer declares in C++17 and later modes.
-    add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1)
-endif()
-
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     # Limit to C-family languages so that swiftc (enabled for the iOS target)
     # does not reject the clang-only flag.
@@ -152,6 +127,13 @@ if (EKA2L1_SANITIZER)
         add_link_options(-fsanitize=${EKA2L1_SANITIZER})
     endif()
     message(STATUS "Sanitizer enabled: ${EKA2L1_SANITIZER}")
+endif()
+
+
+if (APPLE)
+    # The bundled boost (pulled in by dynarmic) still uses std::unary_function,
+    # which libc++ no longer declares in C++17 and later modes.
+    add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1)
 endif()
 
 if (EKA2L1_BUILD_VULKAN_BACKEND)

@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# Stage-0 iOS build validation script.
+# Build the iOS app.
 #
-# Generates Xcode projects under build/ios-device and build/ios-simulator
-# using cmake/ios.toolchain.cmake, then runs `xcodebuild` for each. The goal
-# at this stage is "the build graph configures and compiles end to end";
-# code signing failures during the bundle step are not treated as fatal.
+# Generates Xcode projects under build/ios-device and build/ios-simulator using
+# cmake/ios.toolchain.cmake, then runs `xcodebuild` for each.
 #
 # Usage:
 #   scripts/build_ios.sh                 # build both device + simulator
@@ -59,7 +57,7 @@ CONFIGURATION="${EKA2L1_IOS_CONFIGURATION:-Debug}"
 SCHEME="${EKA2L1_IOS_SCHEME:-EKA2L1}"
 # Set EKA2L1_IOS_DEVELOPMENT_TEAM=<team id> to build a code-signed device
 # bundle that can be installed on a real iPhone (see `device-signed` /
-# `install` commands below). Empty => unsigned stage-0 build.
+# `install` commands below). Empty => unsigned build.
 DEVELOPMENT_TEAM="${EKA2L1_IOS_DEVELOPMENT_TEAM:-}"
 
 configure_one() {
@@ -75,13 +73,6 @@ configure_one() {
         (cd src/external/ffmpeg && EKA2L1_IOS_DEPLOYMENT_TARGET="${EKA2L1_IOS_DEPLOYMENT_TARGET:-16.0}" sh ios-build.sh "${label}")
     fi
 
-    # MetalANGLE (GLES->Metal) is fetched/packaged out-of-tree (the binary is not
-    # vendored in git, mirroring the FFmpeg approach). Pull it on demand when the
-    # ANGLE backend is enabled and it isn't present yet.
-    if [ "${EKA2L1_IOS_USE_ANGLE:-OFF}" = "ON" ] && \
-       [ ! -d "src/external/metalangle/MetalANGLE.xcframework" ]; then
-        scripts/fetch_metalangle.sh
-    fi
 
     echo "==> Configuring ${label} (PLATFORM=${platform}, sdk=${sdk})"
     # CMake 4.x dropped compatibility with cmake_minimum_required < 3.5, and
@@ -96,7 +87,6 @@ configure_one() {
         -DEKA2L1_IOS_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}" \
         -DEKA2L1_IOS_DEVELOPMENT_TEAM="${team}" \
         -DEKA2L1_IOS_ENABLE_FFMPEG=ON \
-        -DEKA2L1_IOS_USE_ANGLE="${EKA2L1_IOS_USE_ANGLE:-OFF}" \
         -DEKA2L1_IOS_DYNARMIC="${jit}" \
         -DEKA2L1_SANITIZER="${EKA2L1_SANITIZER:-}" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

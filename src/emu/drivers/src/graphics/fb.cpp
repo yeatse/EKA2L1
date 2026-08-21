@@ -17,11 +17,9 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <common/platform.h>
+#include <drivers/graphics/backend/ogl/fb_ogl.h>
 #include <drivers/graphics/fb.h>
 #include <drivers/graphics/graphics.h>
-
-#include <drivers/graphics/backend/ogl/fb_ogl.h>
 
 namespace eka2l1::drivers {
     std::uint64_t framebuffer::color_attachment_handle(const std::int32_t attachment_id) {

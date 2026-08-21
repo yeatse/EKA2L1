@@ -6,9 +6,6 @@
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 
-#ifdef EKA2L1_IOS_ANGLE
-#import <MetalANGLE/MGLLayer.h>
-#endif
 
 #include <array>
 #include <atomic>
@@ -841,12 +838,6 @@ namespace eka2l1::ios {
 
 @implementation EKA2L1Emulator {
     std::unique_ptr<eka2l1::ios::emulator> _state;
-#ifdef EKA2L1_IOS_ANGLE
-    // MetalANGLE renders into its own MGLLayer; we host it as a sublayer of the
-    // frontend's CAEAGLLayer and feed it to the graphics driver as the render
-    // surface (the EAGL layer is then just a container). See context_angle.mm.
-    MGLLayer *_angleLayer;
-#endif
     // Host pointer identity (UITouch address) → guest pointer number. The guest
     // event's ptr_num is a uint8_t indexed pointer slot on Symbian^3 (advanced
     // pointers), so raw UITouch identities must be mapped to small stable
@@ -2042,12 +2033,7 @@ namespace eka2l1::ios {
     }
 
     // The render surface handed to the graphics driver. For EAGL it is the
-    // CAEAGLLayer itself; for MetalANGLE we host an MGLLayer sublayer and use
-    // that instead (gl_context_angle only adopts MGLLayer surfaces).
     CALayer *renderLayer = layer;
-#ifdef EKA2L1_IOS_ANGLE
-    renderLayer = [self angleRenderLayerForHostLayer:layer pixelSize:pixelSize scale:scale];
-#endif
 
     bool driver_ready = false;
     {
@@ -2091,36 +2077,6 @@ namespace eka2l1::ios {
     }
 }
 
-#ifdef EKA2L1_IOS_ANGLE
-- (CALayer *)angleRenderLayerForHostLayer:(CALayer *)host
-                                pixelSize:(CGSize)pixelSize
-                                    scale:(CGFloat)scale {
-    // CALayer hierarchy / geometry mutation must run on the main thread.
-    dispatch_block_t work = ^{
-        if (!self->_angleLayer) {
-            self->_angleLayer = [[MGLLayer alloc] init];
-            self->_angleLayer.drawableColorFormat = MGLDrawableColorFormatRGBA8888;
-            self->_angleLayer.drawableDepthFormat = MGLDrawableDepthFormat24;
-            self->_angleLayer.drawableStencilFormat = MGLDrawableStencilFormat8;
-            self->_angleLayer.retainedBacking = NO;
-        }
-        if (self->_angleLayer.superlayer != host) {
-            [self->_angleLayer removeFromSuperlayer];
-            [host addSublayer:self->_angleLayer];
-        }
-        // Frame in points; contentsScale drives MGLLayer.drawableSize in pixels.
-        const CGFloat s = (scale > 0.0) ? scale : 1.0;
-        self->_angleLayer.contentsScale = s;
-        self->_angleLayer.frame = CGRectMake(0.0, 0.0, pixelSize.width / s, pixelSize.height / s);
-    };
-    if ([NSThread isMainThread]) {
-        work();
-    } else {
-        dispatch_sync(dispatch_get_main_queue(), work);
-    }
-    return self->_angleLayer;
-}
-#endif
 
 - (void)detachLayer {
     if (!_state) {

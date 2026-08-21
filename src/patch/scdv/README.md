@@ -17,7 +17,3 @@ Nokia Symbian Belle SDK; its frozen DEF keeps the 31-entry export ABI that ROM
 patch maps rely on. Rebuilding it needs that SDK and its bundled CSL toolchain,
 so the binary is committed alongside the source the way the other patch DLLs in
 this tree are.
-
-`surface_stub.S` and `scripts/build_scdv_belle_patch.sh` keep the earlier
-ABI-preserving binary-patch path around for historical and diagnostic use.
-Build notes and validation live in `docs/ios-asphalt6-x7.md`.

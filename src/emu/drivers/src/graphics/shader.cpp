@@ -18,11 +18,9 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <common/platform.h>
+#include <drivers/graphics/backend/ogl/shader_ogl.h>
 #include <drivers/graphics/graphics.h>
 #include <drivers/graphics/shader.h>
-
-#include <drivers/graphics/backend/ogl/shader_ogl.h>
 
 #include <cstring>
 
