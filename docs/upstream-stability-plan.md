@@ -368,6 +368,30 @@ Five things closed out entirely:
   `src/emu/services/src/{window,fbs,ui}` are now identical to upstream. What is still
   graphics work below lives in `dispatch` and `drivers`, which are separate rows.
 
+**Remeasured again on 21 August, after #607-#625 all landed.** Same exclusions. The
+table below is the 21 August morning measure; what the row-by-row numbers look like now
+that the services batch is in:
+
+| Area | Files | Lines |
+|---|---|---|
+| Kernel objects and lifetimes | 21 | +862/-162 |
+| Netplay and Bluetooth | 23 | +795/-92 |
+| Scripting patches | 7 | +448/-63 |
+| Common, vfs, utils, system, config | 22 | +396/-66 |
+| Patch DLLs | 5 | +342/-0 |
+| Dispatch / GLES HLE | 16 | +289/-33 |
+| Drivers | 15 | +247/-15 |
+| iOS frontend | 4 | +69/-7 |
+| Qt / Android frontends | 4 | +23/-65 |
+| Services (non-graphics, non-netplay) | 4 | +23/-13 |
+| Package, cpu, mem, graphics | 0 | — |
+
+Four areas are at zero now: memory model, interpreter, graphics and package. What is
+left of the services row is three things the fork keeps on purpose -- `delete_registry`
+public for the iOS uninstall path, the app language following the configured locale, and
+the sensor callback's `is_wiping()` guard, which belongs to the kernel batch -- plus the
+`CMakeLists.txt` entries for the Bluetooth notifier that goes with netplay.
+
 What remains, by area:
 
 | Area | Files | Lines | Depends on | Verified by | Start with |
