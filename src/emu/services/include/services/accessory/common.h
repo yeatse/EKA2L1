@@ -26,7 +26,7 @@ namespace eka2l1::epoc::acc {
     static constexpr std::uint32_t GENERIC_ID_ARRAY_COUNT = 10;
     static constexpr std::uint32_t MODEL_ID_MAX_LENGTH = 32;
 
-    // TAccMode. Only the value the emulator ever reports is named here.
+    // TAccMode. Only the value ever reported here is named.
     enum accessory_mode_type {
         accessory_mode_hand_portable = 0
     };
@@ -39,6 +39,7 @@ namespace eka2l1::epoc::acc {
         opcode_s60v3_cancel_notify_new_accessory_connected = 12
     };
 
+    // TAccSrvMsgs, from the accessory server's AccClientServerMessages.h.
     enum opcode_modern {
         opcode_modern_create_accessory_mode_subsession = 0,
         opcode_modern_close_accessory_mode_subsession = 1,
@@ -78,7 +79,7 @@ namespace eka2l1::epoc::acc {
         explicit generic_id_array();
     };
 
-    // TAccPolAccessoryMode
+    // TAccPolAccessoryMode: the mode, and whether audio comes out of the accessory.
     struct accessory_mode {
         std::uint32_t mode_;
         std::uint32_t audio_output_status_;

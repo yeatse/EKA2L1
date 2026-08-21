@@ -262,8 +262,8 @@ namespace eka2l1 {
     }
 
     void etel_phone_subsession::get_nitz_info(eka2l1::service::ipc_context *ctx) {
-        // The emulated network never broadcasts a NITZ time-and-date frame, which a TSY
-        // reports by failing the fetch rather than handing back an empty snapshot.
+        // Nothing here broadcasts a network time frame. A TSY reports that by failing
+        // the fetch, not by handing back an empty snapshot.
         ctx->complete(epoc::error_not_found);
     }
 
@@ -462,8 +462,8 @@ namespace eka2l1 {
                 get_phone_id(ctx);
                 break;
 
-            // The no-location variant is the same fetch minus the location-area slot,
-            // which this fake TSY never fills in anyway.
+            // The no-location variant is the same fetch without the location-area slot,
+            // which is never filled in here anyway.
             case epoc::etel_mobile_phone_get_current_network:
             case epoc::etel_mobile_phone_get_current_network_no_location:
                 get_current_network(ctx);

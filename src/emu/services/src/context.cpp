@@ -175,6 +175,10 @@ namespace eka2l1 {
             if (sys->get_kernel_system()->is_eka1() || ((int)arg_type & ((int)ipc_arg_type::flag_des | (int)ipc_arg_type::flag_16b))) {
                 eka2l1::epoc::desc16 *des = ptr<epoc::desc16>(msg->args.args[idx]).get(msg->own_thr->owning_process());
 
+                if (!des) {
+                    return false;
+                }
+
                 des->assign(msg->own_thr->owning_process(), data);
 
                 return true;
@@ -199,10 +203,14 @@ namespace eka2l1 {
                 if (!is_eka1 && ((int)arg_type & (int)ipc_arg_type::flag_16b)) {
                     eka2l1::epoc::desc16 *des = ptr<epoc::desc16>(msg->args.args[idx]).get(own_pr);
 
+                    // An argument the client left null, or pointed outside its own address
+                    // space, resolves to nothing. The rest of this file already answers that
+                    // with a failure rather than a dereference; these paths did not.
                     if (!des) {
                         if (err_code) {
                             *err_code = epoc::error_bad_descriptor;
                         }
+
                         return false;
                     }
 
@@ -227,6 +235,7 @@ namespace eka2l1 {
                         if (err_code) {
                             *err_code = epoc::error_bad_descriptor;
                         }
+
                         return false;
                     }
 
@@ -384,15 +393,14 @@ namespace eka2l1 {
                     return;
                 }
 
-                // Error level on purpose: the normal-use log preset pins Service.Track at
-                // error, so this would otherwise be invisible in exactly the situation it
-                // exists for - a guest wedged on an opcode nobody implemented.
+                // Error level on purpose: the default log preset pins Service.Track at
+                // error, so a warning here is invisible in exactly the situation it
+                // exists for -- a guest wedged on an opcode nobody implemented.
                 LOG_ERROR(SERVICE_TRACK, "Unimplemented IPC call: 0x{:x} for server: {}", func, obj_name);
 
-                // Leaving the message pending wedges the client for good: a synchronous
-                // SendReceive never returns, and an asynchronous one keeps its active
-                // object armed forever. A real server always completes, so answer with
-                // KErrNotSupported rather than dropping the message on the floor.
+                // A real server always completes the message. Dropping it wedges the
+                // client for good: a synchronous SendReceive never returns, and an
+                // asynchronous one keeps its active object armed forever.
                 ipc_context context;
 
                 context.sys = sys;

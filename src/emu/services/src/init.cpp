@@ -193,10 +193,9 @@ namespace eka2l1::epoc {
         // From Domain Server request
         DEFINE_INT_PROP(sys, 0x1020e406, 0x250, 0);
 
-        // Published by the system state manager at boot on a real device. Without them
-        // SysUtil's critical-disk-space check finds no threshold anywhere and fails, and
-        // a caller that checks free space before writing (Camera saving a photo) never
-        // finishes.
+        // Without these SysUtil's critical-disk-space check finds no threshold at all
+        // and leaves, so a caller that checks free space before writing -- Camera
+        // saving a photo, for one -- never gets to the write.
         DEFINE_INT_PROP(sys, epoc::DISK_LEVEL_CATEGORY, epoc::RAM_DISK_CRITICAL_THRESHOLD_KEY,
             epoc::RAM_DISK_CRITICAL_THRESHOLD);
         DEFINE_INT_PROP(sys, epoc::DISK_LEVEL_CATEGORY, epoc::OTHER_DISK_CRITICAL_THRESHOLD_KEY,
@@ -275,6 +274,7 @@ namespace eka2l1 {
 
             CREATE_SERVER(sys, system_agent_server);
             CREATE_SERVER(sys, unipertar_server);
+
             if (sys->get_symbian_version_use() >= epocver::epoc95) {
                 CREATE_SERVER(sys, timezone_server);
             }

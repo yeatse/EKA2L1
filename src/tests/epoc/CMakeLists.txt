@@ -13,12 +13,15 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/svgb.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/package/manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/applist/registeration.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/applist/recognize.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/fbs/bitmap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/fbs/fontmatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/fbs/linkedfont.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/svg_icon.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/centralrepo/crebinloader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/domain/domain.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/framework/objects.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/timezone/rules.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/centralrepo/creiniloader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/sms/common.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/ui/iconops.cpp

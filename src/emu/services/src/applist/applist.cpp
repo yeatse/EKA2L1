@@ -91,6 +91,9 @@ namespace eka2l1 {
 
     static const char16_t *APA_APP_RUNNER = u"apprun.exe";
 
+    // Which of two registrations for the same app uid to keep. An installed copy
+    // supersedes the one in ROM, the way it does on a device; otherwise the drive the
+    // scan reaches first wins, so the answer does not depend on scan order.
     static bool should_replace_duplicate_registry(const apa_app_registry &replacement, const apa_app_registry &existing) {
         if (replacement.mandatory_info.uid != existing.mandatory_info.uid) {
             return false;
@@ -103,6 +106,10 @@ namespace eka2l1 {
         return replacement.land_drive < existing.land_drive;
     }
 
+    // load_registry() checks for a registration of the same path before it starts
+    // reading, but the read happens outside the lock, so two workers can both get past
+    // that check. Repeat it here, where the entry actually goes in, and settle app uids
+    // claimed by more than one registration file while we hold the lock.
     static bool commit_registry(std::vector<apa_app_registry> &regs, apa_app_registry &&reg) {
         auto same_path = std::find_if(regs.begin(), regs.end(), [&reg](const apa_app_registry &existing) {
             return (common::compare_ignore_case(existing.rsc_path, reg.rsc_path) == 0);
@@ -354,6 +361,10 @@ namespace eka2l1 {
                 reg, land_drive);
         }
 
+        LOG_INFO(SERVICE_APPLIST, "Found app: {}, uid: 0x{:X}",
+            common::ucs2_to_utf8(reg.mandatory_info.long_caption.to_std_string(nullptr)),
+            reg.mandatory_info.uid);
+
         if (!eka2l1::is_absolute(reg.icon_file_path, std::u16string(u"c:\\"), true)) {
             // Try to absolute icon path
             // Search the registration file drive, and than the localizable registration file
@@ -374,15 +385,7 @@ namespace eka2l1 {
         }
 
         const std::lock_guard<std::mutex> guard(list_access_mut_);
-        const std::string app_name = common::ucs2_to_utf8(reg.mandatory_info.long_caption.to_std_string(nullptr));
-        const std::uint32_t app_uid = reg.mandatory_info.uid;
-        const bool committed = commit_registry(regs, std::move(reg));
-
-        if (committed) {
-            LOG_INFO(SERVICE_APPLIST, "Found app: {}, uid: 0x{:X}", app_name, app_uid);
-        }
-
-        return committed;
+        return commit_registry(regs, std::move(reg));
     }
 
     bool applist_server::delete_registry(const std::u16string &rsc_path) {
@@ -513,7 +516,9 @@ namespace eka2l1 {
         std::atomic_bool global_modified = false;
 
         if (avail_drives_ == 0) {
-            for (drive_number drv = drive_z; drv >= drive_a; drv--) {
+            // Stepping one below drive_a would leave the enum's value range.
+            for (int drv_index = drive_z; drv_index >= drive_a; drv_index--) {
+                const drive_number drv = static_cast<drive_number>(drv_index);
                 if (io->get_drive_entry(drv)) {
                     avail_drives_ |= 1 << (drv - drive_a);
                 }
@@ -671,7 +676,7 @@ namespace eka2l1 {
     void applist_server::app_language(service::ipc_context &ctx) {
         // AVKON asks apparc for the application language to pick which .rXX
         // translation to load, so this must follow the configured system
-        // language — a hardcoded English here overrides the locale for every
+        // language -- a hardcoded English here overrides the locale for every
         // app UI even when the ROM ships the requested translation.
         language app_lang = kern->get_current_language();
         if ((static_cast<int>(app_lang) < static_cast<int>(language::en)) || (app_lang == language::any)) {
@@ -1050,6 +1055,8 @@ namespace eka2l1 {
             return result;
         }
 
+        // Probable, not possible: EPossible is numerically zero, which a client reads
+        // as "nothing recognised this" and answers by taking another path entirely.
         result.type_.type_name_.assign(nullptr, "application/octet-stream");
         result.confidence_rating_ = data_recognition_confidence_probable;
         return result;

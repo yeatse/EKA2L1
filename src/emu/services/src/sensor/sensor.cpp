@@ -27,9 +27,9 @@
 #include <atomic>
 
 namespace eka2l1 {
-    // CoreMotion/Android callbacks can outlive a queued guest request. The
-    // callback owns this state, not the service session; session_ is only read
-    // or cleared while the kernel lock is held.
+    // A backend callback can outlive the request that armed it, and the session it
+    // would report to. The callback holds this instead of the session; session_ is
+    // only read or cleared while the kernel lock is held.
     struct sensor_client_session_callback_state {
         kernel_system *kern_;
         sensor_client_session *session_;
@@ -52,8 +52,8 @@ namespace eka2l1 {
     }
 
     sensor_client_session::~sensor_client_session() {
-        // Service sessions are destroyed under the kernel lock. Invalidate the
-        // indirection before controllers release any queued backend callbacks.
+        // Sessions are destroyed under the kernel lock, so a callback that is already
+        // waiting on it sees this before it can look at the session.
         callback_state_->session_ = nullptr;
 
         for (auto &channel : channels_) {
@@ -120,8 +120,8 @@ namespace eka2l1 {
 
         drivers::sensor_driver *ssdriver = ctx->sys->get_sensor_driver();
         if (!ssdriver) {
-            // Frontends without a sensor backend (e.g. iOS) leave the driver
-            // unset; report no channels instead of dereferencing null.
+            // A frontend that has no sensor backend leaves the driver unset. Report
+            // no channels rather than dereferencing it.
             std::uint32_t channel_info_count = 0;
             ctx->write_data_to_descriptor_argument(2, channel_info_count);
             ctx->set_descriptor_argument_length(1, 0);
@@ -292,9 +292,8 @@ namespace eka2l1 {
             return;
         }
 
-        // Both output descriptors are mandatory in the Sensor Framework IPC
-        // contract. Reject bad guest pointers now instead of arming a host
-        // callback which cannot safely report its result later.
+        // Both output descriptors are mandatory here. Refusing a bad one now is much
+        // better than arming a backend callback that cannot report anywhere later.
         if (!ctx->get_descriptor_argument_ptr(1) || !ctx->get_descriptor_argument_ptr(2)
             || (ctx->get_argument_max_data_size(2) < sizeof(data_count_ret_val))) {
             ctx->complete(epoc::error_bad_descriptor);
@@ -309,9 +308,9 @@ namespace eka2l1 {
             kernel_system *kern = callback_state->kern_;
             kern->lock();
 
-            // Taking the kernel lock before touching the session or IPC message
-            // serialises this completion with StopListening, CloseChannel and
-            // client/session teardown on the guest/HLE thread.
+            // Taking the kernel lock before touching the session or the IPC message
+            // serialises this completion against StopListening, CloseChannel and
+            // session teardown, all of which run on the emulated thread.
             if (!kern->is_wiping() && callback_state->session_) {
                 callback_state->session_->complete_channel_data_request_locked(kern, channel_id, data, packet_sent);
             }
@@ -337,8 +336,8 @@ namespace eka2l1 {
             return;
         }
 
-        // The IPC message retains a raw requester pointer. Validate it while
-        // holding the kernel lock before dereferencing any guest descriptor.
+        // The message holds a raw pointer to the requesting thread, which may have
+        // gone away while the backend was working. The kernel lock is held here.
         if (!context || !context->msg || !kern->is_thread_alive(context->msg->own_thr)) {
             ask_recv_time_.erase(channel_id);
             return;

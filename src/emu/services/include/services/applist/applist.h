@@ -299,7 +299,6 @@ namespace eka2l1 {
         void get_app_icon_sizes(service::ipc_context &ctx);
         void get_native_executable_name_if_non_native(service::ipc_context &ctx);
         void app_info_provided_by_reg_file(service::ipc_context &ctx);
-        data_recog_result recognize_data_impl(common::ro_stream &stream, const std::u16string &name);
 
         void launch_app(service::ipc_context &ctx);
         void is_program(service::ipc_context &ctx);
@@ -324,6 +323,10 @@ namespace eka2l1 {
         explicit applist_server(system *sys);
         ~applist_server() override;
 
+        // Recognition depends on the data and the name, not on server state, so this
+        // is a static and can be exercised on its own.
+        static data_recog_result recognize_data_impl(common::ro_stream &stream, const std::u16string &name);
+
 
         /**
          * @brief       Get the legacy level of the server.
@@ -342,7 +345,9 @@ namespace eka2l1 {
         /**
          * \brief Forget a registeration without waiting for the next rescan.
          *
-         * Used by frontends that delete an installed app's files themselves.
+         * Used by frontends that delete an installed app's files themselves. Public
+         * here, unlike upstream, because the iOS frontend removes an N-Gage card
+         * game's files itself and has to drop the registration with them.
          *
          * \param rsc_path Path of the registeration file the entry was read from.
          */

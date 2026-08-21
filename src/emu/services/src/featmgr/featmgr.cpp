@@ -48,7 +48,7 @@ namespace eka2l1 {
         feature_id_flash_lite_browser_plugin = 1146,
         feature_id_pen_calibration = 1658,
         feature_id_tactile_feedback = 1718,
-        feature_id_app_menu_show_images = 1012
+        feature_id_help = 1012
     };
 
     void featmgr_server::do_feature_scanning(system *sys) {
@@ -63,16 +63,14 @@ namespace eka2l1 {
         enable_features.push_back(feature_id_vibra);
         enable_features.push_back(feature_id_pen_calibration);
 
-        // AVKON app menus query this to decide whether menu items can show images.
-        // Most ROM featreg.cfg files are near-empty, so EKA2L1 default-denies it; the
-        // Calculator's DynInitMenuPaneL then deletes image menu items and panics
-        // (EIKCOCTL 8) / fails to build the Options menu. Real devices treat it as
-        // supported. (Ref: same Calculator-LSK issue diagnosed on the wasm build.)
-        enable_features.push_back(feature_id_app_menu_show_images);
+        // Every S60 device ships the help application, and AVKON adjusts a menu pane
+        // depending on whether it is there. A ROM's featreg.cfg is usually near-empty
+        // here, so anything not listed reads as unsupported: the Calculator's Options
+        // menu then panics with EIKCOCTL 8 instead of opening.
+        enable_features.push_back(feature_id_help);
 
-        // Browser-hosted Flash Lite is a separate platform feature from the
-        // standalone viewer. Report it only when the ROM actually supplies the
-        // Netscape-compatible browser plug-in.
+        // Browser-hosted Flash Lite is a separate feature from the standalone viewer
+        // below, so report it only when the ROM carries the browser plug-in itself.
         if (sys->get_io_system()->exist(u"z:\\sys\\bin\\npflashlite.dll")) {
             enable_features.push_back(feature_id_flash_lite_browser_plugin);
         }

@@ -366,9 +366,8 @@ namespace eka2l1 {
             return;
         }
 
-        // Physical drivers are represented by host-side HLE services rather
-        // than loaded into the emulated kernel. Match the existing LDD loader
-        // contract so clients can proceed to the emulated channel operation.
+        // Same answer as the logical driver above: the device the client is about to
+        // open is an HLE service here, not a driver loaded into the emulated kernel.
         LOG_TRACE(SERVICE_LOADER, "Trying to load PDD {}", common::ucs2_to_utf8(pdd_name.value()));
         context.complete(epoc::error_none);
     }

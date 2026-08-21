@@ -327,19 +327,26 @@ namespace eka2l1 {
             ctx->complete(epoc::error_none);
             break;
 
-        // A disk-space notification legitimately stays outstanding until the free space
-        // crosses the client's threshold, which EKA2L1 never reports. Leave it pending
-        // rather than completing it, or a client that re-arms on completion spins.
+        // Free space never crosses the client's threshold here, since the emulator
+        // never reports one, so the request stays outstanding the way it would on a
+        // device with a quiet disk. Completing it instead makes a client that re-arms
+        // on completion spin. The cancel is the only thing that ends it.
         case epoc::fs_msg_notify_disk_space:
-            LOG_TRACE(SERVICE_EFSRV, "Fs::NotifyDiskSpace left pending, not implemented");
+            disk_space_notify_.complete(epoc::error_cancel);
+            disk_space_notify_ = epoc::notify_info(ctx->msg->request_sts, ctx->msg->own_thr);
+            break;
+
+        case epoc::fs_msg_notify_disk_space_cancel:
+            disk_space_notify_.complete(epoc::error_cancel);
+            ctx->complete(epoc::error_none);
             break;
 
         default: {
             LOG_ERROR(SERVICE_EFSRV, "Unknown FSServer client opcode {}!", ctx->msg->function);
 
-            // Everything else is a request a real file server answers straight away, so
-            // dropping it wedges the client: the harvester mounts its file-system plugins
-            // with Fs::MountPlugin (108) and waits for the reply that never came.
+            // Every other request is one a real file server answers straight away, so
+            // dropping it wedges the client: the harvester mounts its file-system
+            // plugins with Fs::MountPlugin and waits for the reply that never came.
             ctx->complete(epoc::error_not_supported);
             break;
         }
@@ -489,7 +496,9 @@ namespace eka2l1 {
             io_system *io = sys->get_io_system();
 
             // Ignore drive z.
-            for (drive_number drv = drive_y; drv >= drive_a; drv--) {
+            // Stepping one below drive_a would leave the enum's value range.
+            for (int drv_index = drive_y; drv_index >= drive_a; drv_index--) {
+                const drive_number drv = static_cast<drive_number>(drv_index);
                 if (io->get_drive_entry(drv)) {
                     system_apps_dir[0] = drive_to_char16(drv);
                     shared_data_dir[0] = drive_to_char16(drv);
@@ -505,7 +514,9 @@ namespace eka2l1 {
         io_system *io = sys->get_io_system();
 
         // Ignore drive z.
-        for (drive_number drv = drive_y; drv >= drive_a; drv--) {
+        // Stepping one below drive_a would leave the enum's value range.
+        for (int drv_index = drive_y; drv_index >= drive_a; drv_index--) {
+            const drive_number drv = static_cast<drive_number>(drv_index);
             if (io->get_drive_entry(drv)) {
                 temp_data_dir[0] = drive_to_char16(drv);
 
