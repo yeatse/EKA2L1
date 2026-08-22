@@ -519,13 +519,22 @@ not want a second one.
 | Netplay, Bluetooth, and the Bluetooth notifier | 18 | +631/-70 | the last batch of any size; internal order is load-bearing |
 | Dispatch — the OpenVG swap heuristic | 5 | +75/-4 | full-surface image coverage tracking in `gnuVG`, and the deferred swap in `egl.cpp` it feeds |
 | `kernel/svc.cpp` — start missing ROM daemons | 1 | +59/-0 | spawn `ClkNitzMdls.exe` when its start object is looked up, standing in for the boot sequence EKA2L1 never runs |
-| `system/epoc.cpp` — iOS glue | 1 | +33/-2 | CPU-backend selection, `cache_root_`, the teardown flush, `runtime_resource_path` for the patch folder |
+| `system/epoc.cpp` — iOS glue | 1 | +29/-2 | **sent as #641**; CPU-backend selection, `cache_root_`, the teardown flush, `runtime_resource_path` for the patch folder |
 | `services/applist/applist.h` | 1 | +11/-8 | `delete_registry` moved to public for the iOS uninstall path |
 | `src/tests/epoc` | 3 | +58/-0 | the SMS-PDU virtual-destructor static assert and the AknIconServer opcode pinning |
-| `config/*.inl` | 2 | +2/-0 | the `ios-use-jit` option and the per-app `screen-mode` setting |
+| `config/*.inl` | 2 | +2/-0 | `ios-use-jit` went with #641; the per-app `screen-mode` setting is still here |
 | `common/src/upnp.cpp`, `ios/Bridge/IosEmulator.mm`, `qt/src/thread.cpp` | 3 | +4/-3 | a missing `platform.h` include, the teardown flush call, and one `pause_event.reset()` removed |
 
-Three of these rows are only nominally fork-specific and could go out as small PRs
+#641 took the `epoc.cpp` row, and it is worth saying what rebuilding it on upstream
+turned up, because it is the same lesson as #607: all four hooks already had their
+supporting half upstream and no consumer at all, so upstream today runs a JIT on
+sideload builds with nothing asking for it, never frees a killed process's audio,
+extracts mounted zips back into `Documents` after its own frontend cleaned that up,
+and loads no patch DLL on iOS whatsoever. The fork's own version had the CPU log line
+inside `#if EKA2L1_IOS_DYNARMIC`, which hid the backend from exactly the App Store
+build whose logs matter most; the PR moves it out.
+
+Three more rows are only nominally fork-specific and could go out as small PRs
 tomorrow: the `upnp.cpp` include, the two test files, and the `applist.h` visibility
 change. The `qt/src/thread.cpp` line is a one-line behaviour change to a frontend this
 fork does not build, so it needs a desktop run before it is proposed. What genuinely
