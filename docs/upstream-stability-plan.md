@@ -336,6 +336,10 @@ Two options, and the second costs upstream nothing:
 
 ## What is left in the fork
 
+*Three measures live in this section, oldest first. The current one is
+[22 August](#remeasured-22-august-after-626-640); the two before it are kept because they
+show what the batches actually removed, not because their tables are still actionable.*
+
 Remeasured on 2026-08-21, with `master` at the merge of #606. **The earlier count — 162
 commits split 91/29/42 — is superseded, and not by arithmetic.** Twenty-three PRs landed
 between 16 and 21 August, and none of them was a cherry-pick: each was rebuilt on
@@ -486,6 +490,100 @@ Three things the table does not say on its own:
   splitting.
 - **The netplay batch is the one place order is load-bearing.** The later fixes assume the
   earlier ones; sending them out of order produces PRs that do not make sense on their own.
+
+### Remeasured 22 August, after #626-#640
+
+`master` is at the merge of #640 and `ios-next` has merged it. The two earlier measures
+above counted hundreds of files; **the code delta is now 34 files, +873/-87** (same
+exclusions: `docs/` and `src/emu/qt/translations/`, the latter now at zero as well).
+Everything the batches sent between 21 and 22 August covered — the whole services row,
+the package row, the kernel row, common/vfs/utils, the scripting patches, the patch DLL
+sources, the drivers row — is upstream. What still differs is best read as two buckets,
+because the older tables mixed them and so overstated what is left to send.
+
+**Bucket 1: fork infrastructure, which stays here by design.** None of this is a
+candidate for upstreaming; upstream has its own iOS job in `build.yml` (#640) and does
+not want a second one.
+
+| What | Files | Lines |
+|---|---|---|
+| iOS CI workflows (TestFlight, unsigned IPA, dev-cert provisioning, signing maintenance) | 4 | +666/-0 |
+| `scripts/` (the regression suite, the BIA gameplay test, the CPU smoke generator, the simulator seeder) | 4 | +1248/-0 |
+| Repo meta (`AGENTS.md`, `CLAUDE.md`, `BUILDING.md`, `README.md`, `.gitignore`) | 5 | +154/-3 |
+| `docs/` — this file and 120 root-cause write-ups | 121 | +12778/-0 |
+
+**Bucket 2: emulator code still to send.** This is the real remainder.
+
+| Area | Files | Lines | What it is |
+|---|---|---|---|
+| Netplay, Bluetooth, and the Bluetooth notifier | 18 | +631/-70 | the last batch of any size; internal order is load-bearing |
+| Dispatch — the OpenVG swap heuristic | 5 | +75/-4 | full-surface image coverage tracking in `gnuVG`, and the deferred swap in `egl.cpp` it feeds |
+| `kernel/svc.cpp` — start missing ROM daemons | 1 | +59/-0 | spawn `ClkNitzMdls.exe` when its start object is looked up, standing in for the boot sequence EKA2L1 never runs |
+| `system/epoc.cpp` — iOS glue | 1 | +33/-2 | CPU-backend selection, `cache_root_`, the teardown flush, `runtime_resource_path` for the patch folder |
+| `services/applist/applist.h` | 1 | +11/-8 | `delete_registry` moved to public for the iOS uninstall path |
+| `src/tests/epoc` | 3 | +58/-0 | the SMS-PDU virtual-destructor static assert and the AknIconServer opcode pinning |
+| `config/*.inl` | 2 | +2/-0 | the `ios-use-jit` option and the per-app `screen-mode` setting |
+| `common/src/upnp.cpp`, `ios/Bridge/IosEmulator.mm`, `qt/src/thread.cpp` | 3 | +4/-3 | a missing `platform.h` include, the teardown flush call, and one `pause_event.reset()` removed |
+
+Three of these rows are only nominally fork-specific and could go out as small PRs
+tomorrow: the `upnp.cpp` include, the two test files, and the `applist.h` visibility
+change. The `qt/src/thread.cpp` line is a one-line behaviour change to a frontend this
+fork does not build, so it needs a desktop run before it is proposed. What genuinely
+needs work is the netplay batch, and after that only the dispatch heuristic and the
+startup-daemon hook remain as behaviour.
+
+Four things that were rows in the 21 August table are now at zero: kernel objects and
+lifetimes (down from 21 files/+862 to the one startup-daemon hook), services non-netplay
+(down from 30 files/+1450 to one header visibility change), common/vfs/utils/config
+(down from 25 files/+526 to two `.inl` lines and one include), and the patch DLLs.
+
+**The merge itself was not free of judgement.** Four files conflicted, and in all four
+the conflict was between the fork's original and upstream's rebuilt version of the same
+change — #637's scripting split against the fork's, and #638's EKA1 IPC comment against
+the fork's. Upstream's side won every time, because upstream's is the reviewed one:
+`scripting/manager.{h,cpp}` are now byte-identical to upstream (the fork's
+`eager_resolve` parameter had no caller passing anything but the default, and upstream
+dropped it), the redundant `else() set (ENABLE_SCRIPTING 0)` went with it since
+`#cmakedefine` treats an unset variable and `0` alike, and `svc.cpp` kept only upstream's
+comment. Resolving these by checking out upstream's whole file is a trap worth naming:
+`svc.cpp` still carries 59 fork-only lines, and taking upstream's copy of it silently
+deletes them. Resolve the hunks, not the files.
+
+### Branches, remeasured with the same rule
+
+Commit counts stopped being a valid unit of measurement for the tree, and they are no
+worse a guide for branches: `ahead=N` says nothing about whether the content landed under
+a different sha. Every branch below was judged by diffing its content against
+`upstream/master`.
+
+Absorbed, and deleted on 22 August (shas recorded so they can be resurrected):
+
+- The eight `upstream/*` topic branches — `applist-sensor`, `chore`, `common`,
+  `dyncom-breakpoint`, `eka1-ipc`, `esock`, `scripting`, `case-sensitive-volumes` — plus
+  `codex/ios-upstream-release`. All are ancestors of `upstream/master`.
+- `build/lunasvg-3.5` (`dc2ba7f38`). Upstream pins the same lunasvg commit
+  (`51c65dc8`) and already carries `src/tests/epoc/services/svg_icon.cpp`; the branch's
+  one commit is content-identical to what landed.
+
+Kept, because their content is genuinely not upstream and not in `ios-next` either:
+
+- `build/modernize-deps` (`d68811ac8`). The submodule bumps landed, but the macOS host
+  build fixes did not: the Apple Silicon ffmpeg@5 path, `#define stat64 stat` for SDK 26,
+  the 11.0 deployment target that stops being forced over the caller's, and
+  `capstone-static` → `capstone`.
+- `feat/guest-internet-access-point` (`0d653dde2`). One commit, +494/-11 across
+  CommsDat, central repository and esock, in neither `upstream/master` nor `ios-next`.
+- `codex/ios-metal` (`f950f3bf9`) and `ios-render-attemp` (`819d12f4f`). Both are
+  experiments the fork has moved past — the MetalANGLE backend was removed in
+  `249228878` and [the ANGLE plan](./ios_metal_angle_plan.md) supersedes it — but each
+  still holds code that exists nowhere else, so deleting them is a decision to lose that
+  code, not a cleanup.
+- `ios` is the fork's default branch and where TestFlight builds are cut. It holds five
+  commits `ios-next` does not, all CI wiring.
+
+One consequence of the merge worth flagging: upstream's `build.yml` now runs the
+App Store signing path on a push to `master`, and this fork has a `master`. Pushing
+`origin master` fast-forward will fire it.
 
 ## Sending the first behavioural batch
 
