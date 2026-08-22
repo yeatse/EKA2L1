@@ -28,3 +28,5 @@ testpaint.bmp
 # Python bytecode caches, e.g. from the patch DLL build scripts
 __pycache__/
 *.pyc
+
+artifacts/
