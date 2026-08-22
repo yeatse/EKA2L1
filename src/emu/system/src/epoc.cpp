@@ -634,25 +634,21 @@ namespace eka2l1 {
 #if EKA2L1_ARCH(ARM)
         cpu_type = arm_emulator_type::r12l1;
 #elif EKA2L1_PLATFORM(IOS)
-        // iOS defaults to dyncom. Dynarmic is not robust enough to be the
-        // default (Calculator 0x10005902 still SIGSEGVs inside
-        // Dynarmic::A32::Jit::Impl::Run() — the known A32 issue) and the JIT
-        // win is in sustained execution, not one-shot launch. Builds that
-        // carry dynarmic (EKA2L1_IOS_DYNARMIC: simulator, or sideload device
-        // builds) let the user opt in from the settings screen;
-        // the opt-in is the dedicated ios_use_jit flag — NOT cpu_backend,
-        // whose "dynarmic" desktop default may already be persisted in
-        // config.yml — and is honored only when the process actually has JIT
-        // permission (host_can_jit() runtime probe), else stay on dyncom.
+        // dyncom by default: dynarmic's A32 backend is not robust enough to be
+        // the one an App Store build lands on, and the JIT win is in sustained
+        // execution rather than the launch this decides. Builds that carry it
+        // (EKA2L1_IOS_DYNARMIC) let the user opt in, through ios_use_jit rather
+        // than cpu_backend -- the latter defaults to "dynarmic" for desktop and
+        // may already be persisted, which must not enable a JIT by itself.
         cpu_type = arm_emulator_type::dyncom;
 #if EKA2L1_IOS_DYNARMIC
         if (conf_->ios_use_jit && arm::host_can_jit()) {
             cpu_type = arm_emulator_type::dynarmic;
         }
+#endif
         LOG_INFO(SYSTEM, "iOS CPU backend: {} (JIT opt-in: {}, JIT permission: {})",
             (cpu_type == arm_emulator_type::dynarmic) ? "dynarmic" : "dyncom",
             conf_->ios_use_jit, arm::host_can_jit());
-#endif
 #else
         cpu_type = /*arm::string_to_arm_emulator_type(conf_->cpu_backend);*/ arm_emulator_type::dynarmic;
 #endif
@@ -727,8 +723,8 @@ namespace eka2l1 {
         }
 
         if (dispatcher_) {
-            // Objects orphaned by a dead process are destroyed here: this thread holds no
-            // kernel lock, so a teardown that waits on an audio render callback can't deadlock.
+            // Objects orphaned by a dead process are destroyed here, where no kernel lock is
+            // held: an audio teardown waits out the render callback, which needs that lock.
             dispatcher_->flush_pending_teardown();
         }
 
