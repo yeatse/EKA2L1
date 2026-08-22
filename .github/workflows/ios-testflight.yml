@@ -1,6 +1,5 @@
-# Builds a distribution-signed iOS archive and uploads it to TestFlight: on
-# every push to the ios branch, and on a schedule whenever upstream's master
-# has moved (see the note above the triggers for what each mode builds).
+# Manually builds a distribution-signed iOS archive and uploads it to
+# TestFlight. It can build either this fork's branch or upstream's master.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   APPLE_TEAM_ID           Apple Developer team id (e.g. L6JP27B8YR)
@@ -41,23 +40,16 @@
 #   in App Store Connect.
 # - CFBundleVersion is hardcoded in Info.plist; manageAppVersionAndBuildNumber
 #   in the export options lets Xcode bump the build number to the next valid
-#   value during upload, so pushes don't collide on TestFlight build numbers.
+#   value during upload, so builds don't collide on TestFlight build numbers.
 # - When the secrets are not configured (e.g. forks), the job logs a warning
 #   and skips instead of failing.
 
 name: iOS TestFlight
 
-# Two modes, deliberately separate:
+# Two manually selected modes:
 #
-#   push to `ios` / workflow_dispatch  -> build this fork's branch, as before.
-#   schedule                           -> build upstream's master, if it moved.
-#
-# The scheduled mode exists because the iOS port is upstream now (#587), so
-# "does upstream's master still work on a phone" is a question worth answering
-# on every merge rather than whenever somebody remembers to check. It builds
-# upstream's tree, not this fork's: a TestFlight build from it contains nothing
-# that has not been sent upstream, which is the whole point -- a regression it
-# shows is a regression upstream users would get.
+#   track_upstream = false  -> build this fork's branch.
+#   track_upstream = true   -> build upstream's master.
 #
 # The upload is skipped when upstream's master has not moved since the last one,
 # tracked by a `tf-upload/<sha>` tag in this repository. Only the tag's name
@@ -68,18 +60,10 @@ name: iOS TestFlight
 # of a superseded commit has no audience.
 
 on:
-  push:
-    branches:
-      - ios
-  schedule:
-    # Upstream merges arrive in bursts, so poll rather than pick a daily hour.
-    # GitHub throttles (and eventually disables) schedules on dormant repos;
-    # this one stays active, but that is worth knowing if runs go quiet.
-    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       track_upstream:
-        description: "Build upstream's master (like the scheduled run) instead of this branch"
+        description: "Build upstream's master instead of this branch"
         type: boolean
         default: false
       force:
@@ -90,15 +74,9 @@ on:
 permissions:
   contents: write
 
-# Upstream-tracking runs share one group and never cancel each other: a build
-# takes longer than the poll interval, so cancelling in progress meant every
-# tick killed the previous one and nothing was ever uploaded. GitHub keeps at
-# most one queued run per group, and a queued run re-checks upstream when it
-# starts, so a burst of ticks collapses into one build rather than a backlog.
-# Branch pushes keep the old behaviour, where a newer push does supersede.
 concurrency:
-  group: ios-testflight-${{ (github.event_name == 'schedule' || inputs.track_upstream == true) && 'upstream' || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'schedule' && inputs.track_upstream != true }}
+  group: ios-testflight-${{ inputs.track_upstream == true && 'upstream' || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   upload:
@@ -107,7 +85,7 @@ jobs:
     env:
       EKA2L1_IOS_CONFIGURATION: Release
       ARCHIVE_PATH: build/ios-device/EKA2L1.xcarchive
-      TRACK_UPSTREAM: ${{ github.event_name == 'schedule' || inputs.track_upstream == true }}
+      TRACK_UPSTREAM: ${{ inputs.track_upstream == true }}
 
     steps:
       - name: Check TestFlight secrets
@@ -120,9 +98,8 @@ jobs:
           fi
           echo "configured=${CONFIGURED}" >> "${GITHUB_OUTPUT}"
 
-      # Submodules are pulled by the resolve step instead of here: the scheduled
-      # run usually finds nothing to do, and cloning the submodule tree (ffmpeg
-      # above all) every half hour to then exit is most of the job's cost.
+      # Submodules are pulled by the resolve step after it knows which tree the
+      # manually selected mode should build.
       - name: Checkout
         if: steps.guard.outputs.configured == 'true'
         uses: actions/checkout@v4
@@ -291,8 +268,8 @@ jobs:
             -authenticationKeyID "${APPSTORE_KEY_ID}" \
             -authenticationKeyIssuerID "${APPSTORE_ISSUER_ID}"
 
-      # Named after the commit that was actually built, which in the scheduled
-      # mode is upstream's HEAD rather than github.sha.
+      # Named after the commit that was actually built, which in upstream mode
+      # is upstream's HEAD rather than github.sha.
       - name: Upload dSYM artifact
         if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
         uses: actions/upload-artifact@v4
