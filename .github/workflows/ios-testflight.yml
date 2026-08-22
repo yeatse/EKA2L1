@@ -1,6 +1,5 @@
-# Builds a distribution-signed iOS archive and uploads it to TestFlight: on
-# every push to the ios-next branch, and on a schedule whenever upstream's
-# master has moved (see the note above the triggers for what each mode builds).
+# Builds a distribution-signed iOS archive from ios-next and uploads it to
+# TestFlight, on every push to that branch.
 #
 # This is the only place anything is signed. build.yml -- which is shared with
 # upstream -- builds the device slice unsigned and stops there, because signing
@@ -53,56 +52,24 @@
 
 name: iOS TestFlight
 
-# Two modes, deliberately separate:
-#
-#   push to `ios` / workflow_dispatch  -> build this fork's branch, as before.
-#   schedule                           -> build upstream's master, if it moved.
-#
-# The scheduled mode exists because the iOS port is upstream now (#587), so
-# "does upstream's master still work on a phone" is a question worth answering
-# on every merge rather than whenever somebody remembers to check. It builds
-# upstream's tree, not this fork's: a TestFlight build from it contains nothing
-# that has not been sent upstream, which is the whole point -- a regression it
-# shows is a regression upstream users would get.
-#
-# The upload is skipped when upstream's master has not moved since the last one,
-# tracked by a `tf-upload/<sha>` tag in this repository. Only the current
-# upstream HEAD is ever considered: if several commits land between two runs,
-# the intermediate ones are not backfilled, because a rolling TestFlight build
-# of a superseded commit has no audience.
+# One mode: whatever is on ios-next. Upstream's master reaches TestFlight by
+# being merged into ios-next, which is a deliberate act with a person behind
+# it, rather than by a poller building a tree nobody asked about.
 
 on:
   push:
     branches:
       - ios-next
-  schedule:
-    # Upstream merges arrive in bursts, so poll rather than pick a daily hour.
-    # GitHub throttles (and eventually disables) schedules on dormant repos;
-    # this one stays active, but that is worth knowing if runs go quiet.
-    - cron: '*/30 * * * *'
   workflow_dispatch:
-    inputs:
-      track_upstream:
-        description: "Build upstream's master (like the scheduled run) instead of this branch"
-        type: boolean
-        default: false
-      force:
-        description: "With track_upstream: upload even if this commit was already sent"
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
+  contents: read
 
-# Upstream-tracking runs share one group and never cancel each other: a build
-# takes longer than the poll interval, so cancelling in progress meant every
-# tick killed the previous one and nothing was ever uploaded. GitHub keeps at
-# most one queued run per group, and a queued run re-checks upstream when it
-# starts, so a burst of ticks collapses into one build rather than a backlog.
-# Branch pushes keep the old behaviour, where a newer push does supersede.
+# A newer push supersedes a build still running for an older one; nobody wants
+# a superseded commit on TestFlight.
 concurrency:
-  group: ios-testflight-${{ (github.event_name == 'schedule' || inputs.track_upstream == true) && 'upstream' || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'schedule' && inputs.track_upstream != true }}
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   upload:
@@ -111,7 +78,6 @@ jobs:
     env:
       EKA2L1_IOS_CONFIGURATION: Release
       ARCHIVE_PATH: build/ios-device/EKA2L1.xcarchive
-      TRACK_UPSTREAM: ${{ github.event_name == 'schedule' || inputs.track_upstream == true }}
 
     steps:
       - name: Check TestFlight secrets
@@ -124,65 +90,21 @@ jobs:
           fi
           echo "configured=${CONFIGURED}" >> "${GITHUB_OUTPUT}"
 
-      # Submodules are pulled by the resolve step instead of here: the scheduled
-      # run usually finds nothing to do, and cloning the submodule tree (ffmpeg
-      # above all) every half hour to then exit is most of the job's cost.
       - name: Checkout
         if: steps.guard.outputs.configured == 'true'
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          submodules: recursive
 
-      # Decides what gets built, and whether there is anything to do at all.
-      # In branch mode this only reports the commit that was checked out.
-      - name: Resolve the commit to build
+      # Names the build for the ffmpeg cache key and the dSYM artifact.
+      - name: Identify the commit being built
         if: steps.guard.outputs.configured == 'true'
         id: target
-        env:
-          FORCE: ${{ inputs.force == true }}
         run: |
           set -euo pipefail
-
-          if [ "${TRACK_UPSTREAM}" != "true" ]; then
-            echo "Branch mode: building ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD)"
-            git submodule update --init --recursive
-            {
-              echo "build=true"
-              echo "sha=$(git rev-parse HEAD)"
-              echo "short_sha=$(git rev-parse --short HEAD)"
-              echo "source=${GITHUB_REF_NAME}"
-              echo "ffmpeg=$(git -C src/external/ffmpeg rev-parse HEAD)"
-            } >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          git remote add upstream https://github.com/EKA2L1/EKA2L1.git 2>/dev/null || true
-          git fetch --no-tags upstream master
-          git fetch --tags origin
-
-          UPSTREAM_SHA="$(git rev-parse upstream/master)"
-          UPSTREAM_SHORT="$(git rev-parse --short upstream/master)"
-          TAG="tf-upload/${UPSTREAM_SHA}"
-
-          echo "Upstream master is at ${UPSTREAM_SHORT}"
-
-          if [ -n "$(git tag -l "${TAG}")" ] && [ "${FORCE}" != "true" ]; then
-            echo "Already uploaded ${UPSTREAM_SHORT} (tag ${TAG}); nothing to do."
-            echo "build=false" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-
-          # Build upstream's tree exactly, submodules included -- this fork's
-          # unsent changes must not end up in a build that claims to be upstream.
-          git checkout --detach "${UPSTREAM_SHA}"
-          git submodule update --init --recursive
-
+          echo "Building ${GITHUB_REF_NAME} at $(git rev-parse --short HEAD)"
           {
-            echo "build=true"
-            echo "sha=${UPSTREAM_SHA}"
-            echo "short_sha=${UPSTREAM_SHORT}"
-            echo "source=upstream/master"
-            echo "tag=${TAG}"
+            echo "short_sha=$(git rev-parse --short HEAD)"
             echo "ffmpeg=$(git -C src/external/ffmpeg rev-parse HEAD)"
           } >> "${GITHUB_OUTPUT}"
 
@@ -190,21 +112,21 @@ jobs:
       # building one takes longer than the app. Keyed on the submodule commit,
       # so a bump rebuilds it and nothing else does.
       - name: Cache iOS ffmpeg
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         uses: actions/cache@v4
         with:
           path: src/external/ffmpeg/ios/device
           key: ffmpeg-ios-device-${{ steps.target.outputs.ffmpeg }}
 
       - name: Select Xcode
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Write App Store Connect API key
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         env:
           APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
         run: |
@@ -213,7 +135,7 @@ jobs:
           chmod 600 "${RUNNER_TEMP}/asc_key.p8"
 
       - name: Import signing certificates
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true' && (env.HAS_DEV_CERT == 'true' || env.HAS_DIST_CERT == 'true')
+        if: steps.guard.outputs.configured == 'true' && (env.HAS_DEV_CERT == 'true' || env.HAS_DIST_CERT == 'true')
         env:
           HAS_DEV_CERT: ${{ secrets.IOS_DEV_SIGNING_KEY != '' }}
           HAS_DIST_CERT: ${{ secrets.IOS_DIST_SIGNING_KEY != '' }}
@@ -245,7 +167,7 @@ jobs:
           security list-keychains -d user -s "${KEYCHAIN}" login.keychain-db
 
       - name: Build signed archive
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         env:
           EKA2L1_IOS_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
           EKA2L1_ASC_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
@@ -257,7 +179,7 @@ jobs:
           scripts/build_ios.sh archive
 
       - name: Upload to TestFlight
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
@@ -295,27 +217,13 @@ jobs:
             -authenticationKeyID "${APPSTORE_KEY_ID}" \
             -authenticationKeyIssuerID "${APPSTORE_ISSUER_ID}"
 
-      # Named after the commit that was actually built, which in the scheduled
-      # mode is upstream's HEAD rather than github.sha.
       - name: Upload dSYM artifact
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true'
+        if: steps.guard.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: EKA2L1-testflight-dSYM-${{ steps.target.outputs.short_sha }}
           path: ${{ env.ARCHIVE_PATH }}/dSYMs
           if-no-files-found: warn
-
-      # Only after a successful upload, so a failed run is retried on the next
-      # tick instead of being recorded as done.
-      - name: Mark this upstream commit as uploaded
-        if: steps.guard.outputs.configured == 'true' && steps.target.outputs.build == 'true' && steps.target.outputs.tag != ''
-        env:
-          TAG: ${{ steps.target.outputs.tag }}
-          SHA: ${{ steps.target.outputs.sha }}
-        run: |
-          set -euo pipefail
-          git tag -f "${TAG}" "${SHA}"
-          git push -f origin "refs/tags/${TAG}"
 
       - name: Clean up signing material
         if: always()
