@@ -2628,14 +2628,7 @@ namespace eka2l1::epoc {
     }
 
     BRIDGE_FUNC(std::int32_t, process_open_by_id, std::uint32_t id, const epoc::owner_type owner) {
-        kernel::process *pr = nullptr;
-        if (id == static_cast<std::uint32_t>(kernel::special_handle_type::crr_process)) {
-            pr = kern->crr_process();
-        } else if (id == static_cast<std::uint32_t>(kernel::special_handle_type::crr_thread)) {
-            pr = kern->crr_thread()->owning_process();
-        } else {
-            pr = kern->get_by_id<kernel::process>(id);
-        }
+        auto pr = kern->get_by_id<kernel::process>(id);
 
         if (!pr) {
             LOG_ERROR(KERNEL, "Unable to find process with ID: {}", id);
