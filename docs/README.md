@@ -5,7 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
-| 2026-08-22 | [A ROM breakpoint kills the guest on dyncom, whatever the callback does](./dyncom-thumb-rom-breakpoint-resume.md) |
+| 2026-08-22 | [A merge dropped dyncom's breakpoint resume fix, and the Avkon patch died with it](./dyncom-thumb-rom-breakpoint-resume.md) |
 | 2026-08-16 | [A stability net for upstreaming this fork](./upstream-stability-plan.md) |
 | 2026-08-11 | [Dragon World stalls at the difficulty screen in netplay](./dragon-world-recv-one-or-more-layout.md) |
 | 2026-08-11 | [Verifying Bluetooth netplay with two simulators on one host](./netplay-two-simulator-verification.md) |

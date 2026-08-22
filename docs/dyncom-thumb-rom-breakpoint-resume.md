@@ -1,4 +1,4 @@
-# A ROM breakpoint kills the guest on dyncom, whatever the callback does
+# A merge dropped dyncom's breakpoint resume fix, and the Avkon patch died with it
 
 ## Symptom
 
@@ -26,12 +26,9 @@ ARM mode, and `cpu->TFlag=0` says so outright.
 
 ## Narrowing it down
 
-The failure had nothing to do with the Calculator. It was already failing before
-the last upstream merge, so the first job was to find what actually turned it on.
-
 Disabling the two `register_rom_export_breakpoint("eikcoctl.dll", 70, ...)`
 entries in `builtin_patches.cpp` — the native mirror of
-`s60v3_empty_avkon_menu_fix.lua` — turned the suite green. Re-enabling them
+`s60v3_empty_avkon_menu_fix.lua` — turned the suite green, and re-enabling them
 reproduced the crash every time.
 
 The obvious next suspicion, that the patch callback jumps somewhere wrong, is
@@ -45,10 +42,7 @@ wrong. Two pieces of evidence:
 The hook fired exactly once, at `0x814F511C`. The guest died at `0x814F5124`,
 eight bytes later.
 
-## Conclusion
-
-The defect is in dyncom's `BKPT_INST` handler
-(`src/emu/cpu/src/dyncom/arm_dyncom_interpreter.cpp`):
+That put the fault in dyncom's `BKPT_INST` handler, which on this branch read:
 
 ```c
 cpu->RaiseException(exception_type_breakpoint, cpu->Reg[15]);
@@ -57,43 +51,64 @@ if (cpu->Reg[15] != pc) goto DISPATCH;
 cpu->Reg[15] += cpu->GetInstructionSize();
 ```
 
-Two things go wrong, and they compound:
+Two things go wrong there, and they compound. `LOAD_NZCVT` reloads `TFlag` from
+`cpu->Cpsr`, but nothing flushed the live flags into `Cpsr` before raising —
+the system call handler in the same file does exactly that (`SAVE_NZCVT;`
+immediately before `RaiseSystemCall`). `TFlag` therefore comes back as 0 on a
+Thumb breakpoint and `GetInstructionSize()` answers 4 instead of 2. And
+`handle_breakpoint` restores the displaced instruction and puts PC back on the
+breakpoint so the single step in `epoc.cpp` can re-execute it, which leaves
+`Reg[15] == pc`, skips the `goto DISPATCH`, and lets the fall-through advance
+past that very instruction. Two mis-steps of four bytes is the observed +8.
 
-1. `LOAD_NZCVT` reloads `TFlag` from `cpu->Cpsr`, but nothing flushed the live
-   flags into `Cpsr` before raising the exception. The system call handler in the
-   same file does exactly that (`SAVE_NZCVT;` immediately before
-   `RaiseSystemCall`); the breakpoint handler does not. `TFlag` therefore comes
-   back as 0 on a Thumb breakpoint, and `GetInstructionSize()` answers 4 instead
-   of 2.
+## The part that was not a discovery
 
-2. `handle_breakpoint` restores the original instruction and sets PC back to the
-   breakpoint address so it can be re-executed by the single step in
-   `epoc.cpp`. But that leaves `cpu->Reg[15] == pc`, so the `goto DISPATCH` is
-   not taken and the fall-through advances PC *past* the instruction that was
-   just restored.
+All of the above had already been diagnosed and fixed, in this tree, on
+2026-07-22, by `60921e509 fix(scripting): handle RM-409 empty Avkon menus` — the
+same commit that introduced the Avkon patch that needs it. It added exactly two
+things to `BKPT_INST`: the missing `SAVE_NZCVT;`, and a bail-out for the case
+the handler has stopped the core:
 
-Two mis-steps of 4 bytes each is the observed +8, in ARM mode, in Thumb code.
+```c
+// A debugger or scripting hook may stop the core so it can restore and
+// single-step the displaced instruction. In that case the breakpoint
+// itself must not advance PC first.
+if (cpu->NumInstrsToExecute == 0) {
+    goto END;
+}
+```
 
-Note what this means: on dyncom, *any* breakpoint planted in Thumb code derails
-the guest regardless of what the callback does. The ROM-export hook is simply the
-first patch in this tree to plant one in a Thumb ROM export.
+`handle_breakpoint` opens with `running_core->stop()`, so this is always the
+path taken for a scripting hook.
 
-The workaround that made the suite green again drops the two eikcoctl hooks from
-the native patch table only. `s60v3_empty_avkon_menu_fix.lua` is left in place:
-desktop builds default to dynarmic, whose breakpoint path is separate and was not
-tested here, so there is no evidence to justify removing it there.
+Both lines are still on `ios`. They are absent on `ios-next`, and the transition
+is a merge: `8a32e8160 Merge branch 'master' into ios-next` (2026-08-20). Its
+second parent is PR #604, `perf/dyncom-interpreter`, which branched from a point
+*before* `60921e509` and rewrote the interpreter. The merge resolved the
+`BKPT_INST` region in favour of the perf side and dropped both lines without a
+conflict.
+
+Restoring them makes the region byte-identical to `ios` again, and the suite goes
+back to 12/12 with the Avkon patch enabled.
+
+`upstream/master` never had the fix at all — `60921e509` was fork-only, while the
+perf work was upstreamed — so every dyncom user is running the broken resume
+path, and with it every shipped `scripts/*.lua` patch that hooks Thumb code.
 
 ## Dead ends worth avoiding
 
-- Adding `SAVE_NZCVT;` before the `RaiseException` alone is not enough. It fixes
-  the instruction-set half and changes the failure — the guest then dies further
-  away with garbage registers — but the skipped-instruction half still derails
-  execution. Both need fixing together.
-- The `is_thumb` recovery already sitting in `scripts::handle_breakpoint`, which
-  takes the mode bit from the registered hook address instead of trusting
-  `get_cpsr()`, addresses the same stale-`Cpsr` problem for the *address* only.
-  It does not help the resume, and its presence makes it easy to assume the mode
-  question is already handled.
+- Adding `SAVE_NZCVT;` on its own is not enough. It fixes the instruction-set
+  half and *changes* the failure — the guest then dies further away with garbage
+  registers — but the skipped-instruction half still derails execution. Seeing
+  the crash move is not evidence of progress here.
 - Do not start from the patch table. The offsets (`0xF4` / `0x12C`), the export
   ordinal and the method hash are all fine, and the hash check means a hook that
   resolves at all resolved onto the right bytes.
+- `scripts::handle_breakpoint` already carries an `is_thumb` recovery that takes
+  the mode bit from the registered hook address instead of trusting
+  `get_cpsr()`. It addresses the same stale-`Cpsr` problem for the *address*
+  only, and its presence makes it easy to assume the mode question is handled.
+- Pickaxe (`git log -S`) will not find this. History simplification skips
+  merges, so it reports only the commit that *added* the lines and stays silent
+  about the merge that removed them. Walking `--first-parent` and sampling the
+  file at each step is what actually located it.
