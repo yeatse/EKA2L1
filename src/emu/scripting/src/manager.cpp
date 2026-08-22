@@ -194,12 +194,7 @@ namespace eka2l1::manager {
     }
 
     void scripts::import_all_modules() {
-#ifndef ENABLE_SCRIPTING_LUA
-        // No Lua runtime: the shipped scripts/*.lua patches are compiled in as
-        // native C++ instead.
-        register_builtin_patches();
-        return;
-#else
+#ifdef ENABLE_SCRIPTING_LUA
         // Import all scripts
         std::string cur_dir;
         common::get_current_directory(cur_dir);
@@ -224,14 +219,15 @@ namespace eka2l1::manager {
         // Listen for script change
         folder_watcher.watch("scripts/", script_file_changed_callback, this, common::directory_change_move | common::directory_change_creation
             | common::directory_change_last_write);
+#else
+        // No Lua runtime: the shipped scripts/*.lua patches are compiled in as
+        // native C++ instead.
+        register_builtin_patches();
 #endif
     }
 
+#ifdef ENABLE_SCRIPTING_LUA
     bool scripts::import_module(const std::string &path) {
-#ifndef ENABLE_SCRIPTING_LUA
-        (void)path;
-        return true;
-#else
         const std::string name_full = eka2l1::filename(path);
         const std::string name = eka2l1::replace_extension(name_full, "");
 
@@ -281,7 +277,6 @@ namespace eka2l1::manager {
         }
 
         return true;
-#endif
     }
 
     void scripts::unload_module(const std::string &path) {
@@ -304,6 +299,8 @@ namespace eka2l1::manager {
             LOG_TRACE(SCRIPTING, "Module {} unloaded!", name);
         }
     }
+
+#endif
 
     void scripts::register_kernel_hooks() {
         if (ipc_send_callback_handle) {
@@ -554,7 +551,7 @@ namespace eka2l1::manager {
     }
 
     std::uint32_t scripts::register_breakpoint(const std::string &lib_name, const uint32_t addr, const std::uint32_t process_uid,
-        const std::uint32_t uid3, const std::uint32_t seghash, breakpoint_hit_func func, const bool eager_resolve) {
+        const std::uint32_t uid3, const std::uint32_t seghash, breakpoint_hit_func func) {
         const std::string lib_name_lower = common::lowercase_string(lib_name);
         std::size_t handle = 0;
 
@@ -574,7 +571,7 @@ namespace eka2l1::manager {
             info.codeseg_uid3_ = 0;
         } else {
             hle::lib_manager *manager = sys->get_lib_manager();
-            if (manager && eager_resolve) {
+            if (manager) {
                 if (codeseg_ptr seg = manager->load(common::utf8_to_ucs2(lib_name))) {
                     const bool identity_matches = ((uid3 == 0) || (std::get<2>(seg->get_uids()) == uid3))
                         && ((seghash == 0) || (seg->get_hash() == seghash));

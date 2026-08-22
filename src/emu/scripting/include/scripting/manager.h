@@ -183,7 +183,9 @@ namespace eka2l1::manager {
         common::directory_watcher folder_watcher;
 
     protected:
+#ifdef ENABLE_SCRIPTING_LUA
         bool call_module_entry(const std::string &module);
+#endif
         bool remove_function_impl(script_function *func);
 
         /**
@@ -216,8 +218,10 @@ namespace eka2l1::manager {
         explicit scripts(system *sys);
         ~scripts();
 
+#ifdef ENABLE_SCRIPTING_LUA
         bool import_module(const std::string &path);
         void unload_module(const std::string &path);
+#endif
         void import_all_modules();
 
         /**
@@ -254,7 +258,7 @@ namespace eka2l1::manager {
          */
         std::uint32_t register_library_hook(const std::string &name, const std::uint32_t ord, const std::uint32_t process_uid, const std::uint32_t uid3, const std::uint32_t seghash, breakpoint_hit_func func);
         std::uint32_t register_breakpoint(const std::string &lib_name, const uint32_t addr, const std::uint32_t process_uid,
-            const std::uint32_t uid3, const std::uint32_t seghash, breakpoint_hit_func func, const bool eager_resolve = true);
+            const std::uint32_t uid3, const std::uint32_t seghash, breakpoint_hit_func func);
         std::uint32_t register_rom_export_breakpoint(const std::string &lib_name, const std::uint32_t ordinal,
             const std::uint32_t method_hash, const std::uint32_t hook_offset, const std::uint32_t process_uid,
             const std::uint32_t uid3, breakpoint_hit_func func);
