@@ -1,6 +1,12 @@
 # Builds a distribution-signed iOS archive and uploads it to TestFlight: on
-# every push to the ios branch, and on a schedule whenever upstream's master
-# has moved (see the note above the triggers for what each mode builds).
+# every push to the ios-next branch, and on a schedule whenever upstream's
+# master has moved (see the note above the triggers for what each mode builds).
+#
+# This is the only place anything is signed. build.yml -- which is shared with
+# upstream -- builds the device slice unsigned and stops there, because signing
+# on a shared CI means minting a development certificate against Apple's
+# per-account cap on every merge, and uploading to one account's App Store
+# Connect record.
 #
 # Required repository secrets (Settings -> Secrets and variables -> Actions):
 #   APPLE_TEAM_ID           Apple Developer team id (e.g. L6JP27B8YR)
@@ -68,7 +74,7 @@ name: iOS TestFlight
 on:
   push:
     branches:
-      - ios
+      - ios-next
   schedule:
     # Upstream merges arrive in bursts, so poll rather than pick a daily hour.
     # GitHub throttles (and eventually disables) schedules on dormant repos;
