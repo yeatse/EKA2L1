@@ -26,8 +26,9 @@
 namespace eka2l1::drivers::camera {
     class collection {
     public:
-        // The collection is owned through a unique_ptr<collection>, so deleting
-        // a backend through the base pointer needs this to be virtual.
+        // get_collection() keeps the backend in a unique_ptr<collection> and, on
+        // the iOS simulator, reassigns it -- both destroy a derived object
+        // through this base pointer.
         virtual ~collection() = default;
 
         virtual std::uint32_t count() const = 0;

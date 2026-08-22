@@ -346,11 +346,11 @@ namespace eka2l1::epoc::socket {
         kernel::process *requester = ctx->msg->own_thr->owning_process();
         epoc::des8 *packet_des = eka2l1::ptr<epoc::des8>(ctx->msg->args.args[2]).get(requester);
         
-        // Before the S^3 rework, RecvOneOrMore packs its arguments the same way the other
-        // receive variants do: the transfer length package first, then the buffer. Only the
-        // reworked client moved the flags into the first slot, so keying this off one_or_more
-        // alone leaves pre-S^3 clients reading a pointer as flags and never getting their
-        // TSockXfrLength written back.
+        // The reworked client packs RecvOneOrMore exactly like Recv --
+        // TIpcArgs(someFlags, &aLen, &aBuffer), esockserver/csock/CS_CLI.CPP -- so what the
+        // branch below distinguishes is client versions, not opcodes. Selecting it on
+        // one_or_more alone makes a pre-S^3 client, which still puts the transfer length
+        // package first, read that descriptor as flags and never get it written back.
         const bool length_package_first = (ctx->sys->get_symbian_version_use() < epocver::epoc95);
 
         std::uint32_t *size_return = nullptr;

@@ -168,6 +168,14 @@ namespace eka2l1::epoc::socket {
                     get_host_name(ctx);
                     return;
 
+                case socket_reform_hr_set_host_name:
+                    set_host_name(ctx);
+                    return;
+
+                case socket_reform_hr_cancel:
+                    cancel(ctx);
+                    return;
+
                 case socket_reform_hr_close:
                     close(ctx);
                     return;

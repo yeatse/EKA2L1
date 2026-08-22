@@ -127,11 +127,13 @@ namespace eka2l1::common {
 
     void set_thread_priority(const thread_priority pri) {
 #if EKA2L1_PLATFORM(DARWIN)
-        // On Darwin the QoS class both raises the timeshare priority and
-        // steers the scheduler's P-core/E-core placement, which matters far
-        // more for the CPU-bound emulator threads than the raw sched_priority
-        // value. Note a thread with a QoS class set can no longer be adjusted
-        // through pthread_setschedparam, so keep every caller on this path.
+        // Darwin schedules by QoS class, and pthread_setschedparam() is not a
+        // weaker way of saying the same thing: per <pthread/qos.h>, a call to it
+        // "will unset the QOS class" and the thread is then "permanently
+        // opted-out of the QOS class system", with later requests failing
+        // EPERM. So the portable path below does not merely fail to help here,
+        // it disables the mechanism that decides how these threads are run --
+        // including, on Apple silicon, whether they land on a P core.
         qos_class_t qos = QOS_CLASS_DEFAULT;
 
         switch (pri) {
@@ -146,8 +148,6 @@ namespace eka2l1::common {
             break;
         case thread_priority_very_high:
             qos = QOS_CLASS_USER_INTERACTIVE;
-            break;
-        default:
             break;
         }
 
