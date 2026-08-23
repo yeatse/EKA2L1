@@ -490,14 +490,13 @@ namespace eka2l1::epoc {
 
             std::uint64_t wait_time = 0;
 
-            if (crr < time_spend_per_frame_us + last_draw_) {
-                // Originally - (crr - last_draw_), but preventing overflow
+            if (last_draw_ != 0 && crr < time_spend_per_frame_us + last_draw_) {
                 wait_time = time_spend_per_frame_us + last_draw_ - crr;
+                last_draw_ += time_spend_per_frame_us;
             } else {
                 wait_time = 0;
+                last_draw_ = crr;
             }
-
-            last_draw_ = ((crr + time_spend_per_frame_us - 1) / time_spend_per_frame_us) * time_spend_per_frame_us;
 
             if (crr - last_fps_sync_ >= common::microsecs_per_sec) {
                 scr->last_fps = fps_count_;
