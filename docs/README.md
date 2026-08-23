@@ -5,6 +5,9 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-23 | [OpenVG round caps and joins rendered as square or bevelled strokes](./openvg-round-stroke-caps-and-joins.md) |
+| 2026-08-23 | [Stereo player position advanced at twice the playback rate](./audio-player-stereo-position-double-speed.md) |
+| 2026-08-23 | [Qt OpenVG ellipses collapsed to fragments](./openvg-path-scale-bias.md) |
 | 2026-08-23 | [Every GLES1 draw failed on macOS because `inverse()` is not in GLSL 1.40](./macos-gles1-inverse-glsl140.md) |
 | 2026-08-23 | [`--app` deadlocked before the guest ran a single instruction](./qt-graphics-event-lost-wakeup.md) |
 | 2026-08-22 | [A merge dropped dyncom's breakpoint resume fix, and the Avkon patch died with it](./dyncom-thumb-rom-breakpoint-resume.md) |
