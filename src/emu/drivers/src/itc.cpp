@@ -793,6 +793,19 @@ namespace eka2l1::drivers {
         cmd->data_[1] = static_cast<std::uint64_t>(bind_type);
     }
 
+    void graphics_command_builder::copy_framebuffer_to_texture(drivers::handle texture, const std::uint8_t level,
+        const std::int8_t face_index, const eka2l1::vec2 &destination_offset, const eka2l1::vec2 &source_position,
+        const eka2l1::vec2 &size) {
+        command *cmd = list_.retrieve_next();
+
+        cmd->opcode_ = graphics_driver_copy_framebuffer_to_texture;
+        cmd->data_[0] = texture;
+        cmd->data_[1] = static_cast<std::uint64_t>(level) | (static_cast<std::uint64_t>(static_cast<std::uint8_t>(face_index)) << 8);
+        cmd->data_[2] = PACK_2U32_TO_U64(destination_offset.x, destination_offset.y);
+        cmd->data_[3] = PACK_2U32_TO_U64(source_position.x, source_position.y);
+        cmd->data_[4] = PACK_2U32_TO_U64(size.x, size.y);
+    }
+
     void graphics_command_builder::set_blend_colour(const float colour[4]) {
         command *cmd = list_.retrieve_next();
 

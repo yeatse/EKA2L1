@@ -1450,7 +1450,7 @@ namespace eka2l1::drivers {
         }
 
         case shader_var_type::mat3: {
-            glUniformMatrix2fv(binding, static_cast<GLsizei>((cmd.data_[2] + 35) / 36), GL_FALSE, reinterpret_cast<const GLfloat *>(data));
+            glUniformMatrix3fv(binding, static_cast<GLsizei>((cmd.data_[2] + 35) / 36), GL_FALSE, reinterpret_cast<const GLfloat *>(data));
             delete[] data;
 
             return;
@@ -1678,6 +1678,36 @@ namespace eka2l1::drivers {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, fb ? fb->get_fbo() : 0);
         glReadPixels(x, y, width, height, format, type, reinterpret_cast<std::uint64_t*>(cmd.data_[4]));
         glBindFramebuffer(GL_READ_FRAMEBUFFER, last_read_fb);
+    }
+
+    void ogl_graphics_driver::copy_framebuffer_to_texture(command &cmd) {
+        ogl_texture *texture = reinterpret_cast<ogl_texture *>(get_graphics_object(cmd.data_[0]));
+        if (!texture) {
+            return;
+        }
+
+        const std::uint8_t level = static_cast<std::uint8_t>(cmd.data_[1]);
+        const std::int8_t face_index = static_cast<std::int8_t>(cmd.data_[1] >> 8);
+
+        eka2l1::vec2 destination_offset;
+        eka2l1::vec2 source_position;
+        eka2l1::vec2 size;
+        unpack_u64_to_2u32(cmd.data_[2], destination_offset.x, destination_offset.y);
+        unpack_u64_to_2u32(cmd.data_[3], source_position.x, source_position.y);
+        unpack_u64_to_2u32(cmd.data_[4], size.x, size.y);
+
+        GLint previous_active_texture = 0;
+        GLint previous_texture = 0;
+        glGetIntegerv(GL_ACTIVE_TEXTURE, &previous_active_texture);
+        glActiveTexture(GL_TEXTURE0);
+        glGetIntegerv((face_index < 0) ? GL_TEXTURE_BINDING_2D : GL_TEXTURE_BINDING_CUBE_MAP, &previous_texture);
+
+        const GLenum target = (face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP_POSITIVE_X + face_index;
+        glBindTexture((face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP, static_cast<GLuint>(texture->driver_handle()));
+        glCopyTexSubImage2D(target, level, destination_offset.x, destination_offset.y,
+            source_position.x, source_position.y, size.x, size.y);
+        glBindTexture((face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP, previous_texture);
+        glActiveTexture(previous_active_texture);
     }
 
     void ogl_graphics_driver::save_gl_state() {
@@ -1931,6 +1961,10 @@ namespace eka2l1::drivers {
 
         case graphics_driver_read_framebuffer:
             read_framebuffer(cmd);
+            break;
+
+        case graphics_driver_copy_framebuffer_to_texture:
+            copy_framebuffer_to_texture(cmd);
             break;
 
         default:

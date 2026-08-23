@@ -28,6 +28,8 @@
 #include <system/epoc.h>
 #include <kernel/kernel.h>
 
+#include <algorithm>
+
 namespace eka2l1::dispatch {
     static bool decompress_palette_data(std::vector<std::uint8_t> &dest, std::vector<std::size_t> &out_size, std::uint8_t *source, std::int32_t width,
         std::int32_t height, std::uint32_t source_format, std::int32_t mip_count, drivers::texture_format &dest_format,
@@ -1981,32 +1983,32 @@ namespace eka2l1::dispatch {
         return 0;
     }
 
-    static std::uint32_t calculate_possible_upload_size(const eka2l1::vec2 size, const std::uint32_t format, const std::uint32_t data_type) {
+    static std::uint32_t calculate_possible_upload_size(const eka2l1::vec2 size, const std::uint32_t format,
+        const std::uint32_t data_type, const std::uint32_t unpack_alignment) {
+        if ((size.x <= 0) || (size.y <= 0)) {
+            return 0;
+        }
+
+        std::uint32_t bytes_per_pixel = 0;
         if ((format == GL_LUMINANCE_EMU) || (format == GL_ALPHA_EMU)) {
-            return size.x * size.y;
-        }
-
-        if (format == GL_LUMINANCE_ALPHA_EMU) {
-            return size.x * size.y * 2;
-        }
-
-        if (format == GL_RGB_EMU) {
-            if (data_type == GL_UNSIGNED_BYTE_EMU) {
-                return size.x * size.y * 3;
-            } else {
-                return size.x * size.y * 2;
-            }
+            bytes_per_pixel = 1;
+        } else if (format == GL_LUMINANCE_ALPHA_EMU) {
+            bytes_per_pixel = 2;
+        } else if ((data_type == GL_UNSIGNED_SHORT_4_4_4_4_EMU) || (data_type == GL_UNSIGNED_SHORT_5_5_5_1_EMU)
+            || (data_type == GL_UNSIGNED_SHORT_5_6_5_EMU)) {
+            bytes_per_pixel = 2;
+        } else if (format == GL_RGB_EMU) {
+            bytes_per_pixel = 3;
         } else {
-            if ((format == GL_RGBA_EMU) || (format == GL_BGRA_EXT_EMU)) {
-                if (data_type == GL_UNSIGNED_BYTE_EMU) {
-                    return size.x * size.y * 4;
-                } else {
-                    return size.x * size.y * 2;
-                }
-            }
+            bytes_per_pixel = 4;
         }
 
-        return 0;
+        const std::uint32_t row_size = static_cast<std::uint32_t>(size.x) * bytes_per_pixel;
+        const std::uint32_t alignment = std::max<std::uint32_t>(1, unpack_alignment);
+        const std::uint32_t aligned_row_size = ((row_size + alignment - 1) / alignment) * alignment;
+
+        // Pixel storage alignment pads between rows, not after the final row.
+        return aligned_row_size * static_cast<std::uint32_t>(size.y - 1) + row_size;
     }
 
     BRIDGE_FUNC_LIBRARY(void, gl_compressed_tex_image_2d_emu, std::uint32_t target, std::int32_t level, std::int32_t internal_format,
@@ -2290,7 +2292,8 @@ namespace eka2l1::dispatch {
         }
 
         if (need_reinstantiate) {
-            const std::size_t needed_size = calculate_possible_upload_size(eka2l1::vec2(width, height), format, data_type);
+            const std::size_t needed_size = calculate_possible_upload_size(eka2l1::vec2(width, height), format, data_type,
+                ctx->unpack_alignment_);
             ctx->cmd_builder_.recreate_texture(tex->handle_value(), dimension, static_cast<std::uint8_t>(level), internal_format_driver,
                 format_driver, dtype, data_pixels, needed_size, eka2l1::vec3(width, height, 0), 0, ctx->unpack_alignment_);
         }
@@ -2367,7 +2370,8 @@ namespace eka2l1::dispatch {
 
         get_data_type_to_upload(internal_format_driver, format_driver, dtype, swizzles, format, data_type, sys->get_graphics_driver()->is_stricted());
 
-        const std::size_t needed_size = calculate_possible_upload_size(eka2l1::vec2(width, height), format, data_type);
+        const std::size_t needed_size = calculate_possible_upload_size(eka2l1::vec2(width, height), format, data_type,
+            ctx->unpack_alignment_);
         ctx->cmd_builder_.update_texture(tex->handle_value(), reinterpret_cast<const char*>(data_pixels), needed_size,
             static_cast<std::uint8_t>(level), format_driver, dtype, eka2l1::vec3(xoffset, yoffset, 0), eka2l1::vec3(width, height, 0),
             0, ctx->unpack_alignment_);
@@ -2377,6 +2381,55 @@ namespace eka2l1::dispatch {
         if (tex->auto_regenerate_mipmap()) {
             ctx->cmd_builder_.regenerate_mips(tex->handle_value());
             tex->set_mipmap_generated(true);
+        }
+    }
+
+    BRIDGE_FUNC_LIBRARY(void, gl_copy_tex_sub_image_2d_emu, std::uint32_t target, std::int32_t level,
+        std::int32_t xoffset, std::int32_t yoffset, std::int32_t x, std::int32_t y, std::int32_t width,
+        std::int32_t height) {
+        egl_context_es_shared *ctx = get_es_shared_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+
+        dispatcher *dp = sys->get_dispatcher();
+        dispatch::egl_controller &controller = dp->get_egl_controller();
+
+        if ((level < 0) || (level > GLES_EMU_MAX_TEXTURE_MIP_LEVEL) || (xoffset < 0) || (yoffset < 0)
+            || (width < 0) || (height < 0)) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+
+        gles_driver_texture *texture = ctx->binded_texture();
+        if (!texture || !texture->handle_value()) {
+            controller.push_error(ctx, GL_INVALID_OPERATION);
+            return;
+        }
+
+        const std::uint32_t target_error = texture->target_matched(target);
+        if (target_error != 0) {
+            controller.push_error(ctx, target_error);
+            return;
+        }
+
+        const std::int32_t mip_width = std::max(1, texture->size().x >> level);
+        const std::int32_t mip_height = std::max(1, texture->size().y >> level);
+        if ((xoffset + width > mip_width) || (yoffset + height > mip_height)) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+
+        const std::int8_t face_index = (target == static_cast<std::uint32_t>(GL_TEXTURE_2D_EMU))
+            ? static_cast<std::int8_t>(-1)
+            : static_cast<std::int8_t>(target - GL_TEXTURE_CUBE_MAP_POSITIVE_X_EMU);
+        ctx->cmd_builder_.copy_framebuffer_to_texture(texture->handle_value(), static_cast<std::uint8_t>(level), face_index,
+            eka2l1::vec2(xoffset, yoffset), eka2l1::vec2(x, y), eka2l1::vec2(width, height));
+
+        texture->set_mipmap_generated(false);
+        if (texture->auto_regenerate_mipmap()) {
+            ctx->cmd_builder_.regenerate_mips(texture->handle_value());
+            texture->set_mipmap_generated(true);
         }
     }
 

@@ -1230,9 +1230,17 @@ APPLY_PENDING_ROUTES:
 
         flush_state_changes();
 
+        const bool program_changed = previous_using_program_ != using_program_;
         if (!using_program_->prepare_for_draw()) {
             controller.push_error(this, GL_INVALID_OPERATION);
             return false;
+        }
+
+        // Attribute routes are program-specific. Rebuild the descriptors when
+        // glUseProgram selects a different program even if the client-side
+        // arrays themselves did not change.
+        if (program_changed) {
+            attrib_changed_ = true;
         }
 
         if (!prepare_vertex_attributes(driver, crr_process, first_index, vcount)) {
