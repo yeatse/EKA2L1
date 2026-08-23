@@ -58,7 +58,9 @@ namespace eka2l1::drivers {
         const std::uint8_t *metadata_;
 
     public:
-        explicit shader_program_metadata() = default;
+        explicit shader_program_metadata()
+            : metadata_(nullptr) {
+        }
         explicit shader_program_metadata(const std::uint8_t *metadata);
 
         const bool is_available() const {

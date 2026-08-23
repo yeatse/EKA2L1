@@ -314,6 +314,10 @@ APPLY_PENDING_ROUTES:
         attrib_bind_routes_.clear();
         attrib_bind_routes_reverse_.clear();
 
+        if (!linked_ || !metadata_.is_available()) {
+            return;
+        }
+
         for (const auto &route_request: pending_attrib_binds_) {
             const std::int32_t res = metadata_.get_attribute_binding(route_request.first.c_str());
             if (res >= 0) {
@@ -1525,11 +1529,16 @@ APPLY_PENDING_ROUTES:
         std::string temp;
 
         for (std::int32_t i = 0; i < count; i++) {
-            if (!length) {
-                temp = strings[i].get(crr_pr);
+            const char *source = strings[i].get(crr_pr);
+            if (!source) {
+                controller.push_error(ctx, GL_INVALID_VALUE);
+                return;
+            }
+
+            if (!length || (length[i] < 0)) {
+                temp = source;
             } else {
-                const char *pointer_for_string = (*strings).get(crr_pr);
-                temp = std::string(pointer_for_string, pointer_for_string + length[i]);
+                temp.assign(source, static_cast<std::size_t>(length[i]));
             }
 
             concentrated_source += temp;
