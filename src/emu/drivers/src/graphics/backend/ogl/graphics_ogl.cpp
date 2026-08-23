@@ -24,6 +24,7 @@
 #include <common/rgb.h>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 #include <drivers/graphics/backend/ogl/common_ogl.h>
 #include <drivers/graphics/backend/ogl/graphics_ogl.h>
@@ -1688,6 +1689,7 @@ namespace eka2l1::drivers {
 
         const std::uint8_t level = static_cast<std::uint8_t>(cmd.data_[1]);
         const std::int8_t face_index = static_cast<std::int8_t>(cmd.data_[1] >> 8);
+        const bool copy_source_alpha = ((cmd.data_[1] >> 16) & 1) != 0;
 
         eka2l1::vec2 destination_offset;
         eka2l1::vec2 source_position;
@@ -1704,8 +1706,42 @@ namespace eka2l1::drivers {
 
         const GLenum target = (face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP_POSITIVE_X + face_index;
         glBindTexture((face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP, static_cast<GLuint>(texture->driver_handle()));
-        glCopyTexSubImage2D(target, level, destination_offset.x, destination_offset.y,
-            source_position.x, source_position.y, size.x, size.y);
+        if (copy_source_alpha && (size.x > 0) && (size.y > 0)) {
+            // GLES2 GL_ALPHA copies select the framebuffer alpha component.
+            // Emulated alpha textures are backed by host R8 textures, where a
+            // direct glCopyTexSubImage2D would incorrectly select red.
+            std::vector<std::uint8_t> rgba(static_cast<std::size_t>(size.x) * size.y * 4);
+            std::vector<std::uint8_t> alpha(static_cast<std::size_t>(size.x) * size.y);
+
+            GLint previous_pack_alignment = 4;
+            GLint previous_pack_row_length = 0;
+            GLint previous_unpack_alignment = 4;
+            GLint previous_unpack_row_length = 0;
+            glGetIntegerv(GL_PACK_ALIGNMENT, &previous_pack_alignment);
+            glGetIntegerv(GL_PACK_ROW_LENGTH, &previous_pack_row_length);
+            glGetIntegerv(GL_UNPACK_ALIGNMENT, &previous_unpack_alignment);
+            glGetIntegerv(GL_UNPACK_ROW_LENGTH, &previous_unpack_row_length);
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+            glReadPixels(source_position.x, source_position.y, size.x, size.y,
+                GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+
+            for (std::size_t i = 0; i < alpha.size(); i++) {
+                alpha[i] = rgba[i * 4 + 3];
+            }
+
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glTexSubImage2D(target, level, destination_offset.x, destination_offset.y,
+                size.x, size.y, GL_RED, GL_UNSIGNED_BYTE, alpha.data());
+            glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment);
+            glPixelStorei(GL_PACK_ROW_LENGTH, previous_pack_row_length);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, previous_unpack_alignment);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, previous_unpack_row_length);
+        } else {
+            glCopyTexSubImage2D(target, level, destination_offset.x, destination_offset.y,
+                source_position.x, source_position.y, size.x, size.y);
+        }
         glBindTexture((face_index < 0) ? GL_TEXTURE_2D : GL_TEXTURE_CUBE_MAP, previous_texture);
         glActiveTexture(previous_active_texture);
     }

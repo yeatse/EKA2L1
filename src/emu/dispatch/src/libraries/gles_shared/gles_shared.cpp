@@ -965,6 +965,7 @@ namespace eka2l1::dispatch {
         , mipmap_gened_(false)
         , texture_type_(GLES_DRIVER_TEXTURE_TYPE_NONE)
         , max_anisotrophy_(-1.0f)
+        , current_scale_(1.0f)
         , change_flags_(0) {
     }
 
@@ -2423,8 +2424,9 @@ namespace eka2l1::dispatch {
         const std::int8_t face_index = (target == static_cast<std::uint32_t>(GL_TEXTURE_2D_EMU))
             ? static_cast<std::int8_t>(-1)
             : static_cast<std::int8_t>(target - GL_TEXTURE_CUBE_MAP_POSITIVE_X_EMU);
+        const bool copy_source_alpha = texture->internal_format() == GL_ALPHA_EMU;
         ctx->cmd_builder_.copy_framebuffer_to_texture(texture->handle_value(), static_cast<std::uint8_t>(level), face_index,
-            eka2l1::vec2(xoffset, yoffset), eka2l1::vec2(x, y), eka2l1::vec2(width, height));
+            eka2l1::vec2(xoffset, yoffset), eka2l1::vec2(x, y), eka2l1::vec2(width, height), copy_source_alpha);
 
         texture->set_mipmap_generated(false);
         if (texture->auto_regenerate_mipmap()) {

@@ -1125,8 +1125,6 @@ APPLY_PENDING_ROUTES:
                 vertex_buffers_alloc.push_back(handle_retrieved);
             }
 
-            attrib_not_persistent = false;
-
             return true;
         }
 

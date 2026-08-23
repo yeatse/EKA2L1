@@ -726,7 +726,8 @@ namespace eka2l1::drivers {
         void set_framebuffer_depth_stencil_buffer(drivers::handle h, drivers::handle depth, const int depth_face_index, drivers::handle stencil, const int stencil_face_index);
         void bind_framebuffer(drivers::handle h, drivers::framebuffer_bind_type bind_type);
         void copy_framebuffer_to_texture(drivers::handle texture, const std::uint8_t level, const std::int8_t face_index,
-            const eka2l1::vec2 &destination_offset, const eka2l1::vec2 &source_position, const eka2l1::vec2 &size);
+            const eka2l1::vec2 &destination_offset, const eka2l1::vec2 &source_position, const eka2l1::vec2 &size,
+            const bool copy_source_alpha = false);
     };
 
     void advance_draw_pos_around_origin(eka2l1::rect &origin_normal_rect, const int rotation);
