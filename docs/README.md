@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-25 | [Decoding Qt's JPEGs on the host](./qt-jpeg-host-decode.md) |
 | 2026-08-25 | [AtomShift shows a level only after you touch the screen](./openvg-frame-publish-and-composite-pacing.md) |
 | 2026-08-23 | [OpenVG round caps and joins rendered as square or bevelled strokes](./openvg-round-stroke-caps-and-joins.md) |
 | 2026-08-23 | [Stereo player position advanced at twice the playback rate](./audio-player-stereo-position-double-speed.md) |

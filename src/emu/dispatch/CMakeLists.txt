@@ -57,6 +57,7 @@ add_library(epocdispatch
         include/dispatch/def.h
         include/dispatch/dispatcher.h
         include/dispatch/hui.h
+        include/dispatch/image.h
         include/dispatch/management.h
         include/dispatch/register.h
         include/dispatch/screen.h
@@ -75,6 +76,7 @@ add_library(epocdispatch
         src/camera.cpp
         src/dispatcher.cpp
         src/hui.cpp
+        src/image.cpp
         src/register.cpp
         src/screen.cpp
         src/video.cpp
@@ -90,6 +92,7 @@ target_link_libraries(epocdispatch PRIVATE
         drivers
         epoc
         epockern
+        stb
         epocpkg
         epocservs
         glm
