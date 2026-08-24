@@ -151,7 +151,6 @@ namespace gnuVG {
 		FrameBuffer mask;
 		FrameBuffer temporary_a, temporary_b;
 		VGint buffer_width, buffer_height;
-		std::uint32_t full_surface_image_draw_count = 0;
 
 		// Temporary framebuffers
 		std::vector<FrameBuffer *> available_temporary_framebuffers;
@@ -308,12 +307,6 @@ namespace gnuVG {
 
 		void vgFlush();
 		void vgFinish();
-
-		std::uint32_t consume_full_surface_image_draw_count() {
-			const std::uint32_t result = full_surface_image_draw_count;
-			full_surface_image_draw_count = 0;
-			return result;
-		}
 
 		/* OpenVG equivalent API - Paint Manipulation */
 		void vgSetPaint(std::shared_ptr<Paint> p, VGbitfield paintModes);

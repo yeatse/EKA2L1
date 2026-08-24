@@ -494,44 +494,7 @@ namespace eka2l1::dispatch {
 
         drivers::graphics_driver *drv = sys->get_graphics_driver();
         egl_context *ctx = surface->bounded_context_;
-        bool publish_surface = true;
-        if (ctx && ctx->context_type() == EGL_VG_CONTEXT) {
-            auto *vg_context = static_cast<gnuVG::Context *>(ctx);
-            const std::uint32_t coverage =
-                vg_context->consume_full_surface_image_draw_count();
-
-            // A single swap that loses a previously stable full-window image
-            // layer is usually an intermediate construction frame. Defer it
-            // once: a restored layer on the next swap replaces it atomically,
-            // while two consecutive reduced-coverage frames still publish a
-            // legitimate new scene.
-            const std::uint32_t stable_coverage =
-                surface->presented_full_surface_image_draw_count_;
-            if (stable_coverage > 0 && coverage < stable_coverage
-                && !surface->coverage_drop_deferred_) {
-                surface->coverage_drop_deferred_ = true;
-                publish_surface = false;
-            } else {
-                surface->coverage_drop_deferred_ = false;
-                if (stable_coverage == 0 || coverage < stable_coverage) {
-                    surface->presented_full_surface_image_draw_count_ = coverage;
-                    surface->pending_full_surface_image_draw_count_ = 0;
-                } else if (coverage == stable_coverage) {
-                    surface->pending_full_surface_image_draw_count_ = 0;
-                } else if (coverage
-                    == surface->pending_full_surface_image_draw_count_) {
-                    // Promote an increased coverage level only after seeing it
-                    // twice, so a one-frame overlay does not become the new
-                    // baseline and delay the following normal frame.
-                    surface->presented_full_surface_image_draw_count_ = coverage;
-                    surface->pending_full_surface_image_draw_count_ = 0;
-                } else {
-                    surface->pending_full_surface_image_draw_count_ = coverage;
-                }
-            }
-        }
-
-        if (surface->backed_window_ && publish_surface) {
+        if (surface->backed_window_) {
             surface->scale(ctx, drv);
             surface->backed_window_->set_presented_surface(surface->handle_);
 
@@ -547,7 +510,7 @@ namespace eka2l1::dispatch {
             surface->bounded_context_->flush_to_driver(controller, drv, true);
         }
 
-        if (surface->backed_window_ && publish_surface) {
+        if (surface->backed_window_) {
             // Let Window Server coalesce swaps onto the next host refresh. Some
             // clients submit a short construction frame immediately before the
             // completed frame; blocking the guest here forces that intermediate

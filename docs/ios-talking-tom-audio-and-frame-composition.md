@@ -36,6 +36,14 @@ to the steady-state `Playback` category when the last recorder stops.
 
 ## Black-frame diagnosis
 
+> **Superseded (2026-08-25).** The coverage heuristic described below was
+> removed. Tracing the guest's OpenVG calls showed the black frame is drawn by
+> the guest itself — its opaque backdrop covers the previous frame and the cat's
+> JPEG is not decoded in time — so the emulator was not losing a frame, and
+> withholding one broke event-driven clients. See
+> [AtomShift shows a level only after you touch the screen](./openvg-frame-publish-and-composite-pacing.md).
+
+
 High-frequency screenshots distorted the duration, so the transition was
 recorded as video and correlated with temporary OpenVG command counters. The
 black interval was not a `vgClear`, a failed image handle, or a Window Server
