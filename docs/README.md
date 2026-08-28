@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-28 | [ROM stub registration spent minutes resolving wildcard paths on iOS](./ios-rom-stub-wildcard-case-resolution.md) |
 | 2026-08-26 | [RPKG extraction repeatedly statted the same directory hierarchy](./rpkg-repeated-directory-stat.md) |
 | 2026-08-25 | [Decoding Qt's JPEGs on the host](./qt-jpeg-host-decode.md) |
 | 2026-08-25 | [AtomShift shows a level only after you touch the screen](./openvg-frame-publish-and-composite-pacing.md) |
