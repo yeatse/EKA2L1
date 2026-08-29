@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-29 | [Every character a linked font's fallback supplied drew as .notdef](./linked-font-atlas-canonical-only.md) |
 | 2026-08-29 | [Importing an N-Gage QD dump as a `.7z` installed an 8 KB ROM and crashed the app](./archive-import-picked-the-wrong-rom.md) |
 | 2026-08-28 | [ROM stub registration spent minutes resolving wildcard paths on iOS](./ios-rom-stub-wildcard-case-resolution.md) |
 | 2026-08-26 | [RPKG extraction repeatedly statted the same directory hierarchy](./rpkg-repeated-directory-stat.md) |
