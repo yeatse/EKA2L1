@@ -1,5 +1,14 @@
 # X-Plore on the N-Gage: EColor4K makes a guest allocate zero-byte surfaces
 
+> **Correction, 2026-08-30:** the X-Plore diagnosis below is still useful, but
+> its global workaround was wrong and has been reverted. A 12-bit N-Gage
+> framebuffer occupies 16 storage bits per pixel, but those bits are XRGB4444,
+> not RGB565. Reporting `EColor64K` avoids X-Plore's guest-side 12-bit table bug
+> only by changing the pixel format for every application. Cybersaurus then
+> renders with a severe cyan/green cast. EKA2L1 now keeps the real `EColor4K`
+> mode; an X-Plore-specific compatibility setting is the appropriate place for
+> a workaround if one is retained.
+
 ## Symptom
 
 Opening X-Plore (`x-plore_s60_1_56.sis`) on the classic N-Gage device `nem-4`
@@ -118,7 +127,7 @@ header. The next unrelated `RHeap::Free()` walks into that zeroed length and pan
 So the heap corruption is a *guest* write, but the emulator handed the guest the value that
 makes it inevitable.
 
-## Root cause
+## Historical diagnosis
 
 `window_server::init` derives the EPOC6 screen mode from the ROM header:
 
@@ -148,16 +157,25 @@ The same line also has a plain bug: the guard tests `scr_mode_global` (unconditi
 with an unusual value would have had that sentinel written straight into the screen mode. The
 `use_in_ini` branch's EKA1 `bpp > 16` clamp never protected the ROM path at all.
 
-## Fix
+## Historical workaround (reverted)
 
-In `src/emu/services/src/window/window.cpp`: test `conv_res` against `color_last` as
-intended, and map a ROM-derived `EColor4K` to `EColor64K` for EKA1.
+The original workaround in `src/emu/services/src/window/window.cpp` tested
+`conv_res` against `color_last` as intended, then mapped a ROM-derived
+`EColor4K` to `EColor64K` for EKA1. The sentinel check remains correct; the
+display-mode remapping does not.
 
-After the fix, the same instrumentation reports `bpp=2 bits=16`, every surface allocation is
+With that workaround, the same instrumentation reported `bpp=2 bits=16`, every surface allocation was
 correctly sized, the heap-invariant check never fires, and X-Plore renders its license
 dialog and file browser.
 
-## Verification
+Cybersaurus supplied the missing control case. It writes native 16-bit words
+whose channel layout is XRGB4444. Interpreting those words as RGB565 changes
+both the channel widths and bit positions, which produces the visible colour
+cast. Symbian's own screen-driver source agrees with that distinction: 12 HAL
+bits select `EColor4K`/XRGB4444, while 16 select `EColor64K`/RGB565. Storage
+width alone therefore cannot select the display mode.
+
+## Historical verification
 
 - X-Plore on `nem-4`: reaches its License agreement dialog; zero heap-invariant violations,
   zero panics.
