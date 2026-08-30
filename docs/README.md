@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-30 | [Puyo Pop went silent a minute in and never made a sound again](./puyo-pop-audio-stream-dies.md) |
 | 2026-08-30 | [Quitting a game left the Qt frontend on a black screen, and closing it hung the process](./qt-app-exit-never-returns-to-list.md) |
 | 2026-08-29 | [Every character a linked font's fallback supplied drew as .notdef](./linked-font-atlas-canonical-only.md) |
 | 2026-08-29 | [Importing an N-Gage QD dump as a `.7z` installed an 8 KB ROM and crashed the app](./archive-import-picked-the-wrong-rom.md) |

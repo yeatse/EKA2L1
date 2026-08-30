@@ -40,10 +40,10 @@ host callback.
 
 ### Symbian patch DLL builds in UTM
 
-The `Windows XP` VM has S60 3rd FP2 (`abld`) and Belle (`sbs`) plus the checkout
-at `C:\eka2l1`; push every edited source, run the matching GCCE UREL command, poll
-because `utmctl exec` returns early, then validate and install the E32Image (adjust
-patch and target names as needed):
+The `Windows XP` VM has S60 2nd FP3 (`C:\Symbian\8.1a`), S60 3rd FP2, S60 5th and Belle
+(`sbs`) plus the checkout at `C:\eka2l1`; push every edited source, run the matching
+UREL command, poll because `utmctl exec` returns early, then validate and install the
+E32Image (adjust patch and target names as needed):
 
 ```sh
 UTMCTL=/Applications/UTM.app/Contents/MacOS/utmctl
@@ -70,6 +70,21 @@ wait_utm_build
 PATCH_DLL=/tmp/mediaclientaudio_belle.dll # or /tmp/mediaclientaudio_s60v3.dll
 cp "$PATCH_DLL" src/patch/mediaclientaudio/group/mediaclientaudio_general.dll
 ```
+
+`group/target.inf` names the SDK per variant. The EKA1 `_v81a` variants build with
+`@S60_2nd_FP3:com.nokia.series60` and **`abld build armi urel`** (the SDK's classic GCC,
+no PATH juggling needed); output lands in
+`C:\Symbian\8.1a\S60_2nd_FP3\Epoc32\release\armi\urel\`. `verify_e32.py` rejects
+those with `CPU expected ARMv5, got 0x0000` — that check only applies to EKA2 images, so
+compare the header against the currently checked-in binary instead. `_general` builds
+with `@S60_5th_Edition_SDK_v1.0:com.nokia.s60` and `gcce urel`, needs
+`C:\PROGRA~1\CSL Arm Toolchain\bin` on PATH, and its output is under
+`C:\S60\devices\S60_5th_Edition_SDK_v1.0\epoc32\release\GCCE\urel\`.
+
+Build `src/patch/priv` (same SDK, same platform) first and push its sources too — a
+stale `priv.lib` in the SDK shows up as undefined references to things like
+`ConvertFreqEnumToNumber`. When one `src/*.cpp` feeds several variants, rebuild **all**
+of them; shipping one stale binary means two different implementations of one file.
 
 ### TestFlight crash symbolication
 
