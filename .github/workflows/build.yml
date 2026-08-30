@@ -188,7 +188,7 @@ jobs:
       if: matrix.label == 'windows'
 
     - name: CMake configure (macOS)
-      run: cmake -B build -DCI=ON -DEKA2L1_ENABLE_SCRIPTING_ABILITY=OFF -DEKA2L1_DEPLOY_DMG=ON -DEKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER=ON -DEKA2L1_ENABLE_DISCORD_RICH_PRESENCE=ON -DCMAKE_PREFIX_PATH=${{ env.QT_ROOT_DIR }} -DCMAKE_BUILD_TYPE=${{ env.config }}
+      run: cmake -B build -DCI=ON -DEKA2L1_DEPLOY_DMG=ON -DEKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER=ON -DEKA2L1_ENABLE_DISCORD_RICH_PRESENCE=ON -DCMAKE_PREFIX_PATH=${{ env.QT_ROOT_DIR }} -DCMAKE_BUILD_TYPE=${{ env.config }}
       if: matrix.label == 'macos'
 
     - name: CMake configure (Windows)
@@ -249,7 +249,15 @@ jobs:
       with:
         name: eka2l1-${{ steps.git_short_sha.outputs.value }}-${{ matrix.label }}
         path: build/bin
-      if: matrix.label != 'linux'
+      if: matrix.label == 'windows'
+
+    # The bundle left in build/bin is what macdeployqt packed into the DMG, not
+    # a second deliverable, and the DMG is what people install from.
+    - uses: actions/upload-artifact@v4
+      with:
+        name: eka2l1-${{ steps.git_short_sha.outputs.value }}-${{ matrix.label }}
+        path: build/bin/EKA2L1.dmg
+      if: matrix.label == 'macos'
 
     - uses: actions/upload-artifact@v4
       with:
@@ -467,10 +475,12 @@ jobs:
       with:
         name: "eka2l1-${{ steps.git_short_sha.outputs.value }}-ios-device"
 
+    # get_platform_release_filename() in src/emu/qt/src/update_dialog.cpp looks
+    # the asset up by this exact name, so renaming one means renaming both.
     - name: Rename artifacts for release
       run: |
         (cd windows-files && zip -r ../EKA2L1-Windows-x86_64.zip .)
-        (cd mac-files && zip -r ../EKA2L1-MacOS-x86_64.zip .)
+        mv mac-files/EKA2L1.dmg EKA2L1-MacOS-arm64.dmg
         mv eka2l1-qt-x64.AppImage EKA2L1-Linux-x86_64.AppImage
         mv eka2l1-${{ steps.git_short_sha.outputs.value }}.apk EKA2L1-Android.apk
 
@@ -489,7 +499,7 @@ jobs:
         prerelease: false
         files: |
           EKA2L1-Windows-x86_64.zip
-          EKA2L1-MacOS-x86_64.zip
+          EKA2L1-MacOS-arm64.dmg
           EKA2L1-Linux-x86_64.AppImage
           EKA2L1-Android.apk
           EKA2L1-iOS-unsigned.ipa
