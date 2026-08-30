@@ -410,9 +410,10 @@ test_n95calc() {
     # launchctl can publish the UIKitApplication label a few seconds after the
     # first rendered frame when this suite follows another guest. Poll instead
     # of turning that registration race into a false host-crash result.
-    local host_alive=false i
+    local host_alive=false launch_services i
     for i in 1 2 3 4 5 6 7 8; do
-        if xcrun simctl spawn "$SIM" launchctl list 2>/dev/null | grep -q "UIKitApplication:$BUNDLE_ID"; then
+        launch_services="$(xcrun simctl spawn "$SIM" launchctl list 2>/dev/null || true)"
+        if [[ "$launch_services" == *"UIKitApplication:$BUNDLE_ID"* ]]; then
             host_alive=true
             break
         fi
