@@ -5,6 +5,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-31 | [Connecting the S60v2 CameraServer to the camera backend](./s60v2-camera-server-backend.md) |
+| 2026-08-30 | [Restoring EKA1 services and filesystem semantics for N-Gage games](./ngage-eka1-game-compatibility.md) |
 | 2026-08-30 | [Puyo Pop went silent a minute in and never made a sound again](./puyo-pop-audio-stream-dies.md) |
 | 2026-08-30 | [Quitting a game left the Qt frontend on a black screen, and closing it hung the process](./qt-app-exit-never-returns-to-list.md) |
 | 2026-08-29 | [Every character a linked font's fallback supplied drew as .notdef](./linked-font-atlas-canonical-only.md) |
