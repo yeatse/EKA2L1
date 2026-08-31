@@ -103,11 +103,8 @@ namespace eka2l1::epoc::bt {
             addr_bind.sin6_family = (discovery_mode_ == DISCOVERY_MODE_LAN) ? AF_INET : AF_INET6;
             addr_bind.sin6_port = htons(static_cast<std::uint16_t>(port_));
 
-            // A failed bind here is silent otherwise, and the whole discovery
-            // side is then dead without a single line in the log: nothing else
-            // reports on this socket until a query never arrives. The common
-            // cause is a second emulator instance on the same host, since LAN
-            // mode forces the fixed harbour port for everyone.
+            // Nothing else reports on this socket, so an unchecked failure here
+            // leaves the whole discovery side dead with nothing in the log.
             if (const int bind_err = bluetooth_queries_server_socket_->bind(*reinterpret_cast<sockaddr*>(&addr_bind)); bind_err < 0) {
                 LOG_ERROR(SERVICE_BLUETOOTH, "Can't bind the Bluetooth queries socket to port {}! Libuv error code={}", port_, bind_err);
             }
@@ -358,6 +355,13 @@ namespace eka2l1::epoc::bt {
         epoc::bt::friend_info info;
         std::memset(&info.real_addr_, 0, sizeof(epoc::socket::saddress));
         info.dvc_addr_.padding_ = 0;
+
+        if (buf_pointer >= nread) {
+            LOG_ERROR(SERVICE_BLUETOOTH, "Player list from the matching server is truncated (got {} bytes)", nread);
+
+            buf_pointer = nread;
+            return;
+        }
 
         const std::uint8_t address_type = static_cast<std::uint8_t>(buf[buf_pointer++]);
         if (address_type > 3) {
@@ -734,13 +738,11 @@ lookup:
 
                 char request_friends = QUERY_OPCODE_GET_PLAYERS;
 
-                // Direct IP has no network-wide search at all (its peers come
-                // from the config list), and either socket can be null when its
-                // setup failed. Observers still have to hear the end of the
-                // search, so the only thing that must always happen is arming
-                // the timeout below: a hearing observer that never gets
-                // on_no_more_strangers() leaves its guest request hanging
-                // forever.
+                // Direct IP has no network-wide search: its peers come from the
+                // config list. Either socket can also be null when its setup
+                // failed. Only the timeout below must happen unconditionally --
+                // an observer that never gets on_no_more_strangers() leaves its
+                // guest request outstanding forever.
                 if ((discovery_mode_ == DISCOVERY_MODE_LAN) && lan_discovery_call_listener_socket_) {
                     sockaddr_in6 server_addr_modded;
 

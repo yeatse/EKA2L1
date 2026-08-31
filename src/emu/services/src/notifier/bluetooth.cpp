@@ -136,11 +136,10 @@ namespace eka2l1::epoc::notifier {
                 midman = state->midman;
             }
 
-            // Hearing no stranger does not mean there is no peer: direct IP
-            // takes its peers from the config list and never reports them
-            // through the observer, so the search legitimately ends silent
-            // with a friend whose virtual Bluetooth address is simply not
-            // resolved yet. Let the refresh below decide.
+            // Hearing no stranger does not mean there is no peer: direct IP takes
+            // its peers from the config list and never announces them through the
+            // observer, so a silent search there just means the friend's virtual
+            // address is not resolved yet. Let the refresh below decide.
             if (!midman) {
                 finish_request(state, generation);
                 return;

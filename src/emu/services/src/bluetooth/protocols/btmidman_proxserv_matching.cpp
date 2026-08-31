@@ -153,8 +153,14 @@ namespace eka2l1::epoc::bt {
             return;
         }
 
+        // Opcode, player count, then one entry per player: a type byte, an address
+        // of at most 16 bytes and an optional port. Anything past that is not a
+        // message this protocol can produce, so stop reassembling instead of
+        // growing the buffer on whatever the socket keeps handing us.
+        static constexpr std::size_t MAX_MATCHING_SERVER_MESSAGE_SIZE = 2 + 255 * (1 + 16 + 2);
+
         matching_server_receive_buffer_.insert(matching_server_receive_buffer_.end(), buf, buf + nread);
-        if (matching_server_receive_buffer_.size() > 256) {
+        if (matching_server_receive_buffer_.size() > MAX_MATCHING_SERVER_MESSAGE_SIZE) {
             LOG_ERROR(SERVICE_BLUETOOTH, "Matching server sent an oversized reply");
             matching_server_receive_buffer_.clear();
             return;
