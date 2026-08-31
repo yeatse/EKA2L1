@@ -2,9 +2,10 @@
 
 ## Status
 
-**Unresolved.** Two attempted fixes are recorded here, both of which regressed another title. The
-symptom (Sky Force Reloaded's garbled frames on the 6680) is still present. Read this before trying
-a third.
+**Resolved** (2026-08-31), by measuring the depth instead of declaring it. Two attempted fixes are
+recorded here, both of which regressed another title; a third section at the end records what
+finally worked and which premise in this document was wrong. The write-up of the fix lives in
+[Four N-Gage titles on the N70](./n70-eka1-exec-and-framebuffer-depth.md).
 
 ## Symptom
 
@@ -60,14 +61,27 @@ Note `WINDOWMODE` describes the mode WSERV composes in. It is not evidence about
 physical framebuffer that `UserSvr::ScreenInfo()` hands to DSA clients, which is what these games
 write into — that conflation is what made attempt 2 look justified.
 
-## Where a real fix would have to come from
+## Attempt 3 — measure what the guest writes (this is the one that worked)
 
-The depth is chosen by the guest when it builds its draw device, via scdv's
-`CFbsDrawDevice::NewScreenDeviceL(TScreenInfoV01, TDisplayMode)` — the one place the intended format
-is stated. EKA2L1 does not implement or intercept that export (`scdv` is the real ROM DLL here; the
-`LIB(scdv)` entries in `bridge/epoc6.def` are part of an export-hash table whose `#include`s in
-`libmanager.cpp` are commented out). Recording the `TDisplayMode` from that call per screen, and
-using it for the DSA upload instead of `scr->disp_mode`, is the shape of a correct fix.
+The paragraph that used to stand here proposed recording the `TDisplayMode` the guest passes to
+scdv's `CFbsDrawDevice::NewScreenDeviceL`, on the premise that EKA2L1 neither implements nor
+intercepts that export. **That premise is wrong.** `scdv_v81a.dll` is installed as a patch DLL for
+these devices, and with `log-filter: "*:trace"` its `RDebug` lines ("A new 16 bit screen device has
+been instantiated") appear in the emulator log. Driving all three titles past that call shows the
+argument is simply a copy of whatever mode the window server reported — 16-bit under the clamp,
+24-bit unsigned byte without it — for 黄泉道 as much as for the two Sky Force titles. It is a mirror
+of the report, so it carries no independent information and cannot separate them.
+
+What does separate them is the chunk itself, which is always allocated for 32-bit pixels and handed
+to the guest pre-filled with `0xFF`. A 16-bit writer only ever touches the first `w * h * 2` bytes.
+`epoc::screen` now keeps `dsa_disp_mode` alongside `disp_mode`: the declared mode drives every
+guest-visible surface, while the DSA upload starts at 16 bits on EKA1 devices that declare more and
+widens to the declared mode the first frame anything appears past the halfway mark. The marker is
+repainted when a new client takes direct screen access, and `sync_screen_buffer_data()` writes back
+at the measured depth so the emulator cannot fabricate its own evidence.
+
+With that in place the clamp on `disp_mode` is gone — which is what the N70 titles needed — and
+Sky Force Reloaded renders correctly while 黄泉道 stays pixel-identical to the clamped build.
 
 ## Verification notes
 

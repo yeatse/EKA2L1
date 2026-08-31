@@ -5,6 +5,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-08-31 | [Four N-Gage titles on the N70: a missing EKA1 exec block and a framebuffer that was never 16-bit](./n70-eka1-exec-and-framebuffer-depth.md) |
+| 2026-08-31 | [Case-insensitive path recovery re-walked whole ROM directories on every miss](./case-insensitive-lookup-directory-index.md) |
 | 2026-08-31 | [Connecting the S60v2 CameraServer to the camera backend](./s60v2-camera-server-backend.md) |
 | 2026-08-30 | [Restoring EKA1 services and filesystem semantics for N-Gage games](./ngage-eka1-game-compatibility.md) |
 | 2026-08-30 | [Puyo Pop went silent a minute in and never made a sound again](./puyo-pop-audio-stream-dies.md) |
@@ -38,7 +40,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-02 | [N-Gage Call of Duty: uppercase AIF import + EKA1 clock divide-by-zero](./ngage-call-of-duty-import-and-eka1-clock-div0.md) |
 | 2026-08-02 | [Nokia 5320 Voice Recorder investigation](./5320-voice-recorder-investigation.md) |
 | 2026-08-02 | [Snakes dies on the N95: a screen-driver import no ROM can resolve](./scdv-aeabi-idiv-missing-rom-export.md) |
-| 2026-08-01 | [EKA1 DSA framebuffer depth (unresolved)](./eka1-dsa-framebuffer-depth.md) |
+| 2026-08-01 | [EKA1 DSA framebuffer depth](./eka1-dsa-framebuffer-depth.md) |
 | 2026-08-01 | [Debug write command descriptor bound](./debug-command-write-descriptor-bound.md) |
 | 2026-08-01 | [Dragon.World flickers black on every server recomposite](./dragon-world-empty-redraw-black-flicker.md) |
 | 2026-07-30 | [Ashen stops before its first frame after stale-handle validation](./ios-ngage-object-handle-alias-regression.md) |
