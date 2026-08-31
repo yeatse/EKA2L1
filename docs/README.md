@@ -5,7 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
-| 2026-08-31 | [GetImage is a viewfinder poll, not a photo: Killer Virus stuttered behind a shutter sound](./camera-getimage-viewfinder-poll.md) |
+| 2026-08-31 | [GetImage is a viewfinder poll, not a photo — and the frames arrived sideways](./camera-getimage-viewfinder-poll.md) |
 | 2026-08-31 | [Four N-Gage titles on the N70: a missing EKA1 exec block and a framebuffer that was never 16-bit](./n70-eka1-exec-and-framebuffer-depth.md) |
 | 2026-08-31 | [Case-insensitive path recovery re-walked whole ROM directories on every miss](./case-insensitive-lookup-directory-index.md) |
 | 2026-08-31 | [Connecting the S60v2 CameraServer to the camera backend](./s60v2-camera-server-backend.md) |

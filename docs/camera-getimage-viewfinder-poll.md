@@ -84,3 +84,87 @@ One thing this does not address: `orientConnection` forces portrait delivery, so
 640x480 landscape request is served by squashing a 480x640 portrait buffer. That is
 pre-existing behaviour shared with the ECam path, and it costs a CGImage rescale per
 frame on top of the format conversion.
+
+---
+
+# Part two: frames arrived sideways, and the simulator could not see it
+
+## Symptom
+
+With the feed in place, the picture on hardware was rotated — on iOS *and* on
+Android, which already ruled out one backend misbehaving on its own. Two devices,
+two apps, five observations (D is the scene's "up" as displayed, counter-clockwise
+from screen-up; φ is how far the phone itself was turned counter-clockwise):
+
+| app | φ = 0 | φ = +90 | φ = −90 |
+|---|---|---|---|
+| Killer Virus (N70, portrait guest) | D = +90 | D = 0 | — |
+| Camera (5320, landscape guest) | D = 0 | D = −90 | D = +90 |
+
+## Narrowing it down
+
+Both rows have the same slope in φ, so the frame was bolted to the *phone* and
+ignored the guest picture entirely. The rows differ by a constant, and the wsini
+files explain it: `rm-409` has `SCR_ROTATION2 90` for its 320x240 landscape mode
+while `nem-4` declares no `SCR_*` at all. A presenter probe confirmed the camera app
+switching to `mode.rotation=90` and Killer Virus sitting at `mode.rotation=0`.
+
+That fits `D = 90 + hir − (mode.rotation − panel_mount)` on all five observations —
+where the leading 90 is a raw landscape-right sensor readout that was never
+corrected. `orientConnection` asked AVFoundation for portrait and, on hardware, that
+request simply did not take.
+
+The simulator was no help here, and not by accident: its mock camera synthesized the
+test pattern straight at the requested size, so it never entered the rotate-and-scale
+path at all. It was blind to this class of bug by construction.
+
+## Fix
+
+`camera::set_frame_rotation()` carries the angle a frame — already upright in the
+host's natural orientation — still has to turn to be upright in the guest's picture.
+The iOS presenter pushes it from the same place the accelerometer angle is computed.
+
+The two angles are *not* the same, which is the subtle part:
+
+* The **host** term enters with opposite signs. Turning the phone counter-clockwise
+  spins the scene clockwise inside a sensor buffer, while the interface counter-
+  rotates the picture to keep it upright for the viewer, so the camera takes
+  `−host_interface_rotation` where the accelerometer takes `+`.
+* The **guest** term keeps its sign for both. An app that composes for a rotated
+  panel already lays the frame out for that panel.
+
+Getting this wrong is invisible in a portrait test, where the host term is zero —
+which is exactly how the first cut of this fix shipped a sign error past two green
+simulator runs.
+
+Backends now own the "raw readout to upright in the host's natural orientation" step
+and add the shared angle on top:
+
+* iOS pins the capture connection to the cameras' native landscape-right readout
+  rather than asking for a rotation that hardware ignored, and folds the whole angle
+  into the CGContext pass that was already rescaling the frame — so the rotation is
+  free. Stills take the same angle.
+* Android pins `ImageAnalysis` to `Surface.ROTATION_0` so `getRotationDegrees()`
+  always means "upright in the natural orientation" instead of depending on what the
+  display was doing when the use case was bound, then subtracts the guest angle.
+  Only the backend can see the host display there, so it folds the display rotation
+  in itself and the presenter contributes the guest term alone.
+
+The simulator's mock now synthesizes in the landscape shape and orientation a real
+sensor reads out in and goes through the identical rotate-and-stretch, so the
+orientation path is finally exercised there.
+
+## What was deliberately left alone
+
+**The stretch.** A guest scales the frame over its own window, and on hardware the
+sensor buffer has a fixed shape whatever the screen is, so the two stretches largely
+cancel: Killer Virus ends up ~13% wide instead of the ~37% *squashed* that
+aspect-preserving crop would produce. Filling the destination edge to edge is the
+faithful behaviour, not a shortcut.
+
+**`ui_rotation`.** The emulator's own picture rotation is not in the angle, matching
+the accelerometer, which has the same gap.
+
+**Android stills.** That path reads `getRotationDegrees()` only to compute an output
+size and never rotates anything — a pre-existing gap, left as is rather than
+restructured blind.
