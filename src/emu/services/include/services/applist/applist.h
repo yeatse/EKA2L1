@@ -327,6 +327,14 @@ namespace eka2l1 {
         // is a static and can be exercised on its own.
         static data_recog_result recognize_data_impl(common::ro_stream &stream, const std::u16string &name);
 
+        /**
+         * \brief Forget a registeration without waiting for the next rescan.
+         *
+         * Used by frontends that delete an installed app's files themselves.
+         *
+         * \param rsc_path Path of the registeration file the entry was read from.
+         */
+        bool delete_registry(const std::u16string &rsc_path);
 
         /**
          * @brief       Get the legacy level of the server.
@@ -341,17 +349,6 @@ namespace eka2l1 {
         std::mutex list_access_mut_;
 
         bool rescan_registries(eka2l1::io_system *io);
-
-        /**
-         * \brief Forget a registeration without waiting for the next rescan.
-         *
-         * Used by frontends that delete an installed app's files themselves. Public
-         * here, unlike upstream, because the iOS frontend removes an N-Gage card
-         * game's files itself and has to drop the registration with them.
-         *
-         * \param rsc_path Path of the registeration file the entry was read from.
-         */
-        bool delete_registry(const std::u16string &rsc_path);
 
         /**
          * \brief Get an app registeration
