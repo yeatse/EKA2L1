@@ -336,9 +336,10 @@ Two options, and the second costs upstream nothing:
 
 ## What is left in the fork
 
-*Three measures live in this section, oldest first. The current one is
-[22 August](#remeasured-22-august-after-626-640); the two before it are kept because they
-show what the batches actually removed, not because their tables are still actionable.*
+*Four measures live in this section, oldest first. The current one is
+[1 September](#remeasured-1-september-after-659-662); the three before it are kept because
+they show what the batches actually removed, not because their tables are still
+actionable.*
 
 Remeasured on 2026-08-21, with `master` at the merge of #606. **The earlier count — 162
 commits split 91/29/42 — is superseded, and not by arithmetic.** Twenty-three PRs landed
@@ -558,6 +559,72 @@ comment. Resolving these by checking out upstream's whole file is a trap worth n
 `svc.cpp` still carries 59 fork-only lines, and taking upstream's copy of it silently
 deletes them. Resolve the hunks, not the files.
 
+### Remeasured 1 September, after #659-#662
+
+`master` is at the merge of #662 and `ios-next` has merged it, cleanly and without a single
+conflict. **The code delta is now 16 files, +712/-1** (same exclusions: `docs/` and
+`src/emu/qt/translations/`). Four PRs took the whole of bucket 2 apart from two rows:
+
+- **#659** — the EKA1 12-bit display mode. A follow-up to #658, which took the
+  `dsa_disp_mode` measurement but left the older global `EColor4K` → `EColor64K` remap in
+  `parse_wsini()`, so `master` briefly carried both. Removing the remap costs X-Plore on
+  `nem-4`, which is stated in the PR rather than hidden: its zero-byte surface is a bug in
+  its own 12-bit table, and paying for it by changing the pixel format of every application
+  miscolours the games.
+- **#660** — netplay, Bluetooth and the device-selection notifier, 18 files, sent as one
+  commit because the fixes are sequential.
+- **#661** — the per-app `screen-mode` serialisation, the two directory hot paths, and the
+  two tests.
+- **#662** — `flush_pending_teardown` in `closeRunningApp`.
+
+**Three of the seven rows in the 22 August table were not work at all.** They are worth
+naming, because the way they were miscounted is a measurement error, not an accident:
+
+| Row | What it actually was |
+|---|---|
+| `common/src/upnp.cpp` — "a missing `platform.h` include" | A **dead** include, left by `4ec8f9ab4` when the file still had platform guards. The file has used no `EKA2L1_PLATFORM` macro since. Deleted here rather than sent. |
+| `services/applist/applist.h` — "`delete_registry` moved to public" | Upstream declares it **public already**, in its original position, with the same doc comment, and the `IosEmulator.mm` callers are upstream too. What remained was a relocated declaration and a comment asserting "public here, unlike upstream" — an assertion that had stopped being true. Reverted. |
+| The dispatch OpenVG heuristic (5 files) | The coverage bookkeeping and the `try_update` frame-boundary fix went upstream with #658's neighbours; what was left was the null `drawer` for VG contexts, plus another dead include (`<algorithm>`, orphaned when the coverage counting it served was deleted). The `drawer` choice is a *policy* change, not a bug fix — it leaves an OpenVG client with no frame limiting at all — so it was dropped rather than sent. |
+
+The common thread: a `git diff` that reports a file differs tells you the file differs, not
+that the difference is work. Each of these looked like a one-line portability fix from its
+diff shape alone, and each dissolved the moment the question "who consumes this today?" was
+asked against upstream's tree rather than the fork's. **Ask it before the row goes in the
+table, not before the PR goes out.**
+
+`config/app_settings.inl` is the counter-example that makes the check worth doing in both
+directions. It looked like the same kind of one-line noise, and it is the opposite: upstream
+holds `screen_mode` in `app_settings.h`, initialises it in `app_settings.cpp`, and both
+applies and saves it in `screen.cpp` — only the `SETTING()` line that serialises it was
+missing, so the value was read back as -1 on every launch and the whole path was dead. Same
+shape as the four hooks #641 found.
+
+**A verification failure worth recording.** #660's body first reported "87/95 passing, 8
+pre-existing failures" for `ekatests`. There are no pre-existing failures. Its loader tests
+open `loaderassets/` relative to the working directory; run from the repository root the
+asset is missing, `simple_icon_handler` takes a SIGSEGV, and **Catch2 prints a partial
+summary before the process dies** — which reads exactly like a stable set of known failures.
+Run from the build directory the suite is fully green, 184 cases on `master` and 185 with
+#661's added test.
+
+The damage was not the wrong number. It was that the A/B built on it proved nothing: both
+sides crashed at the same test, so both printed the same partial totals, and "identical to
+master" was true and meaningless while 89 cases never ran. The tell is cheap —
+`--list-tests` count versus the run's count, or exit code 139. **A harness that cannot fail
+loudly has to be calibrated against a known-red mutation before its green is worth
+anything**, which is the same lesson the revert-verify harness taught in August and which
+did not transfer.
+
+**What is left, and why neither row is a simple send:**
+
+| Area | Files | Lines | The open question |
+|---|---|---|---|
+| qjpeg — host JPEG decode for Qt applications | 15 | +653 | The dispatch half (`eimage_decode_info` / `eimage_decode`, stb-backed) is platform-neutral and the prebuilt DLL matches what upstream already ships for fourteen other patches. The install path is the problem: `install_qt_image_plugins` lives in `IosEmulator.mm` and copies the DLL onto the C drive with a `.qtplugin` stub, which is not the shared `load_patch_libraries` route, so Android and Qt would get nothing. Move it to the shared layer first. |
+| `kernel/svc.cpp` — start missing ROM daemons | 1 | +59 | Spawn `ClkNitzMdls.exe` when its start object is looked up, standing in for the boot sequence EKA2L1 never runs. The evidence is good — the Clock otherwise polls `ClkNitzMdlStartSemaphore` six times, a second apart, on every launch — but it is a table-driven behaviour hook, and upstream may want a general answer instead. Send it alone. |
+
+Bucket 1 is unchanged and stays here by design: 4 iOS CI workflows (+580), 4 `scripts/`
+(+1249), 5 repo-meta files (+171/-3), and `docs/` (139 files, +14633).
+
 ### Branches, remeasured with the same rule
 
 Commit counts stopped being a valid unit of measurement for the tree, and they are no
@@ -574,25 +641,41 @@ Absorbed, and deleted on 22 August (shas recorded so they can be resurrected):
   (`51c65dc8`) and already carries `src/tests/epoc/services/svg_icon.cpp`; the branch's
   one commit is content-identical to what landed.
 
-Kept, because their content is genuinely not upstream and not in `ios-next` either:
+Absorbed since, and safe to delete (measured 1 September; `git diff upstream/master...<branch>`
+is empty for each):
 
-- `build/modernize-deps` (`d68811ac8`). The submodule bumps landed, but the macOS host
-  build fixes did not: the Apple Silicon ffmpeg@5 path, `#define stat64 stat` for SDK 26,
-  the 11.0 deployment target that stops being forced over the caller's, and
-  `capstone-static` → `capstone`.
-- `feat/guest-internet-access-point` (`0d653dde2`). One commit, +494/-11 across
-  CommsDat, central repository and esock, in neither `upstream/master` nor `ios-next`.
-- `codex/ios-metal` (`f950f3bf9`) and `ios-render-attemp` (`819d12f4f`). Both are
-  experiments the fork has moved past — the MetalANGLE backend was removed in
-  `249228878` and [the ANGLE plan](./ios_metal_angle_plan.md) supersedes it — but each
-  still holds code that exists nowhere else, so deleting them is a decision to lose that
-  code, not a cleanup.
-- `ios` is the fork's default branch and where TestFlight builds are cut. It holds five
-  commits `ios-next` does not, all CI wiring.
+- `fix/camera-viewfinder-orientation` and `fix/eka1-n70-compat` (`358adacd2`), both merged
+  upstream as #658 and its neighbours. GitHub pruned the first on merge.
+- `codex/fix-ngage-games` (`0ae72327f`).
+- The four PR branches for #659-#662, pruned on merge.
 
-One consequence of the merge worth flagging: upstream's `build.yml` now runs the
-App Store signing path on a push to `master`, and this fork has a `master`. Pushing
-`origin master` fast-forward will fire it.
+Kept, because their content is genuinely not upstream and not in `ios-next` either. Line
+counts are `git diff ios-next...<branch> -- src`, which is the number that matters — several
+of these look enormous against `upstream/master` only because they are stale:
+
+| Branch | sha | vs `ios-next` | What is only here |
+|---|---|---|---|
+| `build/modernize-deps` | `d68811ac8` | 9 files, +49/-10 | macOS host build: the Apple Silicon ffmpeg@5 path, `#define stat64 stat` for SDK 26, the 11.0 deployment target that stops being forced over the caller's, `capstone-static` → `capstone`. The submodule bumps themselves landed. |
+| `feat/guest-internet-access-point` | `0d653dde2` | 10 files, +494/-11 | CommsDat, central repository and esock — the retail-ROM "No Internet access point" fix. The only *feature* on this list. |
+| `codex/ngage-wip` | `ad943a8a2` | 22 files, +1787/-248 | N-Gage work that the landed compatibility batch did not cover. |
+| `codex/fix-ngage-ios` | `0e5e8a7f9` | 22 files, +1651/-110 | Overlaps `codex/ngage-wip`; the two should be reconciled before either is judged. |
+| `integration/rhythmbelle-simulator` | `2687f2f63` | 17 files, +265/-69 | Title-specific integration work. |
+| `fix/gles2-multi-string-shader-source` | `436a557e8` | 13 files, +166/-42 | Local only, never pushed. |
+| `codex/ios-metal` | `f950f3bf9` | 9 files, +355/-47 | Experiments the fork has moved past — the MetalANGLE backend was removed in `249228878` and [the ANGLE plan](./ios_metal_angle_plan.md) supersedes it — but each still holds code that exists nowhere else, so deleting them loses that code rather than tidying it. |
+| `ios-render-attemp` | `819d12f4f` | 14 files, +249/-20 | as above |
+
+`ios` (`dce24a935`) is no longer the fork's default branch — `ios-next` is, and
+`c0b62ae7e` cut TestFlight builds from it. `ios` is 190 commits behind `upstream/master`
+and holds five commits `ios-next` does not, all TestFlight CI wiring, the last of which
+made those builds manual-only. Nothing depends on it; it is kept only until that wiring is
+either folded into `ios-next` or declared dead.
+
+**A flag raised on 22 August is now wrong and is retracted:** upstream's `build.yml` does
+*not* run an App Store signing path on a push to `master`. Its `build-ios` job is device
+only and explicitly never signed, and says why in its own comment — signing on CI mints a
+development certificate per run and Apple caps how many an account may hold. Pushing
+`origin master` fast-forward fires an ordinary CI run and nothing else. Verified before the
+1 September push.
 
 ## Sending the first behavioural batch
 
@@ -682,4 +765,7 @@ and #596 (its CI job), plus #588, which gave upstream one stable required check 
 protection. Behavioural batches landed so far: #599 (memory model), #600 (the central
 repository INI reader), #601 (the domain manager), #602 and #603 (audio and video), and
 #604 and #605 (the interpreter, the first of which carried A2 with it), and #606
-(the window server, the font store and the screen driver).
+(the window server, the font store and the screen driver). The 31 August round closed
+bucket 2 down to two rows: #659 (the EKA1 12-bit display mode), #660 (netplay, Bluetooth
+and the device-selection notifier), #661 (a lost per-app setting, two directory hot paths
+and two tests) and #662 (the deferred teardown queue on iOS app close).
