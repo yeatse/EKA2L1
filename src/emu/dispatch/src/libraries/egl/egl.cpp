@@ -493,8 +493,9 @@ namespace eka2l1::dispatch {
         }
 
         drivers::graphics_driver *drv = sys->get_graphics_driver();
-        egl_context *ctx = surface->bounded_context_;
+
         if (surface->backed_window_) {
+            egl_context *ctx = surface->bounded_context_;
             surface->scale(ctx, drv);
             surface->backed_window_->set_presented_surface(surface->handle_);
 
@@ -510,16 +511,8 @@ namespace eka2l1::dispatch {
             surface->bounded_context_->flush_to_driver(controller, drv, true);
         }
 
-        if (surface->backed_window_) {
-            // Let Window Server coalesce swaps onto the next host refresh. Some
-            // clients submit a short construction frame immediately before the
-            // completed frame; blocking the guest here forces that intermediate
-            // surface to be displayed for a full refresh interval.
-            kernel::thread *drawer = (ctx && ctx->context_type() == EGL_VG_CONTEXT)
-                ? nullptr
-                : sys->get_kernel_system()->crr_thread();
-            surface->backed_window_->try_update(drawer);
-        }
+        if (surface->backed_window_)
+            surface->backed_window_->try_update(sys->get_kernel_system()->crr_thread());
 
         return EGL_TRUE;
     }
