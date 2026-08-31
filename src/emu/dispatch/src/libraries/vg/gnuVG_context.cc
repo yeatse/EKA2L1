@@ -17,7 +17,6 @@
  *
  */
 
-#include <algorithm>
 #include <limits>
 #include <string.h>
 

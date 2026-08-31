@@ -5,7 +5,6 @@
 
 #include <common/upnp.h>
 #include <common/log.h>
-#include <common/platform.h>
 
 #include <array>
 #include <cstdlib>
