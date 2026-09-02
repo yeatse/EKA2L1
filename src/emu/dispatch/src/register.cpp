@@ -25,6 +25,7 @@
 #include <dispatch/screen.h>
 #include <dispatch/video.h>
 
+#include <dispatch/libraries/featmgr/functions.h>
 #include <dispatch/libraries/sysutils/functions.h>
 #include <dispatch/libraries/egl/egl.h>
 #include <dispatch/libraries/gles_shared/gles_shared.h>
@@ -116,6 +117,9 @@ namespace eka2l1::dispatch {
         BRIDGE_REGISTER_DISPATCHER(0xB0, eimage_decode_info),
         BRIDGE_REGISTER_DISPATCHER(0xB1, eimage_decode),
         BRIDGE_REGISTER_DISPATCHER(0x1000, sysutils::sysstartup_get_state),
+        BRIDGE_REGISTER_DISPATCHER(0x1010, featmgr::feature_manager_initialize_lib),
+        BRIDGE_REGISTER_DISPATCHER(0x1011, featmgr::feature_manager_uninitialize_lib),
+        BRIDGE_REGISTER_DISPATCHER(0x1012, featmgr::feature_manager_feature_supported),
         BRIDGE_REGISTER_DISPATCHER_SYMBOL(0x1100, egl_choose_config_emu, "eglChooseConfig"),
         BRIDGE_REGISTER_DISPATCHER_SYMBOL(0x1101, egl_copy_buffers_emu, "eglCopyBuffers"),
         BRIDGE_REGISTER_DISPATCHER_SYMBOL(0x1102, egl_create_context_emu, "eglCreateContext"),

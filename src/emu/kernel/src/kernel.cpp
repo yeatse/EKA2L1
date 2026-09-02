@@ -46,11 +46,13 @@
 #include <kernel/scheduler.h>
 #include <kernel/thread.h>
 #include <loader/romimage.h>
+#include <mem/control.h>
 #include <mem/mem.h>
 #include <mem/ptr.h>
 #include <vfs/vfs.h>
 
 #include <loader/e32img.h>
+#include <loader/rom.h>
 #include <loader/romimage.h>
 
 #include <re2/re2.h>
@@ -82,6 +84,7 @@ namespace eka2l1 {
         , realtime_ipc_signal_evt_(0)
         , uid_counter_(0)
         , rom_map_(nullptr)
+        , rom_map_size_(0)
         , kern_ver_(epocver::epoc94)
         , lang_(language::en)
         , global_data_chunk_(nullptr)
@@ -103,12 +106,6 @@ namespace eka2l1 {
     void kernel_system::wipeout() {
         wiping_ = true;
         timing_->remove_event(realtime_ipc_signal_evt_);
-
-        if (rom_map_) {
-            common::unmap_file(rom_map_);
-        }
-
-        rom_map_ = nullptr;
 
 #define OBJECT_CONTAINER_CLEANUP(container) \
     for (auto &obj : container) {           \
@@ -177,6 +174,10 @@ namespace eka2l1 {
             btrace_inst_->close_trace_session();
 
         cpu_->clear_instruction_cache();
+
+        // Release ROM backing after its chunk mappings are gone.
+        unmap_rom();
+
         wiping_ = false;
     }
 
@@ -496,6 +497,11 @@ namespace eka2l1 {
         mem_ = new_mem;
     }
 
+    bool kernel_system::is_address_in_rom(const address addr) const {
+        const address rom_start = rom_info_->header.rom_base;
+        return (addr >= rom_start) && (addr - rom_start < rom_info_->header.rom_size);
+    }
+
     // For user-provided EPOC version
     void kernel_system::set_epoc_version(const epocver ver) {
         kern_ver_ = ver;
@@ -504,6 +510,20 @@ namespace eka2l1 {
         // Set CPU SVC handler
         cpu_->system_call_handler = [this](const std::uint32_t ordinal) {
             // crr_thread()->add_last_syscall(ordinal);
+            // 9.1 ROM stubs leave their return address in r12.
+            if ((kern_ver_ == epocver::epoc91) && (ordinal != 0xFF)
+                && is_address_in_rom(cpu_->get_pc())) {
+                const std::uint32_t jump_back = cpu_->get_reg(12);
+                std::uint32_t cpsr = cpu_->get_cpsr() & ~0x20;
+
+                if (jump_back & 0b1) {
+                    cpsr |= 0x20;
+                }
+
+                cpu_->set_pc(jump_back & ~0b1);
+                cpu_->set_cpsr(cpsr);
+            }
+
             get_lib_manager()->call_svc(ordinal);
 
             // EKA1 does not use BX LR to jump back, they let kernel do it
@@ -1355,28 +1375,82 @@ namespace eka2l1 {
     }
 
     bool kernel_system::map_rom(const mem::vm_address addr, const std::string &path) {
-        rom_map_ = common::map_file(path, prot_read_write, 0, true);
         const std::size_t rom_size = common::file_size(path);
 
-        if (!rom_map_) {
-            return false;
+        // The multiple model needs padding before an unaligned ROM base.
+        mem::vm_address chunk_base = addr;
+        std::size_t rebase_offset = 0;
+
+        if ((kern_ver_ == epocver::epoc91) && (mem_->get_model_type() == mem::mem_model_type::multiple)) {
+            chunk_base = addr & ~mem_->get_control()->chunk_mask_;
+            rebase_offset = addr - chunk_base;
+        }
+
+        if (rebase_offset == 0) {
+            rom_map_ = common::map_file(path, prot_read_write, 0, true);
+            rom_map_size_ = 0;
+
+            if (!rom_map_) {
+                return false;
+            }
+        } else {
+            LOG_INFO(KERNEL, "ROM base 0x{:X} is not chunk-aligned, mapping the ROM at offset 0x{:X} of a chunk at 0x{:X}",
+                addr, rebase_offset, chunk_base);
+
+            rom_map_size_ = rebase_offset + rom_size;
+            rom_map_ = common::map_memory(rom_map_size_);
+
+            if (!rom_map_) {
+                return false;
+            }
+
+            // The 5500 reads the zero-filled section prefix during boot.
+            if (!common::commit(rom_map_, rom_map_size_, prot_read_write)) {
+                unmap_rom();
+                return false;
+            }
+
+            void *rom_file_map = common::map_file(path, prot_read, 0, true);
+
+            if (!rom_file_map) {
+                unmap_rom();
+                return false;
+            }
+
+            std::memcpy(reinterpret_cast<std::uint8_t *>(rom_map_) + rebase_offset, rom_file_map, rom_size);
+            common::unmap_file(rom_file_map);
         }
 
         LOG_TRACE(KERNEL, "Rom mapped to address: 0x{:x}", reinterpret_cast<std::uint64_t>(rom_map_));
 
+        const std::size_t chunk_size = rebase_offset + rom_size;
+
         // Don't care about the result as long as it's not null.
-        kernel::chunk *rom_chunk = create<kernel::chunk>(mem_, nullptr, "ROM", 0, static_cast<address>(rom_size),
-            rom_size, prot_read_write_exec, kernel::chunk_type::normal, kernel::chunk_access::rom,
-            kernel::chunk_attrib::none, 0x00, false, addr, rom_map_);
+        kernel::chunk *rom_chunk = create<kernel::chunk>(mem_, nullptr, "ROM", 0,
+            static_cast<address>(chunk_size), chunk_size, prot_read_write_exec, kernel::chunk_type::normal,
+            kernel::chunk_access::rom, kernel::chunk_attrib::none, 0x00, false, chunk_base, rom_map_);
 
         if (!rom_chunk) {
             LOG_ERROR(KERNEL, "Can't create ROM chunk!");
 
-            common::unmap_file(rom_map_);
+            unmap_rom();
             return false;
         }
 
         return true;
+    }
+
+    void kernel_system::unmap_rom() {
+        if (rom_map_) {
+            if (rom_map_size_) {
+                common::unmap_memory(rom_map_, rom_map_size_);
+            } else {
+                common::unmap_file(rom_map_);
+            }
+        }
+
+        rom_map_ = nullptr;
+        rom_map_size_ = 0;
     }
 
     void kernel_system::stop_cores_idling() {
