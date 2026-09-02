@@ -5,6 +5,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-02 | [One framebuffer, two row pitches](./x7-framebuffer-pitch-is-per-client.md) |
+| 2026-09-02 | [Alien Pinball hangs on a black screen on the X7](./alien-pinball-x7-uncompleted-ipc.md) |
 | 2026-08-31 | [GetImage is a viewfinder poll, not a photo — and the frames arrived sideways](./camera-getimage-viewfinder-poll.md) |
 | 2026-08-31 | [Four N-Gage titles on the N70: a missing EKA1 exec block and a framebuffer that was never 16-bit](./n70-eka1-exec-and-framebuffer-depth.md) |
 | 2026-08-31 | [Case-insensitive path recovery re-walked whole ROM directories on every miss](./case-insensitive-lookup-directory-index.md) |
