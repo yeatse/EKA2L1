@@ -60,9 +60,9 @@ to `PropertyID::Unknown`, so the attribute is dropped rather than failing the pa
 `svgb_convert_error_invalid_file` really means "not SVGB", which covers more shapes
 than the plain-text one that was assumed. The three shapes an SVG-typed MIF entry can
 take are now all handled in one place, `loader::convert_mif_icon_to_svg()`
-(`src/emu/loader/src/mif.cpp`): gzip is detected by magic and inflated first (miniz
-only understands zlib-wrapped or raw deflate, so the gzip header is skipped by hand
-and the body run as raw deflate), then SVGB, then plain text. NVG entries go through
+(`src/emu/loader/src/mif.cpp`): gzip is detected by magic and inflated first (the
+inflater is driven in raw mode, so the gzip header is skipped by hand and only the
+deflate body is fed to it), then SVGB, then plain text. NVG entries go through
 the same entry point; raster entries are still rejected.
 
 This was never iOS-specific — the same copy-pasted block lived in four places, all
