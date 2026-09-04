@@ -133,6 +133,19 @@ access violations, graphics halts, and leftover diagnostics. If a previously wor
 flow breaks after a change, treat it as a regression from that change and narrow the
 diff rather than debugging the broken flow in isolation.
 
+## Code comments
+
+- One or two lines, and only for what the code cannot say itself: a contract, a
+  constraint, a consequence that is not obvious from reading on. Never restate what
+  the statement below already says.
+- No comment is the right answer for self-explanatory code. Don't narrate a rename,
+  a parameter or an ordinary call.
+- Long rationale — how the bug was found, what was ruled out, why the alternative
+  was rejected — goes in the commit message, the PR description or `docs/`. Don't
+  park it in the source.
+- Don't write history into the code ("older builds did X", "this used to be Y").
+  git and `docs/` already hold it.
+
 ## Documentation
 
 - When you root-cause a non-trivial bug, write it up as its own English file in
