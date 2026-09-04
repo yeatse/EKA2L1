@@ -146,6 +146,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-08-09 | [One unanswered IPC message black-screened every app on a device](./icon-server-hang-bricks-a-device.md) |
 | 2026-09-03 | [The dialogue boxes a fresh bitmap's fill colour made disappear](./color4k-white-fill-colour-key.md) |
 | 2026-09-03 | [Two-player mode killed the emulator when netplay was switched off](./netplay-off-bluetooth-crash.md) |
+| 2026-09-04 | [Dungeon Hunter 2: menu music hiss and KERN-EXEC 3 on "Single Player"](./dungeon-hunter-2-gllive-address-overflow.md) |
+| 2026-09-04 | [Installing a partial-upgrade SIS deleted the application it was patching](./sis-partial-upgrade-wipes-base-package.md) |
 
 ## Archived planning docs
 
