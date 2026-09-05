@@ -149,6 +149,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-09-04 | [Dungeon Hunter 2: menu music hiss and KERN-EXEC 3 on "Single Player"](./dungeon-hunter-2-gllive-address-overflow.md) |
 | 2026-09-04 | [Installing a partial-upgrade SIS deleted the application it was patching](./sis-partial-upgrade-wipes-base-package.md) |
 | 2026-09-04 | [The N-Gage card import that split the E drive into `system` and `System`](./ngage-card-import-case-split-system-folder.md) |
+| 2026-09-05 | [Icy Tower died on the X7 because the screen reported premultiplied alpha](./x7-window-mode-premultiplied-alpha.md) |
 
 ## Archived planning docs
 
