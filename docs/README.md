@@ -150,6 +150,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-09-04 | [Installing a partial-upgrade SIS deleted the application it was patching](./sis-partial-upgrade-wipes-base-package.md) |
 | 2026-09-04 | [The N-Gage card import that split the E drive into `system` and `System`](./ngage-card-import-case-split-system-folder.md) |
 | 2026-09-05 | [Ferrari GT on the X7: a flickering intro movie and a race clock running 20% fast](./ferrari-gt-video-overlay-and-fixed-step-clock.md) |
+| 2026-09-05 | [Tilt steering was dead in Ferrari GT but fine in Asphalt 6](./sensor-buffering-count-exceeds-channel-buffer.md) |
 
 ## Archived planning docs
 

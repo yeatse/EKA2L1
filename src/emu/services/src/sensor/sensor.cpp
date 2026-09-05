@@ -23,10 +23,15 @@
 #include <utils/err.h>
 
 #include <drivers/sensor/sensor.h>
+#include <common/algorithm.h>
 #include <common/cvt.h>
 #include <atomic>
 
 namespace eka2l1 {
+    // How many data items a channel buffers before it reports them. OpenChannel
+    // hands this to the client, which sizes its receive buffer from it.
+    static constexpr std::uint32_t MAX_BUFFERING_COUNT = 4;
+
     // A backend callback can outlive the request that armed it, and the session it
     // would report to. The callback holds this instead of the session; session_ is
     // only read or cleared while the kernel lock is held.
@@ -189,8 +194,7 @@ namespace eka2l1 {
             return;
         }
 
-        // Should always be like this hopefully
-        std::uint32_t max_buffer = 4;
+        std::uint32_t max_buffer = MAX_BUFFERING_COUNT;
         std::uint32_t data_item_size = controller->data_packet_size();
 
         ctx->write_data_to_descriptor_argument(1, max_buffer);
@@ -246,8 +250,14 @@ namespace eka2l1 {
             return;
         }
 
-        if (!channel->listen_for_data(params->desired_buffering_count, params->maximum_buffering_count,
-                                      params->buffering_period)) {
+        // The client caps its receive buffer at the count OpenChannel reported
+        // (CSensrvDataHandler::StartListeningL), so buffering past that only delays
+        // every batch and then drops the newest samples that do not fit. Ferrari GT
+        // asks for 16 and reads back 4: its tilt steering went dead.
+        const std::uint32_t desired_count = common::min(params->desired_buffering_count, MAX_BUFFERING_COUNT);
+        const std::uint32_t maximum_count = common::min(params->maximum_buffering_count, MAX_BUFFERING_COUNT);
+
+        if (!channel->listen_for_data(desired_count, maximum_count, params->buffering_period)) {
             LOG_ERROR(SERVICE_SENSOR, "Failed to listen for channel data!");
             ctx->complete(epoc::error_general);
 
