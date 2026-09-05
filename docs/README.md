@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-06 | [Icy Tower requires the Rotation sensor channel](./ios-icy-tower-rotation-channel.md) |
 | 2026-09-06 | [GDI command payloads need their own alignment](./gdi-command-payload-alignment.md) |
 | 2026-09-02 | [One framebuffer, two row pitches](./x7-framebuffer-pitch-is-per-client.md) |
 | 2026-09-02 | [Alien Pinball hangs on a black screen on the X7](./alien-pinball-x7-uncompleted-ipc.md) |
