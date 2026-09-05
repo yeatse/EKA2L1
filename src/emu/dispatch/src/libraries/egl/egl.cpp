@@ -503,6 +503,13 @@ namespace eka2l1::dispatch {
                 drivers::graphics_command_builder &window_builder = surface->backed_window_->driver_builder_;
                 surface->backed_window_->draw_presented_surface(window_builder);
 
+                // A video posted to this window is an overlay on the real device,
+                // not something the client's GL frames paint over: keep it on top
+                // or a client that keeps swapping while a video plays (Ferrari GT
+                // does, with nothing but the clear colour in its frames) makes the
+                // video flicker.
+                surface->backed_window_->draw_posted_video_frame(window_builder);
+
                 surface->backed_window_->content_changed(true);
             }
         }

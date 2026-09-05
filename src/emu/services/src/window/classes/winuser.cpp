@@ -191,6 +191,61 @@ namespace eka2l1::epoc {
         return true;
     }
 
+    void canvas_base::set_posted_video_frame(const drivers::handle handle, const eka2l1::rect &rect_in_window, const int rotation) {
+        posted_video_handle_ = handle;
+        posted_video_rect_ = rect_in_window;
+        posted_video_rotation_ = rotation;
+    }
+
+    void canvas_base::clear_posted_video_frame(const drivers::handle handle) {
+        if (posted_video_handle_ == handle) {
+            posted_video_handle_ = 0;
+        }
+    }
+
+    bool canvas_base::draw_posted_video_frame(drivers::graphics_command_builder &builder) {
+        if (!posted_video_handle_ || !can_be_physically_seen()) {
+            return false;
+        }
+
+        builder.clip_bitmap_region(visible_region, scr->display_scale_factor);
+
+        eka2l1::rect dest_rect = posted_video_rect_;
+        dest_rect.top += abs_rect.top;
+        dest_rect.scale(scr->display_scale_factor);
+
+        // Rotating around the origin moves the rectangle away from where it should
+        // land, so shift the anchor to the corner the rotation brings back.
+        switch (posted_video_rotation_) {
+        case 1:
+            dest_rect.top.x += dest_rect.size.x;
+            break;
+
+        case 2:
+            dest_rect.top.x += dest_rect.size.x;
+            dest_rect.top.y += dest_rect.size.y;
+            break;
+
+        case 3:
+            dest_rect.top.y += dest_rect.size.y;
+            break;
+
+        default:
+            break;
+        }
+
+        if (posted_video_rotation_ & 1) {
+            std::swap(dest_rect.size.x, dest_rect.size.y);
+        }
+
+        builder.set_texture_filter(posted_video_handle_, false, drivers::filter_option::linear);
+        builder.set_texture_filter(posted_video_handle_, true, drivers::filter_option::linear);
+        builder.draw_bitmap(posted_video_handle_, 0, dest_rect, eka2l1::rect(eka2l1::vec2(0, 0), eka2l1::vec2(0, 0)),
+            eka2l1::vec2(0, 0), posted_video_rotation_ * 90.0f);
+
+        return true;
+    }
+
     bool canvas_base::is_dsa_active() const {
         return !directs_.empty();
     }
@@ -1312,6 +1367,7 @@ namespace eka2l1::epoc {
 
             // A window surface is its background; stored GDI commands appear above it.
             draw_presented_surface(builder);
+            draw_posted_video_frame(builder);
 
             if (!segments.empty()) {
                 builder.clip_bitmap_region(visible_region, scr->display_scale_factor);

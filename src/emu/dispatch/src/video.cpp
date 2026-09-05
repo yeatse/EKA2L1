@@ -71,6 +71,11 @@ namespace eka2l1::dispatch {
 
             for (auto &posting : postings_) {
                 if (posting.target_window_) {
+                    {
+                        const std::lock_guard<std::mutex> screen_guard(posting.target_window_->scr->screen_mutex);
+                        posting.target_window_->clear_posted_video_frame(image_handle_);
+                    }
+
                     posting.target_window_->remove_canvas_observer(this);
                     posting.target_window_ = nullptr;
                 }
@@ -153,6 +158,11 @@ namespace eka2l1::dispatch {
 
         epoc_video_posting_target *target = postings_.get(static_cast<std::size_t>(managed_handle));
         if (target && target->target_window_) {
+            {
+                const std::lock_guard<std::mutex> screen_guard(target->target_window_->scr->screen_mutex);
+                target->target_window_->clear_posted_video_frame(image_handle_);
+            }
+
             target->target_window_->remove_canvas_observer(this);
         }
 
@@ -193,6 +203,17 @@ namespace eka2l1::dispatch {
 
     void epoc_video_player::close() {
         video_player_->close();
+
+        {
+            const std::lock_guard<std::mutex> guard(postings_lock_);
+
+            for (auto &posting : postings_) {
+                if (posting.target_window_) {
+                    const std::lock_guard<std::mutex> screen_guard(posting.target_window_->scr->screen_mutex);
+                    posting.target_window_->clear_posted_video_frame(image_handle_);
+                }
+            }
+        }
 
         if (image_handle_) {
             drivers::graphics_command_builder builder;
@@ -250,36 +271,11 @@ namespace eka2l1::dispatch {
                     drivers::texture_data_type::ubyte, eka2l1::vec3(0, 0, 0), vid_size_v3);
             }
 
-            eka2l1::rect dest_rect = posting.display_rect_;
-            dest_rect.top += posting.target_window_->abs_rect.top;
-            dest_rect.scale(posting.target_window_->scr->display_scale_factor);
-
-            // Try to change position for good rotation
-            switch (rotation_) {
-            case 1:
-                dest_rect.top.x += dest_rect.size.x;
-                break;
-
-            case 2:
-                dest_rect.top.x += dest_rect.size.x;
-                dest_rect.top.y += dest_rect.size.y;
-                break;
-
-            case 3:
-                dest_rect.top.y += dest_rect.size.y;
-                break;
-
-            default:
-                break;
-            }
-
-            if (rotation_ & 1) {
-                std::swap(dest_rect.size.x, dest_rect.size.y);
-            }
-
-            posting.target_window_->driver_builder_.set_texture_filter(image_handle_, false, drivers::filter_option::linear);
-            posting.target_window_->driver_builder_.set_texture_filter(image_handle_, true, drivers::filter_option::linear);
-            posting.target_window_->driver_builder_.draw_bitmap(image_handle_, 0, dest_rect, eka2l1::rect(eka2l1::vec2(0, 0), eka2l1::vec2(0, 0)), eka2l1::vec2(0, 0), rotation_ * 90.0f);
+            // Handing the frame to the window (instead of only drawing it) lets a
+            // server recomposite replay it: the clear that starts one would
+            // otherwise leave the video area blank until the next frame lands.
+            posting.target_window_->set_posted_video_frame(image_handle_, posting.display_rect_, static_cast<int>(rotation_));
+            posting.target_window_->draw_posted_video_frame(posting.target_window_->driver_builder_);
             posting.target_window_->content_changed(true);
 
             posting.target_window_->try_update(nullptr);

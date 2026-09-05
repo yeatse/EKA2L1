@@ -112,6 +112,12 @@ namespace eka2l1::epoc {
         // EGL window surfaces are not part of the GDI redraw command store.
         drivers::handle presented_surface_handle_{ 0 };
 
+        // Neither are video frames, which the decode thread draws straight into
+        // the window: keep the last one so a server recomposite can put it back.
+        drivers::handle posted_video_handle_{ 0 };
+        eka2l1::rect posted_video_rect_;
+        int posted_video_rotation_{ 0 };
+
         explicit canvas_base(window_server_client_ptr client, screen *scr, window *parent, const epoc::window_type type_of_window, const epoc::display_mode dmode, const std::uint32_t client_handle);
         virtual ~canvas_base() override;
 
@@ -125,6 +131,10 @@ namespace eka2l1::epoc {
         void set_presented_surface(drivers::handle handle);
         void clear_presented_surface(drivers::handle handle);
         bool draw_presented_surface(drivers::graphics_command_builder &builder);
+
+        void set_posted_video_frame(drivers::handle handle, const eka2l1::rect &rect_in_window, const int rotation);
+        void clear_posted_video_frame(drivers::handle handle);
+        bool draw_posted_video_frame(drivers::graphics_command_builder &builder);
 
         virtual bool scroll(eka2l1::rect clip_space, const eka2l1::vec2 offset, eka2l1::rect source_rect) {
             return true;
