@@ -1399,6 +1399,25 @@ namespace eka2l1 {
                 scr_mode_global = epoc::string_to_display_mode(modes[0]);
             }
 
+            // WINDOWMODE picks the screen device's pixel format, but from Symbian^3
+            // (NGA WSERV) on, that is not the mode clients are told: the render
+            // stage folds every 32bpp format to CFbsDrawDevice::DisplayMode16M(),
+            // which the memory-mapped screen driver defines as EColor16MA.
+            //
+            //   TDisplayMode CDisplayRenderStage::DisplayMode() const
+            //       { const TDisplayMode dm = iRenderTarget->DisplayMode();
+            //         return NumDisplayModeBitsPerPixel(dm) == 32
+            //                ? CFbsDevice::DisplayMode16M() : dm; }
+            //
+            // The X7 ROM asks for Color16MAP, and reporting that verbatim is what
+            // makes Icy Tower fall back to 16-bit pixels: it then reads its own
+            // 32bpp-wide bitmaps off the end of their allocation.
+            if ((kern->get_epoc_version() >= epocver::epoc10)
+                && (epoc::get_bpp_from_display_mode(scr_mode_global) == 32)) {
+                scr_mode_global = epoc::display_mode::color16ma;
+            }
+
+
             dsa_mode_global = scr_mode_global;
 
             // WINDOWMODE is the mode WSERV composes in; it is not proof of what a direct
