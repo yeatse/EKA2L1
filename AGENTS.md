@@ -23,7 +23,7 @@ architecture must keep working.
   services, window server, and the first frame need time to settle.
 - Emulator log: `Documents/data/EKA2L1.log` inside the app data container
   (`xcrun simctl get_app_container booted com.eka2l1.emulator data`).
-- Use the XcodeBuildMCP skill before calling XcodeBuildMCP tools.
+- Use the XcodeBuildMCP skill before calling XcodeBuildMCP tools. When performing actions XcodeBuildMCP doesn't support (eg. guest touch or system file browser), use AXE tool shipped with XcodeBuildMCP.
 
 ### Symbian source-guided diagnosis
 
