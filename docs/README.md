@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-06 | [N-Gage Dragon World immediately leaves its Client role](./ngage-bluetooth-device-selection-response-layout.md) |
 | 2026-09-06 | [Controller touch, motion and haptics on an external iOS display](./ios-controller-external-display-input.md) |
 | 2026-09-06 | [Independent controller stick bindings on iOS](./ios-independent-controller-sticks.md) |
 | 2026-09-06 | [AirPlay game output with controls on the phone](./ios-airplay-game-display.md) |
