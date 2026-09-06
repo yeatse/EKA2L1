@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-06 | [Dragon World slows down while waiting for its multiplayer peer](./dragon-world-multiplayer-frame-pacing.md) |
 | 2026-09-06 | [Bluetooth discovery sends expired control packets](./bluetooth-control-packet-buffer-lifetime.md) |
 | 2026-09-06 | [N-Gage Dragon World immediately leaves its Client role](./ngage-bluetooth-device-selection-response-layout.md) |
 | 2026-09-06 | [Controller touch, motion and haptics on an external iOS display](./ios-controller-external-display-input.md) |

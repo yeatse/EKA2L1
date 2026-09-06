@@ -27,3 +27,22 @@ A separate Air log contained sustained `-57` receive errors on both discovery
 sockets. Restarting the host cleared that error stream but did not fix the
 LAN discovery failure above. Socket recovery after such errors remains a
 separate question; the packet-lifetime fix does not claim to address it.
+
+The rebuilt Release app on the physical Air answered ten further discovery
+requests with fifty correct `0x05` replies and no zero bytes. This verifies
+the actual wire payload after asynchronous queuing, not just the copy helper.
+
+Both Release targets built successfully and the simulator regression suite
+passed all twelve checks. An initial run stayed on the host app list after
+installation; another selected the other booted simulator. The successful
+run used only the fixture-equipped simulator and entered each guest visually.
+
+Automatic LAN discovery on the Air still did not reach the Mac afterward.
+The signed app and its embedded provisioning profile have no
+`com.apple.developer.networking.multicast` entitlement. Apple's
+[TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)
+requires it for both sending and receiving UDP broadcasts on iOS; ordinary
+UDP unicast does not need it. Correct unicast discovery replies therefore do
+not establish working broadcast discovery. Direct IP was the verified
+connection path. Enabling iOS broadcast discovery also requires provisioning
+that permits the capability, or a separately designed discovery transport.
