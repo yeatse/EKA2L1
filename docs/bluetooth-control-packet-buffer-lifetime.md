@@ -46,3 +46,7 @@ UDP unicast does not need it. Correct unicast discovery replies therefore do
 not establish working broadcast discovery. Direct IP was the verified
 connection path. Enabling iOS broadcast discovery also requires provisioning
 that permits the capability, or a separately designed discovery transport.
+
+Apple Local Network discovery was subsequently moved to
+[system Bonjour](./apple-bonjour-local-netplay.md), and automatic Air-to-simulator
+connection was verified without requesting the multicast entitlement.
