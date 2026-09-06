@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-06 | [Inactive GLES2 attributes overwrote the wheels' vertex positions](./gles2-inactive-attributes-overwrite-position.md) |
 | 2026-09-06 | [Icy Tower requires the Rotation sensor channel](./ios-icy-tower-rotation-channel.md) |
 | 2026-09-06 | [GDI command payloads need their own alignment](./gdi-command-payload-alignment.md) |
 | 2026-09-02 | [One framebuffer, two row pitches](./x7-framebuffer-pitch-is-per-client.md) |
