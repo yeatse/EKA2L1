@@ -91,5 +91,9 @@ the old contract: `btdevice.h` declares `TBTDeviceName` as `TBuf<256>`, and
 `btextnotifiers.h` uses that name in the response with no trailing padding after
 the three validity fields. This agrees with the ROM constructor and accessors.
 
-The causal check above used a temporary in-memory change. Validation of the
-permanent implementation is recorded separately below when complete.
+The permanent implementation built successfully for Release simulator and
+physical iOS targets. The Release simulator regression suite passed all twelve
+checks, including Final Battle, Calculator and N95 Calculator. The installed
+physical Air, acting as a Direct IP client of the simulator, reached the map
+without debugger edits. LAN mode still failed separately; see
+[control-packet ownership](./bluetooth-control-packet-buffer-lifetime.md).
