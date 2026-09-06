@@ -133,6 +133,41 @@ access violations, graphics halts, and leftover diagnostics. If a previously wor
 flow breaks after a change, treat it as a regression from that change and narrow the
 diff rather than debugging the broken flow in isolation.
 
+## Upstream contributions
+
+Changes flow one way: develop on the fork, PR against `EKA2L1/EKA2L1:master`, then sync
+the fork's `master` and merge it into `ios-next`. No second fork-internal PR for the
+same commits. Upstream has no `docs/` — strip the fork's write-ups, the reasoning goes
+in the commit message.
+
+- **Select by file, not by commit.** `git diff HEAD ios-next -- <file>` empty means the
+  file is fully upstreamed; a file usually carries several unrelated fork batches, so
+  take hunks, not the fork's final version.
+- **Revert each fix alone** and table the result in the PR description. Commit first —
+  both `git checkout -- <file>` and `git checkout HEAD -- <file>` silently discard
+  uncommitted work. Confirm the binary actually recompiled before believing a harness.
+- **Anchor fixtures to the official contract**, not to EKA2L1: copy expected values from
+  the SDK headers instead of back-computing them from the code under test.
+- **`ekatests`** runs from its own build dir (`build/desk-check/src/tests/`; the x86_64
+  `build/a1-tests` has never built it) — asset paths are relative. Catch2 dies on a
+  fatal signal printing a *partial* summary that looks like pre-existing failures, so
+  compare `--list-tests` counts with the run summary. Declare `epoc::object_table` last
+  in a test, or the *next* case dies before it starts.
+- **Building the Qt frontend runs lupdate and dirties 26 `.ts` files** (`build_ios.sh`
+  and `--target eka2l1_qt` alike): commit before building, then
+  `git checkout -- src/emu/qt/translations/`. A whole-file `.ts` diff with an empty
+  `git diff <merge-base> ios-next -- <file>` is just the fork lagging — take upstream's.
+- **Validate on a clean `upstream/master` worktree**: submodules need
+  `git submodule update --init --recursive`, Apple Silicon configure needs
+  `src/external/ffmpeg/macos/arm64` copied in, and `ios_regression_test.sh` must come
+  from `ios-next` into the worktree's `scripts/` (it derives `REPO_ROOT` from its path).
+  Red there isn't automatically a regression — featmgr feature 1012 and the akn icon
+  server gate were never upstreamed, so the Calculator softkey checks fail.
+- **CI sees what the local loop cannot**: Windows link requirements of vendored C
+  libraries, case-sensitive filesystems, and sanitizer checks macOS disables. Budget a
+  round or two. `gh` here resolves to upstream; the fork's iOS workflows need
+  `-R yeatse/EKA2L1`.
+
 ## Code comments
 
 - One or two lines, and only for what the code cannot say itself: a contract, a
