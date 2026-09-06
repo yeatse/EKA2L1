@@ -710,7 +710,7 @@ test_strings() {
     local newest_src=0 m f
     while IFS= read -r f; do
         m="$(stat -f '%m' "$f" 2>/dev/null || echo 0)"; [ "$m" -gt "$newest_src" ] && newest_src="$m"
-    done < <(find "$REPO_ROOT/src/emu/ios" -name '*.swift' 2>/dev/null)
+    done < <(find "$REPO_ROOT/src/emu/ios/App" -name '*.swift' 2>/dev/null)
     while IFS= read -r f; do
         m="$(stat -f '%m' "$f" 2>/dev/null || echo 0)"; [ "$m" -gt "$newest_data" ] && newest_data="$m"
     done < <(find "$ddir" -name '*.stringsdata' 2>/dev/null)

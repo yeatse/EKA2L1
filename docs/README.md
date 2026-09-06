@@ -5,6 +5,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-06 | [Controller touch, motion and haptics on an external iOS display](./ios-controller-external-display-input.md) |
+| 2026-09-06 | [Independent controller stick bindings on iOS](./ios-independent-controller-sticks.md) |
 | 2026-09-06 | [AirPlay game output with controls on the phone](./ios-airplay-game-display.md) |
 | 2026-09-06 | [Qt mouse clicks were delivered as right-button events](./qt-mouse-button-index.md) |
 | 2026-09-06 | [GLES2 shader compilation on macOS Core Profile](./macos-gles2-shader-version.md) |
