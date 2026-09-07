@@ -5,6 +5,8 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-07 | [Final Battle's intro subtitles fly past unreadably](./final-battle-intro-timer-tick-rounding.md) |
+| 2026-09-07 | [Dyncom dispatch and the next iOS performance work](./dyncom-dispatch-and-ios-performance.md) |
 | 2026-09-06 | [Local Network discovery through Apple Bonjour](./apple-bonjour-local-netplay.md) |
 | 2026-09-06 | [Dragon World slows down while waiting for its multiplayer peer](./dragon-world-multiplayer-frame-pacing.md) |
 | 2026-09-06 | [Bluetooth discovery sends expired control packets](./bluetooth-control-packet-buffer-lifetime.md) |
