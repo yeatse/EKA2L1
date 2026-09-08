@@ -53,6 +53,12 @@ phone driver handles a zero axis. Mesa provides a compatibility precedent, but i
 that cutoff unconditionally would discard valid small-axis rotations that both
 GLM and Mesa preserve. There is no evidence that Symbian drivers derive from Mesa.
 
+Disassembling and executing the 5320 ROM's actual ARM rotation code confirmed that
+its zero-angle/zero-axis call produces identity, while tiny nonzero axes rotate
+normally. The X7 ARM DLLs forward the arguments to VideoCore without filtering them.
+See [the ROM investigation](./gles1-rotation-axis-contract.md) for addresses, binary
+identities, instruction-level results and the limits of the zero-axis fallback.
+
 References: [GLES 1.1 glRotate](https://github.com/KhronosGroup/OpenGL-Refpages/blob/main/es1.1/glRotate.xml),
 [Symbian import library](https://github.com/SymbianSource/oss.FCL.sf.os.graphics/blob/master/opengles/openglesinterface/group/gles11_implib.mmp),
 [Mesa rotation](https://github.com/intel/external-mesa/blob/master/src/mesa/math/m_matrix.c#L741-L807).

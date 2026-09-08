@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-08 | [GLES1 rotation axes: Symbian ROM evidence](./gles1-rotation-axis-contract.md) |
 | 2026-09-08 | [Block Breaker 2 Deluxe has no paddle](./block-breaker-2-invisible-paddle.md) |
 | 2026-09-07 | [Killer Virus counts time in frames, not in seconds](./killer-virus-frame-paced-clock.md) |
 | 2026-09-07 | [Final Battle's intro subtitles fly past unreadably](./final-battle-intro-timer-tick-rounding.md) |
