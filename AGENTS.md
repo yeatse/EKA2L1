@@ -27,146 +27,89 @@ architecture must keep working.
 
 ### Symbian source-guided diagnosis
 
-For unclear IPC, ABI, descriptor-slot, panic, or service behavior, read the original
-contract instead of guessing: the local SDK/OSS tree under `~/Developer/symbian`
-first, then `gh search code` against `SymbianSource` repositories. Search by
-opcode/export/class/panic name and read *both* the client request construction and
-the server completion/cancel paths — argument types, slot numbers, ownership, and
-sync-vs-async cancellation are the compatibility target.
-
-A bad guest request and a host lifetime race look alike. Validate guest pointers
-defensively, but also prove that stop/close/session teardown cannot race a queued
-host callback.
+For unclear IPC, ABI, descriptor, panic, or service behavior, consult
+`~/Developer/symbian` first, then `gh search code` in `SymbianSource` repositories.
+Read both client request construction and server completion/cancellation for slot
+numbers, types, ownership, and sync/async semantics. For suspected lifetime bugs,
+check guest pointer validity and stop/close/session teardown against queued callbacks.
 
 ### Symbian patch DLL builds in UTM
 
-The `Windows XP` VM has S60 2nd FP3 (`C:\Symbian\8.1a`), S60 3rd FP2, S60 5th and Belle
-(`sbs`) plus the checkout at `C:\eka2l1`; push every edited source, run the matching
-UREL command, poll because `utmctl exec` returns early, then validate and install the
-E32Image (adjust patch and target names as needed):
+Use `/Applications/UTM.app/Contents/MacOS/utmctl` with the `Windows XP` VM and
+checkout `C:\eka2l1`. When changing patch sources:
 
-```sh
-UTMCTL=/Applications/UTM.app/Contents/MacOS/utmctl
-VM='Windows XP'
-
-"$UTMCTL" file push "$VM" 'C:\eka2l1\src\patch\mediaclientaudio\src\impl.cpp' < src/patch/mediaclientaudio/src/impl.cpp
-wait_utm_build() {
-  while ! "$UTMCTL" file pull "$VM" 'C:\eka2l1\patch-build-result.txt' 2>/dev/null | tr -d '\r' | rg -q '^(ok|failed)$'; do sleep 3; done
-  test "$("$UTMCTL" file pull "$VM" 'C:\eka2l1\patch-build-result.txt' | tr -d '\r\n ')" = ok
-}
-
-# S60 3rd FP2
-"$UTMCTL" exec "$VM" --cmd cmd.exe /c 'del /q C:\eka2l1\patch-build-result.txt 2>nul & call devices -setdefault @S60_3rd_FP2_SDK_v1.1:com.nokia.s60 > C:\eka2l1\patch-build.log 2>&1 & cd /d C:\eka2l1\src\patch\mediaclientaudio\group\general & call abld reallyclean gcce >> C:\eka2l1\patch-build.log 2>&1 & call bldmake bldfiles >> C:\eka2l1\patch-build.log 2>&1 & call abld build gcce urel >> C:\eka2l1\patch-build.log 2>&1 & if errorlevel 1 (echo failed> C:\eka2l1\patch-build-result.txt) else (echo ok> C:\eka2l1\patch-build-result.txt)'
-wait_utm_build
-"$UTMCTL" file pull "$VM" 'C:\S60\devices\S60_3rd_FP2_SDK_v1.1\epoc32\release\GCCE\urel\mediaclientaudio_general.dll' > /tmp/mediaclientaudio_s60v3.dll
-
-# Symbian Belle
-"$UTMCTL" exec "$VM" --cmd cmd.exe /c 'del /q C:\eka2l1\patch-build-result.txt 2>nul & set "EPOCROOT=\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\" & set "PATH=C:\Perl\bin;C:\Program Files\Common Files\Symbian\tools;C:\Program Files\CodeSourcery\Sourcery G++ Lite\bin;C:\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\epoc32\tools\sbs\bin;%PATH%" & cd /d C:\eka2l1\src\patch\mediaclientaudio\group\general & call sbs -b bld.inf -c armv5_urel_gcce4_4_1 > C:\eka2l1\patch-build.log 2>&1 & if errorlevel 1 (echo failed> C:\eka2l1\patch-build-result.txt) else (echo ok> C:\eka2l1\patch-build-result.txt)'
-wait_utm_build
-"$UTMCTL" file pull "$VM" 'C:\Nokia\devices\Nokia_Symbian_Belle_SDK_v1.0\epoc32\release\armv5\urel\mediaclientaudio_general.dll' > /tmp/mediaclientaudio_belle.dll
-
-~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py /tmp/mediaclientaudio_s60v3.dll
-~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py /tmp/mediaclientaudio_belle.dll
-PATCH_DLL=/tmp/mediaclientaudio_belle.dll # or /tmp/mediaclientaudio_s60v3.dll
-cp "$PATCH_DLL" src/patch/mediaclientaudio/group/mediaclientaudio_general.dll
-```
-
-`group/target.inf` names the SDK per variant. The EKA1 `_v81a` variants build with
-`@S60_2nd_FP3:com.nokia.series60` and **`abld build armi urel`** (the SDK's classic GCC,
-no PATH juggling needed); output lands in
-`C:\Symbian\8.1a\S60_2nd_FP3\Epoc32\release\armi\urel\`. `verify_e32.py` rejects
-those with `CPU expected ARMv5, got 0x0000` — that check only applies to EKA2 images, so
-compare the header against the currently checked-in binary instead. `_general` builds
-with `@S60_5th_Edition_SDK_v1.0:com.nokia.s60` and `gcce urel`, needs
-`C:\PROGRA~1\CSL Arm Toolchain\bin` on PATH, and its output is under
-`C:\S60\devices\S60_5th_Edition_SDK_v1.0\epoc32\release\GCCE\urel\`.
-
-Build `src/patch/priv` (same SDK, same platform) first and push its sources too — a
-stale `priv.lib` in the SDK shows up as undefined references to things like
-`ConvertFreqEnumToNumber`. When one `src/*.cpp` feeds several variants, rebuild **all**
-of them; shipping one stale binary means two different implementations of one file.
+- Push all edited sources, including `src/patch/priv`; build `priv` first with the
+  same SDK/platform. Rebuild every variant that shares the changed source.
+- Select the SDK from each variant's `group/target.inf`. EKA1 `_v81a` uses S60 2nd
+  FP3 and `abld build armi urel`; GCCE variants use `abld build gcce urel` after
+  `bldmake bldfiles`. Belle uses `sbs -b bld.inf -c armv5_urel_gcce4_4_1`.
+- S60 5th GCCE needs `C:\PROGRA~1\CSL Arm Toolchain\bin` on PATH. Belle needs its
+  SDK's `EPOCROOT`, SBS tools, and CodeSourcery toolchain.
+- `utmctl exec` returns before the build finishes: clear any old result marker,
+  poll for completion, and inspect the build log before pulling the UREL DLL.
+- Validate with `~/Developer/symbian/symbian-dll-agent-kit/tools/verify_e32.py`
+  before replacing the checked-in DLL. Its ARMv5 CPU check does not apply to EKA1;
+  compare those headers with the existing binary instead.
 
 ### TestFlight crash symbolication
 
-Map the build to a commit with `gh run list --workflow "iOS TestFlight"`, download
-that run's `EKA2L1-testflight-dSYM-<sha>` artifact, and require an exact
-`dwarfdump --uuid` match before trusting any symbol. `xcrun atos -arch arm64 -o
-<dSYM DWARF binary> -l <image load address>` resolves unsymbolicated frames.
-
-Compare every report from the same build before editing code: watchdog reports often
-share one lock cycle, and a random-looking main-thread crash can be secondary heap
-corruption. Keep exported crash files and downloaded symbols out of commits.
+Find the build's commit and `EKA2L1-testflight-dSYM-<sha>` artifact with
+`gh run list -R yeatse/EKA2L1 --workflow "iOS TestFlight"`. Require an exact
+`dwarfdump --uuid` match before using `xcrun atos -arch arm64 -o <DWARF binary>
+-l <image load address>`. Compare available reports from the same build before
+settling on a cause. Keep crash reports and downloaded symbols out of commits.
 
 ### Physical device
 
-The simulator runs on the build host, so it hides device-only bugs (e.g. resources
-staged from `__FILE__`-relative paths). Verify device-facing fixes on hardware:
-iPhone Air, UDID `77611A2B-2A02-51FA-BAFC-2104F1D8011A`, team `L6JP27B8YR`
-(`EKA2L1_IOS_DEVELOPMENT_TEAM` + `EKA2L1_IOS_DEVICE` env for
-`scripts/build_ios.sh install`).
-
-Quirks: the device must be unlocked or `devicectl ... process launch` errors
-"Locked"; `devicectl device copy from` intermittently returns empty or "Connection
-reset", so retry; there is no CLI screenshot — ask the user to confirm screen and
-sound visually.
+For behavior the simulator cannot validate, use iPhone Air, UDID
+`77611A2B-2A02-51FA-BAFC-2104F1D8011A`, team `L6JP27B8YR`, with
+`EKA2L1_IOS_DEVELOPMENT_TEAM` and `EKA2L1_IOS_DEVICE` for
+`scripts/build_ios.sh install`. The device must be unlocked. Retry empty or
+connection-reset `devicectl device copy from` results. If screen or sound cannot
+be checked through available tools, ask the user to confirm them.
 
 ## Verification
 
-Run the regression script against a **Release** simulator build before concluding any
-emulator-affecting change:
+Size verification to the change. Documentation-only changes need a diff review,
+not an emulator build. For emulator behavior changes, run the default regression
+suite once against the final **Release** simulator build:
 
 ```sh
 scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
-scripts/ios_regression_test.sh                 # re-run without reinstalling
-scripts/ios_regression_test.sh angrybirds      # input/touch or Symbian^3 changes
 ```
 
-The default suite drives Final Battle and Calculator (plus the N95 calculator checks);
-`angrybirds` covers the touch path and needs X7/rm-707 with Angry Birds installed.
-Screenshots land in `/tmp/eka2l1-regression`. Non-zero exit means a regression —
-investigate before landing. Needs a booted simulator with a device (e.g. 5320/rm-409)
-mounted and the apps installed, plus `xcodebuildmcp`, `jq`, and ImageMagick.
+Add `scripts/ios_regression_test.sh angrybirds` for input/touch or Symbian^3 changes.
+See the script header for other suites and prerequisites; screenshots land in
+`/tmp/eka2l1-regression`. Cover the affected app path and a known-good control,
+reusing suite coverage where it overlaps. Confirm the result visually and scan the
+log for panics, access violations, graphics halts, and leftover diagnostics.
 
-Beyond the script: check the affected app path plus a known-good control app, confirm
-success visually rather than from a clean process launch, and scan the log for panics,
-access violations, graphics halts, and leftover diagnostics. If a previously working
-flow breaks after a change, treat it as a regression from that change and narrow the
-diff rather than debugging the broken flow in isolation.
+Reuse passing results for the same change across `ios-next` and upstream PR
+preparation. Repeat only affected checks when subsequent code changes, conflict
+resolution, relevant base differences, or failures invalidate those results;
+changing branches alone is not a reason to rebuild or rerun the suite. Record the
+tested revision/configuration and results in the commit or PR. Investigate failures
+before landing; report unrelated pre-existing issues without expanding the fix.
 
 ## Upstream contributions
 
-Changes flow one way: develop on the fork, PR against `EKA2L1/EKA2L1:master`, then sync
-the fork's `master` and merge it into `ios-next`. No second fork-internal PR for the
-same commits. Upstream has no `docs/` — strip the fork's write-ups, the reasoning goes
-in the commit message.
-
-- **Select by file, not by commit.** `git diff HEAD ios-next -- <file>` empty means the
-  file is fully upstreamed; a file usually carries several unrelated fork batches, so
-  take hunks, not the fork's final version.
-- **Revert each fix alone** and table the result in the PR description. Commit first —
-  both `git checkout -- <file>` and `git checkout HEAD -- <file>` silently discard
-  uncommitted work. Confirm the binary actually recompiled before believing a harness.
-- **Anchor fixtures to the official contract**, not to EKA2L1: copy expected values from
-  the SDK headers instead of back-computing them from the code under test.
-- **`ekatests`** runs from its own build dir (`build/desk-check/src/tests/`; the x86_64
-  `build/a1-tests` has never built it) — asset paths are relative. Catch2 dies on a
-  fatal signal printing a *partial* summary that looks like pre-existing failures, so
-  compare `--list-tests` counts with the run summary. Declare `epoc::object_table` last
-  in a test, or the *next* case dies before it starts.
-- **Building the Qt frontend runs lupdate and dirties 26 `.ts` files** (`build_ios.sh`
-  and `--target eka2l1_qt` alike): commit before building, then
-  `git checkout -- src/emu/qt/translations/`. A whole-file `.ts` diff with an empty
-  `git diff <merge-base> ios-next -- <file>` is just the fork lagging — take upstream's.
-- **Validate on a clean `upstream/master` worktree**: submodules need
-  `git submodule update --init --recursive`, Apple Silicon configure needs
-  `src/external/ffmpeg/macos/arm64` copied in, and `ios_regression_test.sh` must come
-  from `ios-next` into the worktree's `scripts/` (it derives `REPO_ROOT` from its path).
-  Red there isn't automatically a regression — featmgr feature 1012 and the akn icon
-  server gate were never upstreamed, so the Calculator softkey checks fail.
-- **CI sees what the local loop cannot**: Windows link requirements of vendored C
-  libraries, case-sensitive filesystems, and sanitizer checks macOS disables. Budget a
-  round or two. `gh` here resolves to upstream; the fork's iOS workflows need
-  `-R yeatse/EKA2L1`.
+- Develop and validate on the fork, PR against `EKA2L1/EKA2L1:master`, then sync the
+  fork's `master` and merge it into `ios-next`. No second fork-internal PR for the
+  same changes.
+- Inspect the current upstream diff and select only relevant hunks; fork commits
+  and whole files can contain unrelated changes. Keep fork-only docs out of the
+  upstream PR; put the rationale in the commit message or PR description.
+- Reuse the fork's verification as described above. Do not require a second full
+  simulator run on an upstream worktree or revert each fix just to produce a PR
+  table. Add targeted checks only for a concrete gap in coverage; use upstream CI
+  for platform-specific build and test coverage.
+- When adding tests, derive expected behavior from SDK/OSS contracts. Run
+  `ekatests` from its build directory so relative assets resolve, and check that
+  the run completed rather than trusting a partial summary after a fatal signal.
+- Review generated translation diffs after Qt builds; discard only build-generated
+  changes, preserving pre-existing edits.
+- Specify the repository in `gh` commands: `-R EKA2L1/EKA2L1` for upstream,
+  `-R yeatse/EKA2L1` for fork workflows.
 
 ## Code comments
 
@@ -183,10 +126,12 @@ in the commit message.
 
 ## Documentation
 
-- When you root-cause a non-trivial bug, write it up as its own English file in
-  `docs/`: symptom, how you narrowed it down (including dead ends worth avoiding),
-  conclusion/fix. Skip reproduction commands; no fixed template.
-- Add a `| date | [title](./file.md) |` row to `docs/README.md`.
+- Default to the commit message for small crash fixes, routine bug fixes, and
+  small features; do not create a separate document for them. Write an English
+  file in `docs/` only when a complex investigation or design has lasting value
+  beyond the commit: symptom, useful diagnostic findings, and conclusion/fix.
+  Skip reproduction commands; no fixed template.
+- When adding a document, add a `| date | [title](./file.md) |` row to `docs/README.md`.
 - `docs/IOS_PORTING_PLAN.md` and `docs/IOS_PORTING_TASKS.md` are archived history —
   don't add to them.
 - For genuinely tricky fixes, put symptom / root cause / fix in the commit message
