@@ -107,6 +107,10 @@ namespace eka2l1::epoc::bt {
             }
             lan_discovery_call_listener_socket_->on<uvw::error_event>([](const uvw::error_event &event, uvw::udp_handle &handle) {
                 LOG_ERROR(SERVICE_BLUETOOTH, "Error on the LAN discovery listener socket! Libuv error code={}", event.code());
+
+                if (is_socket_dead_error(event.code())) {
+                    handle.stop();
+                }
             });
 
             lan_discovery_call_listener_socket_->on<uvw::udp_data_event>([this](const uvw::udp_data_event &event, uvw::udp_handle &handle) {

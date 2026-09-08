@@ -129,7 +129,9 @@ namespace eka2l1::epoc::bt {
         std::vector<inet_stranger_call_observer*> pending_observers_;
 
         std::string password_;
+        std::string central_server_url_;
         discovery_mode discovery_mode_;
+        bool suspended_;
 
         epoc::socket::saddress server_addr_{};
         epoc::socket::saddress local_addr_{};
@@ -140,6 +142,11 @@ namespace eka2l1::epoc::bt {
         std::uint32_t asker_counter_;
 
         void send_call_for_strangers();
+
+        void start_discovery(const bool first_start);
+        // Both of these must run on the loop thread.
+        void setup_discovery_sockets(const bool first_start);
+        void shutdown_discovery_sockets();
 
         // LAN
 #ifdef __APPLE__
@@ -222,6 +229,9 @@ namespace eka2l1::epoc::bt {
         midman_type type() const override {
             return MIDMAN_INET_BT;
         }
+
+        void suspend() override;
+        void resume() override;
 
         discovery_mode get_discovery_mode() const {
             return discovery_mode_;

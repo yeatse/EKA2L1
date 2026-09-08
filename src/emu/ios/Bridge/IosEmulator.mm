@@ -2213,6 +2213,42 @@ namespace eka2l1::ios {
     _state->paused = false;
 }
 
+// The midman outlives any single kernel lock hold, and taking one across
+// suspend()/resume() would deadlock: both block on the libuv loop thread, which
+// itself takes the kernel lock inside its callbacks.
+- (eka2l1::epoc::bt::midman *)bluetoothMidman {
+    if (!_state || !_state->symsys || !_state->mounted) {
+        return nullptr;
+    }
+
+    auto *kern = _state->symsys->get_kernel_system();
+    if (!kern) {
+        return nullptr;
+    }
+
+    eka2l1::kernel_lock lock(kern);
+    auto *server = kern->get_by_name<eka2l1::btman_server>(
+        eka2l1::get_btman_server_name_by_epocver(kern->get_epoc_version()));
+
+    return server ? server->get_midman() : nullptr;
+}
+
+- (void)suspendNetworking {
+    if (!_state) return;
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    if (auto *midman = [self bluetoothMidman]) {
+        midman->suspend();
+    }
+}
+
+- (void)resumeNetworking {
+    if (!_state) return;
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    if (auto *midman = [self bluetoothMidman]) {
+        midman->resume();
+    }
+}
+
 - (CGRect)guestDisplayRect {
     if (!_state) return CGRectZero;
     std::lock_guard<std::mutex> lock(_state->display_geometry_mutex);
