@@ -95,11 +95,11 @@ Some care in the details:
 - iOS drives it from `scenePhase`, and only from `.background`. `.inactive` fires
   for a control-centre pull or a call banner, which must not drop a live netplay
   search.
-- Neither call blocks on the loop thread. The host's background callback is
-  watchdogged, and blocking there while the loop thread happens to be inside a
-  `getaddrinfo()` would be a 0x8badf00d waiting to happen. Ordering is sufficient:
-  `looper::post_task` pushes onto a FIFO, so a resume that beats the shutdown still
-  rebuilds on top of it.
+- Neither call waits for the session lock on main or for the loop thread.
+  The bridge posts transitions to the control queue; socket setup and shutdown
+  each finish in one loop task. System boot inherits the desired host state.
+  [The lifecycle review](./netplay-suspension-lifetime.md) explains the lock cycle
+  and connection-state ownership constraints.
 - The asker is left out of the suspend path. Closing it would strand a synchronous
   requester waiting on a completion that can no longer arrive — the same hazard
   `asker_inet`'s destructor already documents about the kernel lock.

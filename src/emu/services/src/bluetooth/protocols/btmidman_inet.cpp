@@ -163,29 +163,32 @@ namespace eka2l1::epoc::bt {
         shutdown_uv_handle(lan_discovery_call_listener_socket_);
         shutdown_uv_handle(bluetooth_queries_server_socket_);
         shutdown_uv_handle(matching_server_socket_);
+        matching_server_receive_buffer_.clear();
     }
 
-    // Called from a watchdogged host callback, so this never waits for the loop
-    // thread: posted tasks run in order, which is all a resume needs to come after.
+    // Keep the transition and all handle changes together on the loop thread.
     void midman_inet::suspend() {
-        if ((discovery_mode_ == DISCOVERY_MODE_OFF) || suspended_ || !libuv::default_looper->started()) {
+        if ((discovery_mode_ == DISCOVERY_MODE_OFF) || !libuv::default_looper->started()) {
             return;
         }
 
-        suspended_ = true;
-
         libuv::default_looper->one_shot([this]() {
+            if (suspended_) return;
+            suspended_ = true;
             shutdown_discovery_sockets();
         });
     }
 
     void midman_inet::resume() {
-        if ((discovery_mode_ == DISCOVERY_MODE_OFF) || !suspended_) {
+        if ((discovery_mode_ == DISCOVERY_MODE_OFF) || !libuv::default_looper->started()) {
             return;
         }
 
-        suspended_ = false;
-        start_discovery(false);
+        libuv::default_looper->one_shot([this]() {
+            if (!suspended_) return;
+            suspended_ = false;
+            setup_discovery_sockets(false);
+        });
     }
 
     midman_inet::~midman_inet() {
@@ -203,8 +206,6 @@ namespace eka2l1::epoc::bt {
             }
         }
 
-        send_logout(true);
-
         if (!libuv::default_looper->started()) {
             return;
         }
@@ -216,6 +217,7 @@ namespace eka2l1::epoc::bt {
         common::event teardown_done;
 
         libuv::default_looper->one_shot([this, &teardown_done]() {
+            send_logout();
             // The asker goes first: its retry timer completes requests through a callback
             // that reaches back into this object, which is already half torn down.
             device_addr_asker_.shutdown_handles();

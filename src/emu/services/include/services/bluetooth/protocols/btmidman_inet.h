@@ -131,7 +131,7 @@ namespace eka2l1::epoc::bt {
         std::string password_;
         std::string central_server_url_;
         discovery_mode discovery_mode_;
-        bool suspended_;
+        bool suspended_; // Loop thread only.
 
         epoc::socket::saddress server_addr_{};
         epoc::socket::saddress local_addr_{};
@@ -163,7 +163,7 @@ namespace eka2l1::epoc::bt {
         // Server handler
         void handle_matching_server_msg(std::int64_t nread, const char *buf_ptr);
         void send_login();
-        void send_logout(const bool close_and_reset = true);
+        void send_logout();
         void read_and_add_friend(const char *buf, std::int64_t nread, std::int64_t &buf_pointer);
         void add_friend(epoc::bt::friend_info &info);
         void on_timeout_friend_search();

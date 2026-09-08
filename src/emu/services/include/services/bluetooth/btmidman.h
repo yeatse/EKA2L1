@@ -59,13 +59,8 @@ namespace eka2l1::epoc::bt {
 
         virtual midman_type type() const = 0;
 
-        /**
-         * @brief Report that the host is about to suspend, or has just resumed, the process.
-         *
-         * Sockets do not survive a suspension on every host: iOS marks every socket a
-         * suspended app owns as defunct, and the resumed process can only rebuild them.
-         * Frontends that can be suspended call these around the transition.
-         */
+        // Host suspension can invalidate sockets. The session owner reports each
+        // transition; implementations must not wait for network callbacks here.
         virtual void suspend() {
         }
 

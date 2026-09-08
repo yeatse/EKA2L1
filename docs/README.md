@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-08 | [Rebuilding discovery without blocking the host lifecycle](./netplay-suspension-lifetime.md) |
 | 2026-09-08 | [The Bluetooth queries socket that filled the disk](./bluetooth-defunct-socket-log-flood.md) |
 | 2026-09-08 | [GLES1 rotation axes: Symbian ROM evidence](./gles1-rotation-axis-contract.md) |
 | 2026-09-08 | [Block Breaker 2 Deluxe has no paddle](./block-breaker-2-invisible-paddle.md) |
