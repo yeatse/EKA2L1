@@ -40,10 +40,22 @@ forwards that straight to `glm::rotate`, which normalises the axis: `(0,0,0)` be
 `0/0`, and the NaNs spread through the whole modelview matrix, so every paddle vertex
 lands outside the clip volume and nothing is rasterised.
 
-Real drivers do not do that. The reference implementation everyone's GLES1 stack
-descends from (Mesa's `_math_matrix_rotate`) explicitly bails out when the axis
-magnitude is `<= 1e-4` and leaves the matrix untouched. Zero-axis rotation is a no-op,
-not a poison pill.
+Treating the zero axis as a no-op prevents the matrix corruption. Nonzero axes must
+still be normalised, as specified by the GLES 1.1 `glRotate` contract. In particular,
+`glRotatex(90 * 65536, 0, 0, 1)` rotates 90 degrees around Z even though its axis
+length is only 1/65536.
+
+The local Symbian OSS `opengles/openglesinterface` contains Khronos-compatible
+headers, import-library definitions and empty export stubs, not a renderer. The
+Belle SDK declarations and SymbianSource search do not establish how a particular
+phone driver handles a zero axis. Mesa provides a compatibility precedent, but its
+`1e-4` cutoff only applies after its single-coordinate-axis fast paths. Applying
+that cutoff unconditionally would discard valid small-axis rotations that both
+GLM and Mesa preserve. There is no evidence that Symbian drivers derive from Mesa.
+
+References: [GLES 1.1 glRotate](https://github.com/KhronosGroup/OpenGL-Refpages/blob/main/es1.1/glRotate.xml),
+[Symbian import library](https://github.com/SymbianSource/oss.FCL.sf.os.graphics/blob/master/opengles/openglesinterface/group/gles11_implib.mmp),
+[Mesa rotation](https://github.com/intel/external-mesa/blob/master/src/mesa/math/m_matrix.c#L741-L807).
 
 ### Root cause 2 — an upload silently dropped, so the paddle was untextured
 
@@ -83,7 +95,7 @@ rasterised, so the missing upload was invisible.
 `src/emu/dispatch/src/libraries/gles1/gles1.cpp`:
 
 - `gl_rotatef_emu` / `gl_rotatex_emu` return without touching the matrix stack when the
-  axis length is `<= 1e-4`, matching the reference driver behaviour.
+  axis is exactly zero. Small nonzero axes retain their rotation.
 - `egl_context_es1::bind_texture` creates the texture object when the named slot is
   empty, so `try_bind` runs at bind time and the object learns its target. The
   subsequent `try_bind` is also now guarded by an object-type check, since ES1 keeps

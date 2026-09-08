@@ -27,7 +27,6 @@
 #include <system/epoc.h>
 #include <kernel/kernel.h>
 
-#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -1142,18 +1141,14 @@ namespace eka2l1::dispatch {
         ctx->active_matrix() = glm::translate(ctx->active_matrix(), glm::vec3(FIXED_32_TO_FLOAT(x), FIXED_32_TO_FLOAT(y), FIXED_32_TO_FLOAT(z)));
     }
     
-    // A degenerate axis is a no-op on real drivers; glm::rotate would normalise it into NaNs.
-    static bool rotate_axis_is_degenerate(const float x, const float y, const float z) {
-        return (std::sqrt(x * x + y * y + z * z) <= 1.0e-4f);
-    }
-
     BRIDGE_FUNC_LIBRARY(void, gl_rotatef_emu, float angles, float x, float y, float z) {
         egl_context_es1 *ctx = get_es1_active_context(sys);
         if (!ctx) {
             return;
         }
 
-        if (rotate_axis_is_degenerate(x, y, z)) {
+        // Avoid normalising a zero axis into NaNs; nonzero axes need not have unit length.
+        if (x == 0.0f && y == 0.0f && z == 0.0f) {
             return;
         }
 
@@ -1170,7 +1165,7 @@ namespace eka2l1::dispatch {
         const float yf = FIXED_32_TO_FLOAT(y);
         const float zf = FIXED_32_TO_FLOAT(z);
 
-        if (rotate_axis_is_degenerate(xf, yf, zf)) {
+        if (x == 0 && y == 0 && z == 0) {
             return;
         }
 
