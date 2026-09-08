@@ -1161,13 +1161,13 @@ namespace eka2l1::dispatch {
             return;
         }
 
-        const float xf = FIXED_32_TO_FLOAT(x);
-        const float yf = FIXED_32_TO_FLOAT(y);
-        const float zf = FIXED_32_TO_FLOAT(z);
-
         if (x == 0 && y == 0 && z == 0) {
             return;
         }
+
+        const float xf = FIXED_32_TO_FLOAT(x);
+        const float yf = FIXED_32_TO_FLOAT(y);
+        const float zf = FIXED_32_TO_FLOAT(z);
 
         ctx->active_matrix() = glm::rotate(ctx->active_matrix(), glm::radians(FIXED_32_TO_FLOAT(angles)), glm::vec3(xf, yf, zf));
     }

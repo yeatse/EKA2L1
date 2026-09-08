@@ -94,6 +94,12 @@ missing contexts. With ASan/UBSan, the corrected implementation passed all 38 ch
 the blanket-cutoff version failed 20. No ROM bytes or reverse-engineering artifacts
 belong in the upstream change.
 
+The Release simulator build passed the default regression suite (12 checks), Angry
+Birds touch suite (5 checks), and Asphalt 6 through an actual Nassau race (9 checks).
+Block Breaker Deluxe 2 level 1 was also checked visually: the chrome paddle renders,
+holds the ball and follows touch input. The final readability-only change moves the
+fixed-point zero check before conversion; all 38 bridge checks still pass.
+
 References: [GLES 1.1 specification](https://registry.khronos.org/OpenGL/specs/es/1.1/es_full_spec_1.1.pdf),
 [Symbian GLES ABI](https://github.com/SymbianSource/oss.FCL.sf.os.graphics/blob/master/opengles/openglesinterface/eabi/opengles11u.def),
 [Mesa rotation implementation](https://github.com/intel/external-mesa/blob/master/src/mesa/math/m_matrix.c#L741-L807).
