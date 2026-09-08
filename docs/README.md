@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-08 | [Super Miners finds no Bluetooth players](./super-miners-sdp-server-never-answers.md) |
 | 2026-09-08 | [Rebuilding discovery without blocking the host lifecycle](./netplay-suspension-lifetime.md) |
 | 2026-09-08 | [The Bluetooth queries socket that filled the disk](./bluetooth-defunct-socket-log-flood.md) |
 | 2026-09-08 | [GLES1 rotation axes: Symbian ROM evidence](./gles1-rotation-axis-contract.md) |
