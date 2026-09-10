@@ -453,8 +453,12 @@ namespace eka2l1::ios {
         // Read by the main thread while a boot may be rebuilding symsys.
         std::atomic<bool> device_is_eka1{false};
 
-        // Empty for internal E storage; guarded by session_mutex.
+        // Guarded by session_mutex; firmware identity survives device-list reordering.
         std::string mounted_card_path;
+        std::string mounted_card_firmware;
+        std::uint32_t mounted_card_attrib{0};
+        // Nonblocking mount status for the main thread.
+        std::atomic<bool> card_mounted{false};
 
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
@@ -609,6 +613,16 @@ namespace eka2l1::ios {
             return matches[0];
         }
         return std::string();
+    }
+
+    // Call under session_mutex to keep the main-thread snapshot in sync.
+    static void set_mounted_card(emulator *state, std::string path, const std::uint32_t attrib) {
+        state->mounted_card_path = std::move(path);
+        state->mounted_card_attrib = attrib;
+        const auto *device = state->mounted_card_path.empty() ? nullptr
+            : state->symsys->get_device_manager()->get_current();
+        state->mounted_card_firmware = device ? device->firmware_code : std::string();
+        state->card_mounted.store(!state->mounted_card_path.empty(), std::memory_order_relaxed);
     }
 
     static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
@@ -1504,10 +1518,15 @@ namespace eka2l1::ios {
     _state->present_status[1] = 0;
     _state->present_slot = 0;
 
+    const std::string card_path = _state->mounted_card_path;
+    const std::string card_firmware = _state->mounted_card_firmware;
+    const std::uint32_t card_attrib = _state->mounted_card_attrib;
+    const std::string card_mmc_id = _state->conf.current_mmc_id;
+    eka2l1::ios::set_mounted_card(_state.get(), {}, 0);
+    _state->conf.current_mmc_id = _state->conf.mmc_id;
+
     auto comp = eka2l1::ios::make_system_components(_state.get());
     _state->symsys = std::make_unique<eka2l1::system>(comp);
-    _state->mounted_card_path.clear();
-    _state->conf.current_mmc_id = _state->conf.mmc_id;
     auto *sys = _state->symsys.get();
 
     sys->startup();
@@ -1553,7 +1572,16 @@ namespace eka2l1::ios {
 
     sys->mount(drive_c, drive_media::physical, eka2l1::add_path(storage, "/drives/c/"), io_attrib_internal);
     sys->mount(drive_d, drive_media::physical, eka2l1::add_path(storage, "/drives/d/"), io_attrib_internal);
-    sys->mount(drive_e, drive_media::physical, eka2l1::add_path(storage, "/drives/e/"), io_attrib_removeable);
+    // Guest relaunches reboot the same device; retain its card, attributes and CID.
+    if (!card_path.empty() && card_firmware == firmware_code
+        && eka2l1::common::is_dir(card_path)
+        && sys->get_io_system()->mount_physical_path(drive_e, drive_media::physical,
+            card_attrib, eka2l1::common::utf8_to_ucs2(card_path))) {
+        eka2l1::ios::set_mounted_card(_state.get(), card_path, card_attrib);
+        _state->conf.current_mmc_id = card_mmc_id;
+    } else {
+        sys->mount(drive_e, drive_media::physical, eka2l1::add_path(storage, "/drives/e/"), io_attrib_removeable);
+    }
     sys->mount(drive_z, drive_media::rom, eka2l1::add_path(storage, "/drives/z/"),
         io_attrib_internal | io_attrib_write_protected);
 
@@ -1727,6 +1755,10 @@ namespace eka2l1::ios {
     _state->symsys->startup();
 
     const bool found = _state->symsys->rescan_devices(drive_z);
+    if (!found) {
+        eka2l1::ios::set_mounted_card(_state.get(), {}, 0);
+        _state->conf.current_mmc_id = _state->conf.mmc_id;
+    }
     return found ? YES : NO;
 }
 
@@ -2056,7 +2088,7 @@ namespace eka2l1::ios {
 
         if (io->mount_physical_path(drive_e, drive_media::physical, attrib,
                 eka2l1::common::utf8_to_ucs2(card_path))) {
-            _state->mounted_card_path = card_path;
+            eka2l1::ios::set_mounted_card(_state.get(), card_path, attrib);
             report.result = EKA2L1MountResultSuccess;
         }
     } else {
@@ -2079,13 +2111,14 @@ namespace eka2l1::ios {
 
         if (report.result == EKA2L1MountResultSuccess) {
             std::optional<eka2l1::drive> entry = io->get_drive_entry(drive_e);
-            _state->mounted_card_path = entry.has_value() ? entry->real_path : std::string();
+            eka2l1::ios::set_mounted_card(_state.get(),
+                entry.has_value() ? entry->real_path : std::string(), io_attrib_removeable);
         }
     }
 
     if (report.result != EKA2L1MountResultSuccess) {
         // A failed replacement restores the emulator's own E storage.
-        _state->mounted_card_path.clear();
+        eka2l1::ios::set_mounted_card(_state.get(), {}, 0);
         io->mount_physical_path(drive_e, drive_media::physical, io_attrib_removeable,
             eka2l1::common::utf8_to_ucs2(eka2l1::add_path(_state->conf.storage, "/drives/e/")));
     }
@@ -2121,7 +2154,7 @@ namespace eka2l1::ios {
     io->mount_physical_path(drive_e, drive_media::physical, io_attrib_removeable,
         eka2l1::common::utf8_to_ucs2(eka2l1::add_path(_state->conf.storage, "/drives/e/")));
 
-    _state->mounted_card_path.clear();
+    eka2l1::ios::set_mounted_card(_state.get(), {}, 0);
     _state->conf.current_mmc_id = _state->conf.mmc_id;
     _state->mounted = was_mounted;
     return YES;
@@ -2503,6 +2536,13 @@ namespace eka2l1::ios {
     }
     // Cached at boot time: see emulator::device_is_touch_screen.
     return _state->device_is_touch_screen.load(std::memory_order_relaxed) ? YES : NO;
+}
+
+- (BOOL)isGameCardMounted {
+    if (!_state) {
+        return NO;
+    }
+    return _state->card_mounted.load(std::memory_order_relaxed) ? YES : NO;
 }
 
 - (BOOL)currentDeviceIsEKA1 {

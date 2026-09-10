@@ -77,6 +77,12 @@ final class DeviceStore: ObservableObject {
         mountedCardName = nil
     }
 
+    // A same-device reboot retains the card and its security scope.
+    private func syncMountedCardAfterBoot() {
+        guard !EKA2L1Bridge.shared.isGameCardMounted() else { return }
+        releaseMountedCard()
+    }
+
     // Pull-to-refresh on the home grid: re-read the device titles and re-scan
     // the booted device's registry, picking up apps that appeared behind the
     // frontend's back (a package dropped in through the Files app, a guest-side
@@ -127,7 +133,7 @@ final class DeviceStore: ObservableObject {
     @discardableResult
     func boot(at index: Int) async -> Bool {
         let ok = await perform { EKA2L1Bridge.bootDevice(at: index) }
-        releaseMountedCard()
+        syncMountedCardAfterBoot()
         if ok {
             currentIndex = index
             reloadApps()
@@ -160,7 +166,7 @@ final class DeviceStore: ObservableObject {
         let bootedOK = await perform {
             EKA2L1Bridge.rescanDevices() && EKA2L1Bridge.bootDevice(at: 0)
         }
-        releaseMountedCard()
+        syncMountedCardAfterBoot()
         devices = EKA2L1Bridge.shared.installedDevices()
         if bootedOK {
             currentIndex = 0

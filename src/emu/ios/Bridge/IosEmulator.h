@@ -220,12 +220,15 @@ typedef NS_ENUM(NSInteger, EKA2L1InstallResult) {
 - (EKA2L1NGageInstallReport *)installNGageGameAtPath:(NSString *)cardPath;
 
 // Mount a folder read-only or unpack an archive into writable cache storage on drive E.
-// Lasts until eject, device boot or relaunch. Heavy for archives; call off the main thread.
+// Survives same-device reboots until eject, device switch or host app exit. Call off-main.
 - (EKA2L1MountReport *)mountGameCardAtPath:(NSString *)path;
 
 // Put drive E back on the emulator's own storage folder. Returns NO when no
 // card is mounted.
 - (BOOL)unmountGameCard;
+
+// Nonblocking snapshot for the main thread; read after boot completes.
+- (BOOL)isGameCardMounted;
 
 // Uninstall a user-installed package by its app UID. Deletes the package's
 // files and registration; ROM/system apps cannot be uninstalled. Returns NO if

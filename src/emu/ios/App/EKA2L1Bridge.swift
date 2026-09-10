@@ -216,6 +216,10 @@ final class EKA2L1Bridge {
         emulator.unmountGameCard()
     }
 
+    func isGameCardMounted() -> Bool {
+        emulator.isGameCardMounted()
+    }
+
     func uninstallApp(uid: UInt32) -> Bool {
         emulator.uninstallApp(withUID: uid)
     }
