@@ -17,6 +17,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -84,6 +85,9 @@
 @end
 
 @implementation EKA2L1NGageInstallReport
+@end
+
+@implementation EKA2L1MountReport
 @end
 
 @implementation EKA2L1LanguageEntry
@@ -446,6 +450,12 @@ namespace eka2l1::ios {
         // very moment, so the answer must not come from walking symsys.
         std::atomic<bool> device_is_touch_screen{false};
 
+        // Read by the main thread while a boot may be rebuilding symsys.
+        std::atomic<bool> device_is_eka1{false};
+
+        // Empty for internal E storage; guarded by session_mutex.
+        std::string mounted_card_path;
+
         // Primary-thread id of the app launched by launchAppWithUID:. Used to
         // kill that process when the frontend closes the emulator screen, and
         // cleared once the process exits (so closeRunningApp no-ops afterwards).
@@ -583,6 +593,22 @@ namespace eka2l1::ios {
         comp.settings_ = state->settings.get();
         comp.cache_root_ = state->caches_root;
         return comp;
+    }
+
+    // Match Qt/Android's CID convention for dumps keyed to their original card.
+    static std::string mmc_id_from_card_path(const std::string &path) {
+        const std::string name = eka2l1::filename(path);
+        if (name.empty()) {
+            return std::string();
+        }
+
+        static const std::regex cid_regex("[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+-[0-9a-fA-F]+");
+        std::smatch matches;
+
+        if (std::regex_search(name, matches, cid_regex)) {
+            return matches[0];
+        }
+        return std::string();
     }
 
     static bool wait_for_graphics_driver(emulator *state, const std::chrono::milliseconds timeout) {
@@ -1480,6 +1506,8 @@ namespace eka2l1::ios {
 
     auto comp = eka2l1::ios::make_system_components(_state.get());
     _state->symsys = std::make_unique<eka2l1::system>(comp);
+    _state->mounted_card_path.clear();
+    _state->conf.current_mmc_id = _state->conf.mmc_id;
     auto *sys = _state->symsys.get();
 
     sys->startup();
@@ -1495,6 +1523,8 @@ namespace eka2l1::ios {
     // update it once the device is known good, so a failed boot keeps the last
     // answer instead of flipping the emulator screen to the wrong input model.
     _state->device_is_touch_screen.store(sys->get_symbian_version_use() >= epocver::epoc94,
+        std::memory_order_relaxed);
+    _state->device_is_eka1.store(is_epocver_eka1(sys->get_symbian_version_use()),
         std::memory_order_relaxed);
 
     // Mirror the Android frontend's device-switch behavior: when the
@@ -1982,6 +2012,121 @@ namespace eka2l1::ios {
     return report;
 }
 
+- (EKA2L1MountReport *)mountGameCardAtPath:(NSString *)path {
+    EKA2L1MountReport *report = [[EKA2L1MountReport alloc] init];
+    report.result = EKA2L1MountResultFailed;
+    report.mmcId = @"";
+
+    if (!_state || !_state->symsys) {
+        return report;
+    }
+
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    report.cardMounted = !_state->mounted_card_path.empty();
+
+    std::string card_path = path.UTF8String;
+    while (!card_path.empty() && eka2l1::is_separator(card_path.back())) {
+        card_path.pop_back();
+    }
+
+    const bool is_folder = eka2l1::common::is_dir(card_path);
+    if (card_path.empty() || (!is_folder && !eka2l1::common::exists(card_path))) {
+        report.result = EKA2L1MountResultPathNotFound;
+        return report;
+    }
+
+    // Drive E must be rooted above the dump's System directory.
+    if (is_folder && (eka2l1::common::compare_ignore_case(eka2l1::filename(card_path).c_str(), "system") == 0)) {
+        card_path = eka2l1::file_directory(card_path);
+    }
+
+    const std::string mmc_id = eka2l1::ios::mmc_id_from_card_path(card_path);
+
+    // Drain any guest tick before replacing its drive.
+    const bool was_mounted = _state->mounted;
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+
+    eka2l1::io_system *io = _state->symsys->get_io_system();
+    io->unmount(drive_e);
+
+    if (is_folder) {
+        // The folder is the user's own dump, so it is mounted read-only; an
+        // archive lands in a throwaway cache copy the guest may write to.
+        const std::uint32_t attrib = io_attrib_removeable | io_attrib_write_protected;
+
+        if (io->mount_physical_path(drive_e, drive_media::physical, attrib,
+                eka2l1::common::utf8_to_ucs2(card_path))) {
+            _state->mounted_card_path = card_path;
+            report.result = EKA2L1MountResultSuccess;
+        }
+    } else {
+        const eka2l1::zip_mount_error err = _state->symsys->mount_game_zip(drive_e,
+            drive_media::physical, card_path);
+        switch (err) {
+        case eka2l1::zip_mount_error_none:
+            report.result = EKA2L1MountResultSuccess;
+            break;
+        case eka2l1::zip_mount_error_not_zip:
+            report.result = EKA2L1MountResultNotArchive;
+            break;
+        case eka2l1::zip_mount_error_no_system_folder:
+            report.result = EKA2L1MountResultNoSystemFolder;
+            break;
+        default:
+            report.result = EKA2L1MountResultArchiveCorrupt;
+            break;
+        }
+
+        if (report.result == EKA2L1MountResultSuccess) {
+            std::optional<eka2l1::drive> entry = io->get_drive_entry(drive_e);
+            _state->mounted_card_path = entry.has_value() ? entry->real_path : std::string();
+        }
+    }
+
+    if (report.result != EKA2L1MountResultSuccess) {
+        // A failed replacement restores the emulator's own E storage.
+        _state->mounted_card_path.clear();
+        io->mount_physical_path(drive_e, drive_media::physical, io_attrib_removeable,
+            eka2l1::common::utf8_to_ucs2(eka2l1::add_path(_state->conf.storage, "/drives/e/")));
+    }
+
+    // Cards without a CID and failed replacements use the configured default.
+    if (report.result == EKA2L1MountResultSuccess) {
+        _state->conf.current_mmc_id = mmc_id.empty() ? _state->conf.mmc_id : mmc_id;
+        report.mmcId = mmc_id.empty() ? @"" : [NSString stringWithUTF8String:mmc_id.c_str()];
+    } else {
+        _state->conf.current_mmc_id = _state->conf.mmc_id;
+    }
+
+    report.cardMounted = !_state->mounted_card_path.empty();
+    _state->mounted = was_mounted;
+    return report;
+}
+
+- (BOOL)unmountGameCard {
+    if (!_state || !_state->symsys) {
+        return NO;
+    }
+
+    std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+    if (_state->mounted_card_path.empty()) {
+        return NO;
+    }
+
+    const bool was_mounted = _state->mounted;
+    auto loop_lock = eka2l1::ios::pause_loop_and_lock(_state.get());
+
+    eka2l1::io_system *io = _state->symsys->get_io_system();
+    io->unmount(drive_e);
+    io->mount_physical_path(drive_e, drive_media::physical, io_attrib_removeable,
+        eka2l1::common::utf8_to_ucs2(eka2l1::add_path(_state->conf.storage, "/drives/e/")));
+
+    _state->mounted_card_path.clear();
+    _state->conf.current_mmc_id = _state->conf.mmc_id;
+    _state->mounted = was_mounted;
+    return YES;
+}
+
 - (BOOL)uninstallAppWithUID:(uint32_t)uid {
     if (!_state || !_state->symsys) {
         return NO;
@@ -2358,6 +2503,13 @@ namespace eka2l1::ios {
     }
     // Cached at boot time: see emulator::device_is_touch_screen.
     return _state->device_is_touch_screen.load(std::memory_order_relaxed) ? YES : NO;
+}
+
+- (BOOL)currentDeviceIsEKA1 {
+    if (!_state) {
+        return NO;
+    }
+    return _state->device_is_eka1.load(std::memory_order_relaxed) ? YES : NO;
 }
 
 - (void)setDisplayAnchorTopPixels:(NSInteger)anchorTop {
