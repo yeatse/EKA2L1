@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-09-11 | [Tomb Raider's invisible launcher icon: N-Gage ROM evidence](./tomb-raider-aif-icon-selection.md) |
 | 2026-09-08 | [Super Miners finds no Bluetooth players](./super-miners-sdp-server-never-answers.md) |
 | 2026-09-08 | [Rebuilding discovery without blocking the host lifecycle](./netplay-suspension-lifetime.md) |
 | 2026-09-08 | [The Bluetooth queries socket that filled the disk](./bluetooth-defunct-socket-log-flood.md) |
