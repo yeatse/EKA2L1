@@ -29,6 +29,7 @@
 @interface TestHapticEngine : NSObject
 @property(nonatomic) BOOL playsHapticsOnly;
 @property(nonatomic) BOOL failsToStart;
+@property(nonatomic) BOOL throwsOnStart;
 @property(nonatomic, strong) NSMutableArray<TestHapticPlayer *> *players;
 @property(nonatomic, strong) CHHapticPattern *pattern;
 - (BOOL)startAndReturnError:(NSError **)error;
@@ -40,12 +41,17 @@
     if ((self = [super init])) _players = [NSMutableArray array];
     return self;
 }
-- (BOOL)startAndReturnError:(NSError **)error { return !_failsToStart; }
+- (BOOL)startAndReturnError:(NSError **)error {
+    assert(error != NULL);
+    if (_throwsOnStart) [NSException raise:@"CHHapticTestException" format:@"engine start failed"];
+    return !_failsToStart;
+}
 - (void)stopWithCompletionHandler:(void (^)(NSError *))handler {
     for (TestHapticPlayer *player in _players) [player stopAtTime:0 error:nil];
     if (handler) handler(nil);
 }
 - (id<CHHapticAdvancedPatternPlayer>)createAdvancedPlayerWithPattern:(CHHapticPattern *)pattern error:(NSError **)error {
+    assert(error != NULL);
     _pattern = pattern;
     TestHapticPlayer *player = [TestHapticPlayer new];
     [_players addObject:player];
@@ -231,6 +237,16 @@ static void test_haptics() {
     assert(player.stops > 0 && engine.players.count == 1);
     engine.failsToStart = NO;
     vibrator->vibrate(100, 50);
+    player = engine.players.lastObject;
+    assert(player.starts == 1);
+
+    engine.throwsOnStart = YES;
+    vibrator->vibrate(100, 50);
+    assert(player.stops > 0 && second.haptics.engines.count == 2);
+    engine.throwsOnStart = NO;
+    vibrator->vibrate(100, 50);
+    assert(second.haptics.engines.count == 3);
+    engine = second.haptics.engines.lastObject;
     player = engine.players.lastObject;
     assert(player.starts == 1);
     vibrator.reset();
