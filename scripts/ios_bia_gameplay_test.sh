@@ -73,11 +73,17 @@ ref_for() {
         m=="prefix" && index(lbl,w)==1 { print $1; exit }'
 }
 
+# On Xcode 27 dtuhidd activates its virtual touchscreen service only once it has
+# a peer and drops whatever arrives before that, so a tap whose process exits
+# immediately is reported as SUCCEEDED and never reaches the guest.
+TAP_POST_DELAY="${EKA2L1_REG_TAP_POST_DELAY:-0.6}"
+
 tap_ref() {
     local ref="$1" i r
     [ -z "$ref" ] && return 1
     for i in 1 2 3 4 5 6; do
-        r="$(xcodebuildmcp ui-automation tap --simulator-id "$SIM" --element-ref "$ref" --output json 2>/dev/null \
+        r="$(xcodebuildmcp ui-automation tap --simulator-id "$SIM" --element-ref "$ref" \
+             --post-delay "$TAP_POST_DELAY" --output json 2>/dev/null \
              | grep -o '"status": "[A-Z]*"' | head -1)"
         echo "$r" | grep -q SUCCEEDED && return 0
         sleep 1

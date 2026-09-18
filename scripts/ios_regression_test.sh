@@ -2,15 +2,22 @@
 #
 # iOS regression validation (xcodebuildmcp CLI based).
 #
-# Drives the booted iPhone simulator through two known guest apps and asserts
-# they still behave, so unrelated emulator changes can be regression-checked
-# quickly. Screenshots for every checked state are saved under the results dir
-# for human review; the script also makes hard programmatic assertions and
-# exits non-zero if any fail.
+# Drives the booted iPhone simulator through known guest apps and asserts they
+# still behave, so unrelated emulator changes can be regression-checked quickly.
+# Screenshots for every checked state are saved under the results dir for human
+# review; the script also makes hard programmatic assertions and exits non-zero
+# if any fail.
 #
-#   Final Battle (0xA0003C62) : reaches real in-game play and does NOT hit the
-#                               E32USER-CBase 46 stray-signal panic.
-#   Calculator   (0x10005902) : renders its default UI, accepts number input,
+# Assertions read the guest screen. Every screenshot goes through the Vision
+# OCR helper in scripts/ocr (built on demand) and is checked for the words that
+# screen has to be showing — "Last result" for the calculator's Options menu,
+# "Touch to continue" for the Asphalt title, and so on. A changed-pixel count
+# proves only that something repainted; naming the text proves the guest
+# reached the state, and a failure prints back what it did read.
+#
+#   Final Battle (0xA0003C62) : reaches the first in-game prompt and does NOT
+#                               hit the E32USER-CBase 46 stray-signal panic.
+#   Calculator   (0x10005902) : renders its soft-key row, accepts number input,
 #                               left soft key opens the Options menu, right soft
 #                               key closes it.
 #   N95 Calc     (0x10005902) : boots Calculator on the N95 (rm-320) and asserts
@@ -21,10 +28,10 @@
 #   Angry Birds  (0x20030E51) : Symbian^3 touch-guest suite (opt-in, not part
 #                               of `all`): boots the X7 (rm-707), taps the
 #                               loading screen once (used to wedge all input
-#                               permanently), then asserts the main-menu PLAY
-#                               tap and the episode-carousel swipe still
-#                               respond. Guards the raw-touch pointer path
-#                               (UITouch -> guest pointer-slot mapping).
+#                               permanently), then asserts a tap reaches the
+#                               episode carousel and a swipe pages it. Guards
+#                               the raw-touch pointer path (UITouch -> guest
+#                               pointer-slot mapping).
 #   Asphalt 6    (0x2003B2CC) : Symbian^3/Belle compatibility suite (opt-in,
 #                               not part of `all`): boots X7, asserts the early
 #                               Gameloft movie renders, reaches the main menu,
@@ -35,12 +42,22 @@
 #                               entries (an agent must fix them); a pure
 #                               formatting drift is rewritten and `git add`ed.
 #
+# Two states carry no text and stay measured instead of read: Asphalt's intro
+# movie (guarded against a flat black band by its variance) and the
+# calculator's entry display (seven-segment digits Vision cannot recognize).
+#
 # Requirements: a booted iPhone simulator with EKA2L1 installed and a device
-# (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq` and
-# ImageMagick (`magick`) on PATH. The n95calc suite (part of `all`) additionally
-# needs the N95 (rm-320) mounted. The angrybirds and asphalt6 suites additionally
-# need the X7 (rm-707), their respective game installed, and the `axe` HID tool
-# (bundled inside xcodebuildmcp; auto-located). It does NOT build.
+# (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq`,
+# ImageMagick (`magick`) and a Swift toolchain (`xcrun swiftc`, for the OCR
+# helper) on PATH. The n95calc suite (part of `all`) additionally needs the N95
+# (rm-320) mounted. The angrybirds and asphalt6 suites additionally need the X7
+# (rm-707), their respective game installed, and the `axe` HID tool (bundled
+# inside xcodebuildmcp; auto-located). It does NOT build the emulator.
+#
+# Every tap is sent with a post-delay: on Xcode 27 `dtuhidd` activates its
+# virtual touchscreen service only once it has a peer and drops anything that
+# arrives before that, so a tap whose process exits immediately is reported as
+# SUCCEEDED and never reaches the guest (AXe #71).
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
 # Debug (artifacts land in Debug-iphonesimulator) — build Release explicitly
@@ -64,6 +81,9 @@
 #   EKA2L1_BUNDLE_ID         default com.eka2l1.emulator
 #   EKA2L1_REG_OUTDIR        default /tmp/eka2l1-regression
 #   EKA2L1_REG_INGAME_WAIT   FBattle in-game dwell seconds (default 90)
+#   EKA2L1_REG_TAP_POST_DELAY
+#                            seconds a tap holds the HID connection open after
+#                            writing the event (default 0.6)
 #   EKA2L1_REG_AB_ROM        Angry Birds device firmware code (default rm-707)
 #   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
 #                            seconds, each phase (default 180)
@@ -74,6 +94,9 @@
 #                            interactive title is accepted (default 75)
 #   EKA2L1_REG_A6_TIMEOUT    Asphalt 6 boot and menu-transition budget
 #                            seconds, each phase (default 240)
+#   EKA2L1_REG_BAND_KEYPAD   normalized x,y,w,h crop of the guest picture that
+#   EKA2L1_REG_BAND_FULL     OCR reads, for the keypad and fullscreen layouts
+#   EKA2L1_REG_OCR_SCALE     upscale factor before recognition (default 2)
 
 set -uo pipefail
 
@@ -86,37 +109,27 @@ AB_UID="0x20030E51"
 A6_UID="0x2003B2CC"
 AB_ROM="${EKA2L1_REG_AB_ROM:-rm-707}"
 AB_TIMEOUT="${EKA2L1_REG_AB_TIMEOUT:-180}"
-# Full-screen transitions (splash -> menu -> episode select) repaint most of the
-# guest band; idle animations (clouds, sun rays, LOADING pulse) don't come
-# close. Used instead of SCREEN_DIFF_MIN for the Angry Birds assertions.
-AB_DIFF_MIN="${EKA2L1_REG_AB_DIFF_MIN:-150000}"
-# A carousel page change is NOT a full-band transition: the background artwork is
-# identical between episode pages, so only the three cards and the page dots
-# repaint. Measured on an iPhone 16 Pro simulator: a settled episode-select
-# screen with no input scores exactly 0 differing pixels, while real swipes score
-# 29k-63k — an order of magnitude under AB_DIFF_MIN, which used to fail this
-# assertion even though the carousel visibly scrolled.
-AB_SWIPE_DIFF_MIN="${EKA2L1_REG_AB_SWIPE_DIFF_MIN:-8000}"
 A6_ROM="${EKA2L1_REG_A6_ROM:-rm-707}"
 A6_INTRO_TIMEOUT="${EKA2L1_REG_A6_INTRO_TIMEOUT:-20}"
 A6_MOVIE_WAIT="${EKA2L1_REG_A6_MOVIE_WAIT:-75}"
 A6_TIMEOUT="${EKA2L1_REG_A6_TIMEOUT:-240}"
 A6_INTRO_STDEV_MAX="${EKA2L1_REG_A6_INTRO_STDEV_MAX:-0.24}"
-# Normalized RMSE for a real Asphalt page transition. The main-menu showroom
-# animation stays well below this even though ImageMagick's HDRI `AE` metric
-# reports a large value, which previously made every later assertion pass.
-A6_RMSE_MIN="${EKA2L1_REG_A6_RMSE_MIN:-0.10}"
-# The interactive title fills and brightens the guest band. The preceding
-# Gameloft/Asphalt movies remain sparse, so do not accept them merely because
-# the fixed minimum movie time elapsed.
-A6_TITLE_STDEV_MIN="${EKA2L1_REG_A6_TITLE_STDEV_MIN:-0.13}"
-A6_TITLE_MEAN_MIN="${EKA2L1_REG_A6_TITLE_MEAN_MIN:-0.65}"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
-# clock / FPS-counter noise between captures).
+# clock / FPS-counter noise between captures). Only the calculator's entry
+# display still needs this: its seven-segment digits are not recognizable text.
 SCREEN_DIFF_MIN="${EKA2L1_REG_SCREEN_DIFF_MIN:-4000}"
 # Grayscale stdev (0..1) below which a screenshot counts as blank.
 BLANK_STDEV_MAX="0.04"
+
+# Normalized (0..1) crop of the screenshot that holds the guest picture, per
+# keypad layout. OCR runs on this region only: the host keypad prints its own
+# letters, and the L/R soft-key pills sit on top of the guest's soft-key row.
+BAND_KEYPAD="${EKA2L1_REG_BAND_KEYPAD:-0,0.06,1,0.64}"
+BAND_FULL="${EKA2L1_REG_BAND_FULL:-0,0.34,1,0.32}"
+BAND="$BAND_KEYPAD"
+# Guest text is small; Vision reads it far more reliably upscaled.
+OCR_SCALE="${EKA2L1_REG_OCR_SCALE:-2}"
 
 CRASH_REGEX='Active scheduler dump|E32USER-CBase|panicked|access violation|Emulation halt|KERN-EXEC|Unhandled'
 
@@ -167,11 +180,18 @@ ref_for() {
         m=="prefix" && index(lbl,w)==1 { print $1; exit }'
 }
 
+# Seconds an `axe tap` process must stay alive after writing the event. On
+# Xcode 27 dtuhidd activates its virtual touchscreen service only once it has a
+# peer and silently drops whatever arrives before that, so a tap that exits
+# immediately is reported as SUCCEEDED and never reaches the guest.
+TAP_POST_DELAY="${EKA2L1_REG_TAP_POST_DELAY:-0.6}"
+
 tap_ref() {
     local ref="$1" i r
     [ -z "$ref" ] && return 1
     for i in 1 2 3 4 5 6; do
-        r="$(xcodebuildmcp ui-automation tap --simulator-id "$SIM" --element-ref "$ref" --output json 2>/dev/null \
+        r="$(xcodebuildmcp ui-automation tap --simulator-id "$SIM" --element-ref "$ref" \
+             --post-delay "$TAP_POST_DELAY" --output json 2>/dev/null \
              | grep -o '"status": "[A-Z]*"' | head -1)"
         echo "$r" | grep -q SUCCEEDED && return 0
         sleep 1
@@ -238,10 +258,10 @@ screen_size() {
     [ -n "$SCR_W" ] && [ "$SCR_W" != null ] && [ "${SCR_W%.*}" -gt 0 ] 2>/dev/null
 }
 
-tap_xy()   { "$AXE" tap -x "$1" -y "$2" --udid "$SIM" >/dev/null 2>&1; }
+tap_xy()   { "$AXE" tap -x "$1" -y "$2" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
 touch_xy() { "$AXE" touch -x "$1" -y "$2" --down --up --delay 0.08 --udid "$SIM" >/dev/null 2>&1; }
 double_touch_xy() { touch_xy "$1" "$2" && touch_xy "$1" "$2"; }
-swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --udid "$SIM" >/dev/null 2>&1; }
+swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
 pt() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", a*b}'; }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
@@ -251,28 +271,10 @@ screen_diff_px() {
 }
 screens_differ() { [ "$(screen_diff_px "$1" "$2")" -ge "$SCREEN_DIFF_MIN" ]; }
 
-# Normalized root-mean-square difference (0..1). Unlike AE in HDRI builds this
-# is comparable across machines and does not turn small animated regions into
-# a false full-page transition.
-screen_rmse() {
-    magick compare -metric RMSE "$1" "$2" null: 2>&1 \
-        | sed -n 's/.*(\([^)]*\)).*/\1/p' | head -1
-}
-
-a6_screens_differ() {
-    local d; d="$(screen_rmse "$1" "$2")"
-    awk -v d="${d:-0}" -v m="$A6_RMSE_MIN" 'BEGIN{exit !(d>=m)}'
-}
-
-is_blank() {
-    local sd; sd="$(magick "$1" -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null)"
-    awk -v s="${sd:-0}" -v m="$BLANK_STDEV_MAX" 'BEGIN{exit !(s<m)}'
-}
-
 # Standard deviation of the centred 3:2 guest display band. Asphalt's early
 # logo/movie frames are sparse on black (moderate variance), while the failure
-# mode is flat black and the later interactive title fills nearly the whole
-# band. This lets the suite prove that it saw the movie, not merely the title.
+# mode is flat black. This lets the suite prove that it saw the movie, which
+# carries no text for OCR to key off.
 guest_band_stdev() {
     local dims w h band y
     dims="$(magick identify -format '%w %h' "$1" 2>/dev/null)" || return 1
@@ -282,20 +284,67 @@ guest_band_stdev() {
         -format "%[fx:standard_deviation]" info: 2>/dev/null
 }
 
-guest_band_mean() {
-    local dims w h band y
-    dims="$(magick identify -format '%w %h' "$1" 2>/dev/null)" || return 1
-    w="${dims%% *}"; h="${dims##* }"
-    band=$((w * 2 / 3)); y=$(((h - band) / 2))
-    magick "$1" -crop "${w}x${band}+0+${y}" +repage -colorspace Gray \
-        -format "%[fx:mean]" info: 2>/dev/null
+# ---- screen text (OCR) -----------------------------------------------------
+# Assertions name what a guest screen has to say. Vision reads the guest band
+# out of the screenshot; comparisons run on the letters and digits alone,
+# because OCR drifts on case, spacing and punctuation long before it drifts on
+# the characters that carry the meaning.
+
+LAST_OCR=""    # recognized text of the screenshot ocr_read last looked at
+LAST_FLAT=""   # ... the same text, reduced to lowercase letters and digits
+
+flatten() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'; }
+
+ocr_read() {
+    LAST_OCR="$("$SCREENTEXT" "$1" --crop "$BAND" --scale "$OCR_SCALE" 2>/dev/null)"
+    LAST_FLAT="$(flatten "$LAST_OCR")"
 }
 
-a6_is_title() {
-    local sd mean
-    sd="$(guest_band_stdev "$1")"; mean="$(guest_band_mean "$1")"
-    awk -v s="${sd:-0}" -v m="${mean:-0}" -v slo="$A6_TITLE_STDEV_MIN" \
-        -v mlo="$A6_TITLE_MEAN_MIN" 'BEGIN{exit !(s>=slo && m>=mlo)}'
+# Match against the screenshot ocr_read last looked at: any of the wanted
+# strings for flat_has, all of them for flat_has_all.
+flat_has() {
+    local want
+    for want in "$@"; do
+        want="$(flatten "$want")"
+        [ -n "$want" ] || continue
+        case "$LAST_FLAT" in *"$want"*) return 0 ;; esac
+    done
+    return 1
+}
+
+flat_has_all() {
+    local want
+    for want in "$@"; do
+        want="$(flatten "$want")"
+        case "$LAST_FLAT" in *"$want"*) ;; *) return 1 ;; esac
+    done
+    return 0
+}
+
+# What the screen actually said, so a failure carries its own evidence.
+ocr_evidence() { echo "      read: $(printf '%s' "$LAST_OCR" | tr '\n' '|')"; }
+
+# check_text "<desc>" <png> <wanted>...  : PASS if any wanted string is on screen
+check_text() {
+    local desc="$1" png="$2"; shift 2
+    ocr_read "$png"
+    if flat_has "$@"; then check PASS "$desc"; else check FAIL "$desc"; ocr_evidence; fi
+}
+
+# wait_text <shot-name> <budget-seconds> <wanted>... : re-shoot until one of the
+# wanted strings shows up. Leaves the last screenshot in WAIT_SHOT and its text
+# in LAST_OCR / LAST_FLAT either way.
+WAIT_SHOT=""
+wait_text() {
+    local name="$1" budget="$2"; shift 2
+    local deadline=$((SECONDS+budget))
+    while :; do
+        WAIT_SHOT="$(shot "$name")"
+        ocr_read "$WAIT_SHOT"
+        flat_has "$@" && return 0
+        [ $SECONDS -ge $deadline ] && return 1
+        wait_s 5
+    done
 }
 
 # crash check over log lines added since a recorded baseline
@@ -320,13 +369,18 @@ check() { # check PASS|FAIL "<desc>"
 
 test_fbattle() {
     echo "== Final Battle ($FBATTLE_UID) =="
+    BAND="$BAND_KEYPAD"
     launch_uid "$FBATTLE_UID"
     LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
     wait_s 8
     local base; base="$(log_baseline)"
-    local s_lang; s_lang="$(shot fbattle_1_language)"
-    is_blank "$s_lang" && check FAIL "FBattle: language screen rendered" \
-                       || check PASS "FBattle: language screen rendered"
+
+    if wait_text fbattle_1_language 60 "english" "deutsch" "italiano"; then
+        check PASS "FBattle: language menu lists its languages"
+    else
+        check FAIL "FBattle: language menu lists its languages"
+        ocr_evidence
+    fi
 
     snapshot                                  # warm up (first tap after launch is flaky)
     tap_label "1"                || check FAIL "FBattle: select language"
@@ -337,54 +391,77 @@ test_fbattle() {
     echo "    in-game dwell ${INGAME_WAIT}s (the crash used to fire ~60s in)..."
     wait_s "$INGAME_WAIT"
 
-    # Force a few fresh frames; rendering can lag the guest by tens of seconds.
-    local s_game i
-    for i in 1 2 3; do s_game="$(shot fbattle_2_ingame)"; screens_differ "$s_lang" "$s_game" && break; wait_s 8; done
-    screens_differ "$s_lang" "$s_game" \
-        && check PASS "FBattle: advanced past language menu into game" \
-        || check FAIL "FBattle: advanced past language menu into game"
+    # The first in-game prompt. Rendering can lag the guest by tens of seconds,
+    # so keep re-reading the screen instead of judging one frame.
+    if wait_text fbattle_2_ingame 60 "what do you do" "open your eyes" "go on sleeping"; then
+        check PASS "FBattle: reached the first in-game prompt"
+    else
+        check FAIL "FBattle: reached the first in-game prompt"
+        ocr_evidence
+    fi
 
     assert_no_crash "$base" "FBattle"
 }
 
 test_calculator() {
     echo "== Calculator ($CALC_UID) =="
+    BAND="$BAND_KEYPAD"
     launch_uid "$CALC_UID"
     LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
     wait_s 18
     local base; base="$(log_baseline)"
 
-    # 1) default render
-    local s_default; s_default="$(shot calc_1_default)"
-    is_blank "$s_default" && check FAIL "Calculator: default UI rendered (non-blank)" \
-                          || check PASS "Calculator: default UI rendered (non-blank)"
+    # 1) default render, keyed off the guest's own soft-key row. "Options" and
+    # "Exit" sit under the host's L/R pills; the centre label does not.
+    local s_default
+    if wait_text calc_1_default 40 "select"; then
+        check PASS "Calculator: default UI shows the Select soft key"
+    else
+        check FAIL "Calculator: default UI shows the Select soft key"
+        ocr_evidence
+    fi
+    s_default="$WAIT_SHOT"
 
-    # 2) number input -> display changes
+    # 2) number input -> the entry display repaints. This is the one assertion
+    # that cannot be read: the display draws its digits in a seven-segment font
+    # that Vision does not recognize, so fall back to comparing the guest band.
     snapshot
+    # The digit keys combine "2" and "ABC" into one accessibility label whose
+    # separator is locale-dependent ("2, ABC" vs "2、ABC"), so match the digit
+    # prefix instead of the whole label.
     tap_label "1"           || check FAIL "Calculator: key 1"
-    tap_label "2, ABC"      || tap_label "2" prefix || check FAIL "Calculator: key 2"
-    tap_label "3, DEF"      || tap_label "3" prefix || check FAIL "Calculator: key 3"
+    tap_label "2" prefix    || check FAIL "Calculator: key 2"
+    tap_label "3" prefix    || check FAIL "Calculator: key 3"
     wait_s 3
     local s_input; s_input="$(shot calc_2_input)"
     screens_differ "$s_default" "$s_input" \
-        && check PASS "Calculator: number input changes display" \
-        || check FAIL "Calculator: number input changes display"
+        && check PASS "Calculator: number input changes the entry display" \
+        || check FAIL "Calculator: number input changes the entry display"
 
-    # 3) left soft key opens the Options menu
+    # 3) left soft key opens the Options menu, which is all text
     tap_label "LSK"         || check FAIL "Calculator: press LSK"
     wait_s 4
     local s_menu; s_menu="$(shot calc_3_menu_open)"
-    screens_differ "$s_input" "$s_menu" \
-        && check PASS "Calculator: LSK opens Options menu" \
-        || check FAIL "Calculator: LSK opens Options menu"
+    ocr_read "$s_menu"
+    if flat_has_all "last result" "memory" "help"; then
+        check PASS "Calculator: LSK opens the Options menu (Last result/Memory/Help)"
+    else
+        check FAIL "Calculator: LSK opens the Options menu (Last result/Memory/Help)"
+        ocr_evidence
+    fi
 
-    # 4) right soft key closes it
+    # 4) right soft key closes it: the menu items are gone and the calculator's
+    # own soft-key row is back.
     tap_label "RSK"         || check FAIL "Calculator: press RSK"
     wait_s 4
     local s_closed; s_closed="$(shot calc_4_menu_closed)"
-    screens_differ "$s_menu" "$s_closed" \
-        && check PASS "Calculator: RSK closes Options menu" \
-        || check FAIL "Calculator: RSK closes Options menu"
+    ocr_read "$s_closed"
+    if flat_has "select" && ! flat_has "last result" "memory"; then
+        check PASS "Calculator: RSK closes the Options menu"
+    else
+        check FAIL "Calculator: RSK closes the Options menu"
+        ocr_evidence
+    fi
 
     assert_no_crash "$base" "Calculator"
 }
@@ -398,6 +475,7 @@ test_calculator() {
 # other suites never check because their failure mode was guest-side.
 test_n95calc() {
     echo "== N95 Calculator ($CALC_UID on rm-320) =="
+    BAND="$BAND_KEYPAD"
     local crash_stamp="$OUTDIR/.n95_launch_stamp"
     touch "$crash_stamp"
 
@@ -429,9 +507,14 @@ test_n95calc() {
         [ -n "$host_crash" ] && echo "      crash report: $host_crash"
     fi
 
-    local s_boot; s_boot="$(shot n95calc_1_default)"
-    is_blank "$s_boot" && check FAIL "N95Calc: default UI rendered (non-blank)" \
-                       || check PASS "N95Calc: default UI rendered (non-blank)"
+    # The N95 skin leaves the centre soft key empty, so key off the right one.
+    # OCR reads it through the host's R pill as "RExit".
+    if wait_text n95calc_1_default 40 "exit"; then
+        check PASS "N95Calc: calculator UI shows its Exit soft key"
+    else
+        check FAIL "N95Calc: calculator UI shows its Exit soft key"
+        ocr_evidence
+    fi
 
     assert_no_crash "$base" "N95Calc"
 }
@@ -443,28 +526,25 @@ test_angrybirds() {
         return
     fi
 
+    BAND="$BAND_FULL"
     launch_uid "$AB_UID" "$AB_ROM" fullscreen
     LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
     local base; base="$(log_baseline)"
 
-    # 1) Wait for the first rendered guest frame (the Rovio splash). Until the
-    # guest presents, the emulator screen is solid black; the SwiftUI app list
-    # flashes for <5s at launch which the initial dwell skips past.
+    # Resolved up front: the loading screen is short-lived, so the trigger tap
+    # must not wait on a describe-ui round trip after the first frame lands.
+    screen_size || { check FAIL "AngryBirds: read screen geometry"; return; }
+
+    # 1) Boot. The Rovio copyright card and the loading screen are the first
+    # things the guest prints; the SwiftUI app list flashes for <5s before them.
     wait_s 10
-    local s_splash="" deadline=$((SECONDS+AB_TIMEOUT))
-    while [ $SECONDS -lt $deadline ]; do
-        s_splash="$(shot ab_1_splash)"
-        is_blank "$s_splash" || break
-        wait_s 5
-    done
-    if is_blank "$s_splash"; then
-        check FAIL "AngryBirds: splash rendered (boot)"
+    if ! wait_text ab_1_splash "$AB_TIMEOUT" "loading" "rovio"; then
+        check FAIL "AngryBirds: boot reaches the Rovio/loading screen"
+        ocr_evidence
         assert_no_crash "$base" "AngryBirds"
         return
     fi
-    check PASS "AngryBirds: splash rendered (boot)"
-
-    screen_size || { check FAIL "AngryBirds: read screen geometry"; return; }
+    check PASS "AngryBirds: boot reaches the Rovio/loading screen"
 
     # 2) Tap the loading screen once. This is the regression trigger: the
     # UITouch identity from this tap must not poison the guest pointer slots
@@ -472,45 +552,60 @@ test_angrybirds() {
     tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
     echo "    tapped the loading screen; waiting for the main menu..."
 
-    # 3) Wait for the main menu: a full-band repaint relative to the splash.
-    local s_menu="" diff=0
-    deadline=$((SECONDS+AB_TIMEOUT))
-    while [ $SECONDS -lt $deadline ]; do
-        wait_s 8
-        s_menu="$(shot ab_2_menu)"
-        is_blank "$s_menu" && continue
-        diff="$(screen_diff_px "$s_splash" "$s_menu")"
-        [ "$diff" -ge "$AB_DIFF_MIN" ] && break
-    done
-    if [ "$diff" -lt "$AB_DIFF_MIN" ]; then
-        check FAIL "AngryBirds: reached main menu"
+    # 3) The main menu prints PLAY. The guest queues pointer events it is not
+    # reading yet, so the loading-screen tap can be delivered to the menu the
+    # moment it opens and take the game straight to the episode carousel
+    # (SCORE / n of 189 on each card) — accept either.
+    if ! wait_text ab_2_menu "$AB_TIMEOUT" "play" "score"; then
+        check FAIL "AngryBirds: reached the main menu"
+        ocr_evidence
         assert_no_crash "$base" "AngryBirds"
         return
     fi
-    check PASS "AngryBirds: reached main menu"
-    wait_s 5
+    check PASS "AngryBirds: reached the main menu"
 
-    # 4) PLAY sits at the centre of the letterboxed guest band (= screen
-    # centre). It must respond even though the loading screen was tapped.
-    s_menu="$(shot ab_2_menu)"
-    tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
-    wait_s 6
-    local s_episodes; s_episodes="$(shot ab_3_episodes)"
-    if [ "$(screen_diff_px "$s_menu" "$s_episodes")" -ge "$AB_DIFF_MIN" ]; then
-        check PASS "AngryBirds: PLAY tap opens episode select (touch alive after loading tap)"
+    # 4) PLAY sits at the centre of the letterboxed guest band. Whichever tap
+    # got there, the episode carousel is what proves a tap reached the guest.
+    if ! flat_has "score"; then
+        wait_s 5
+        tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
+    fi
+    if wait_text ab_3_episodes 60 "score"; then
+        check PASS "AngryBirds: tap opens the episode carousel (touch alive after loading tap)"
     else
-        check FAIL "AngryBirds: PLAY tap opens episode select (touch alive after loading tap)"
+        check FAIL "AngryBirds: tap opens the episode carousel (touch alive after loading tap)"
+        ocr_evidence
+        assert_no_crash "$base" "AngryBirds"
+        return
     fi
 
-    # 5) Swipe the episode carousel (drag path: down -> moves -> up).
-    local y; y="$(pt "$SCR_H" 0.54)"
-    swipe_xy "$(pt "$SCR_W" 0.8)" "$y" "$(pt "$SCR_W" 0.2)" "$y" 0.5
-    wait_s 4
-    local s_swiped; s_swiped="$(shot ab_4_swiped)"
-    if [ "$(screen_diff_px "$s_episodes" "$s_swiped")" -ge "$AB_SWIPE_DIFF_MIN" ]; then
-        check PASS "AngryBirds: carousel swipe scrolls episodes (drag responds)"
+    # 5) Paging the carousel must bring different episode cards into view (the
+    # names and their star totals are what OCR compares; a settled carousel
+    # reads back byte-identical). Retry across band rows and then the opposite
+    # direction: a drag that starts on a card is swallowed, and a carousel
+    # already sitting on its last page cannot move any further.
+    local before="$LAST_FLAT"
+    local y sx ex i moved=false
+    for i in 1 2 3; do
+        case $i in
+            1) y="$(pt "$SCR_H" 0.54)"; sx=0.8; ex=0.2 ;;
+            2) y="$(pt "$SCR_H" 0.44)"; sx=0.8; ex=0.2 ;;
+            *) y="$(pt "$SCR_H" 0.44)"; sx=0.2; ex=0.8 ;;
+        esac
+        swipe_xy "$(pt "$SCR_W" "$sx")" "$y" "$(pt "$SCR_W" "$ex")" "$y" 0.5
+        wait_s 4
+        ocr_read "$(shot ab_4_swiped)"
+        if [ -n "$LAST_FLAT" ] && [ "$LAST_FLAT" != "$before" ]; then
+            moved=true
+            break
+        fi
+        before="$LAST_FLAT"
+    done
+    if [ "$moved" = true ]; then
+        check PASS "AngryBirds: swipe pages the carousel (drag responds)"
     else
-        check FAIL "AngryBirds: carousel swipe scrolls episodes (drag responds)"
+        check FAIL "AngryBirds: swipe pages the carousel (drag responds)"
+        ocr_evidence
     fi
 
     assert_no_crash "$base" "AngryBirds"
@@ -523,6 +618,7 @@ test_asphalt6() {
         return
     fi
 
+    BAND="$BAND_FULL"
     local launch_started=$SECONDS
     launch_uid "$A6_UID" "$A6_ROM" fullscreen
     LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
@@ -543,6 +639,8 @@ test_asphalt6() {
     # Ignore the brief SwiftUI/app-list frame at launch. Require a moderately
     # sparse non-black frame in the centred guest band before the interactive
     # title is eligible to appear; this is the animated Gameloft/movie content.
+    # The movies are the one thing here with no text to read: the failure mode
+    # they guard against is a flat black band, which the variance catches.
     wait_s 2
     local s_intro="" intro_sd=0 deadline=$((SECONDS+A6_INTRO_TIMEOUT))
     while [ $SECONDS -lt $deadline ]; do
@@ -564,81 +662,63 @@ test_asphalt6() {
     fi
 
     # Let both bundled movies reach their earliest expected finish, then wait
-    # for the filled, bright interactive title. On slower dyncom runs 75 wall
-    # seconds can still be the Asphalt-logo movie; treating its later change as
-    # "main menu reached" was the source of the old false positive.
+    # for the interactive title. "Touch to continue" is printed by the title
+    # only — the preceding logo movies carry no text, which is what used to let
+    # one of them pass as "main menu reached".
     local remaining=$((launch_started+A6_MOVIE_WAIT-SECONDS))
     [ "$remaining" -gt 0 ] && wait_s "$remaining"
-    local s_splash=""; s_splash="$(shot a6_1_splash)"
-    deadline=$((SECONDS+A6_TIMEOUT))
-    while [ $SECONDS -lt $deadline ]; do
-        a6_is_title "$s_splash" && break
-        wait_s 6
-        s_splash="$(shot a6_1_splash)"
-    done
-    if ! a6_is_title "$s_splash"; then
-        check FAIL "Asphalt6: stable interactive title rendered after intro movies"
+    if ! wait_text a6_1_splash "$A6_TIMEOUT" "touch to continue"; then
+        check FAIL "Asphalt6: interactive title invites a touch after the intro movies"
+        ocr_evidence
         assert_no_crash "$base" "Asphalt6"
         return
     fi
-    check PASS "Asphalt6: stable interactive title rendered after intro movies"
+    check PASS "Asphalt6: interactive title invites a touch after the intro movies"
+    local s_splash="$WAIT_SHOT"
 
     screen_size || { check FAIL "Asphalt6: read screen geometry"; return; }
     local cx cy
     cx="$(pt "$SCR_W" 0.50)"; cy="$(pt "$SCR_H" 0.50)"
 
-    # Use a physical down/up event on the stable "Touch to continue" title.
+    # Use a physical down/up event on the stable "Touch to continue" title. The
+    # title can swallow the first one while it is still fading in.
     touch_xy "$cx" "$cy"
 
-    local s_menu=""
     deadline=$((SECONDS+A6_TIMEOUT))
-    while [ $SECONDS -lt $deadline ]; do
+    local reached_menu=false
+    while :; do
         wait_s 8
-        s_menu="$(shot a6_2_menu)"
-        is_blank "$s_menu" && continue
-        a6_screens_differ "$s_splash" "$s_menu" && break
-        touch_xy "$cx" "$cy"
+        ocr_read "$(shot a6_2_menu)"
+        if flat_has "free race"; then reached_menu=true; break; fi
+        [ $SECONDS -ge $deadline ] && break
+        flat_has "touch to continue" && touch_xy "$cx" "$cy"
     done
-    if ! a6_screens_differ "$s_splash" "$s_menu"; then
-        check FAIL "Asphalt6: reached main menu"
+    if [ "$reached_menu" != true ]; then
+        check FAIL "Asphalt6: main menu lists Free Race"
+        ocr_evidence
         assert_no_crash "$base" "Asphalt6"
         return
     fi
-    # Capture a settled menu reference. It is also the negative reference for
-    # the final in-game assertion, so returning to or remaining on the showroom
-    # can no longer pass as a race.
-    wait_s 6
-    s_menu="$(shot a6_2_menu)"
-    check PASS "Asphalt6: reached main menu"
+    check PASS "Asphalt6: main menu lists Free Race"
 
     # Main menu: Free Race is the second item in the right-hand list.
     touch_xy "$(pt "$SCR_W" 0.85)" "$(pt "$SCR_H" 0.42)"
     wait_s 10
-    local s_track; s_track="$(shot a6_3_track)"
-    if a6_screens_differ "$s_menu" "$s_track"; then
-        check PASS "Asphalt6: Free Race opens track select"
-    else
-        check FAIL "Asphalt6: Free Race opens track select"
-    fi
+    # Nassau also names the race-mode screen that follows, so key the track
+    # carousel off its country line.
+    check_text "Asphalt6: Free Race opens the Nassau/Bahamas track card" \
+        "$(shot a6_3_track)" "bahamas"
 
     # Selected carousel cards use a two-tap confirmation gesture.
     double_touch_xy "$(pt "$SCR_W" 0.48)" "$(pt "$SCR_H" 0.53)"
     wait_s 12
-    local s_mode; s_mode="$(shot a6_4_mode)"
-    if a6_screens_differ "$s_track" "$s_mode"; then
-        check PASS "Asphalt6: Nassau opens race-mode select"
-    else
-        check FAIL "Asphalt6: Nassau opens race-mode select"
-    fi
+    check_text "Asphalt6: Nassau opens race-mode select (Elimination/Collector)" \
+        "$(shot a6_4_mode)" "elimination" "collector"
 
     double_touch_xy "$(pt "$SCR_W" 0.30)" "$(pt "$SCR_H" 0.46)"
     wait_s 15
-    local s_car; s_car="$(shot a6_5_car)"
-    if a6_screens_differ "$s_mode" "$s_car"; then
-        check PASS "Asphalt6: Normal Race opens car select"
-    else
-        check FAIL "Asphalt6: Normal Race opens car select"
-    fi
+    check_text "Asphalt6: Normal Race opens car select (Top Speed/Handling)" \
+        "$(shot a6_5_car)" "top speed" "handling"
 
     # RACE and the following two confirmation arrows share the bottom-right
     # location. Each uses the same selected-control double-tap behavior.
@@ -646,18 +726,21 @@ test_asphalt6() {
     next_x="$(pt "$SCR_W" 0.91)"; next_y="$(pt "$SCR_H" 0.60)"
     double_touch_xy "$next_x" "$next_y"
     wait_s 25
-    local s_preview; s_preview="$(shot a6_6_preview)"
+    shot a6_6_preview >/dev/null
     double_touch_xy "$next_x" "$next_y"
     wait_s 10
     double_touch_xy "$(pt "$SCR_W" 0.93)" "$next_y"
     wait_s 25
-    local s_race; s_race="$(shot a6_7_race)"
 
-    if ! is_blank "$s_race" && a6_screens_differ "$s_preview" "$s_race" \
-        && a6_screens_differ "$s_menu" "$s_race"; then
-        check PASS "Asphalt6: Nassau race renders in-game"
+    # The race HUD prints the speedometer and the position readout. Requiring
+    # the car-select stats to be gone keeps a stalled selection screen — which
+    # also prints km/h — from passing as a race.
+    ocr_read "$(shot a6_7_race)"
+    if flat_has "kmh" && ! flat_has "top speed" "free race"; then
+        check PASS "Asphalt6: Nassau race renders its in-game HUD"
     else
-        check FAIL "Asphalt6: Nassau race renders in-game"
+        check FAIL "Asphalt6: Nassau race renders its in-game HUD"
+        ocr_evidence
     fi
 
     assert_no_crash "$base" "Asphalt6"
@@ -798,8 +881,10 @@ PY
 # ---- main ------------------------------------------------------------------
 
 need xcrun
+SCREENTEXT=""
 if [ "$SUITE" != strings ]; then
     need xcodebuildmcp; need jq; need magick
+    SCREENTEXT="$("$REPO_ROOT/scripts/ocr/build.sh")" || die "cannot build the screentext OCR helper"
     SIM="$(booted_sim)"; [ -z "$SIM" ] && die "no booted iPhone simulator"
 else
     SIM=""
