@@ -1,5 +1,10 @@
 # Legacy AIF icon mask polarity
 
+> **Superseded.** The three-family depth split described here is gone. The S60v2 masks this
+> doc calls color256 are EGray256 — the colour flag came from the emulator's own bitmap
+> rebuild, not from the ROM; see
+> [mask polarity is the display mode](./icon-mask-polarity-is-the-display-mode.md).
+
 ## Symptom
 
 After mask compositing was added to the iOS app list, Asphalt 2 installed on the
