@@ -178,6 +178,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-09-05 | [Tilt steering was dead in Ferrari GT but fine in Asphalt 6](./sensor-buffering-count-exceeds-channel-buffer.md) |
 | 2026-09-05 | [Icy Tower died on the X7 because the screen reported premultiplied alpha](./x7-window-mode-premultiplied-alpha.md) |
 | 2026-09-08 | [A trackpad touch killed the Qt frontend](./qt-touch-point-slot-overrun.md) |
+| 2026-09-22 | [Bringing up UIQ 2.1 / Symbian OS 7.0 (Sony Ericsson P900)](./UIQ_SYMBIAN70_PORTING.md) |
 
 ## Archived planning docs
 
