@@ -1,5 +1,11 @@
 # Dyncom dispatch and the next iOS performance work
 
+> **Update (2026-09-26).** Measured on a real workload (Snakes on the 5320, host
+> CPU per guest instruction), separate dispatch sites cost +4.2% and a cached
+> handler offset +0.9%, so neither landed. Block linking and CMP+branch fusion
+> did (−6.6% together with a block L1 index fix); see
+> [dyncom_optimization_plan.md](./dyncom_optimization_plan.md).
+
 The September 2026 investigation started with two different goals: reduce host
 CPU consumption while Snakes already meets its frame target, and investigate
 Angry Birds Rio 1-8 stutter during entry, flight and collisions on the X7.

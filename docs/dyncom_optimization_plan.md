@@ -1,5 +1,13 @@
 # dyncom interpreter — deep optimization plan
 
+> **Correction (2026-09-25).** Snakes caps its own frame rate at about 40 FPS,
+> so FPS results near that cap cannot show whether an optimization helps. The
+> "~38-45 FPS" target and the "exhausted" conclusion below were based on FPS
+> and are withdrawn. The simulator's software GLES also inflates graphics-thread
+> cost; on device the interpreter thread dominates. Evaluate changes by host CPU
+> time for a fixed scene (see
+> [dyncom-dispatch-and-ios-performance.md](./dyncom-dispatch-and-ios-performance.md)).
+
 Follow-up to [`ios_snakes_perf.md`](./ios_snakes_perf.md). After the ASID
 instruction-cache fix and the simulator render-scale cap, Snakes gameplay is
 **CPU-bound on the dyncom interpreter** (guest os_thread ~99% in
@@ -124,8 +132,8 @@ compare/sub-and-branch fusions (biggest, cleanest), measure, then widen.
 Stages 1-5 target the ~12% memory + the ~78% dispatch (block chaining + fusion)
 + ~5% ALU. The interpreter dispatch+execute is the hard floor, but chaining and
 fusion meaningfully shrink the dispatch share. A plausible net is **~20-30% CPU
-reduction** → Snakes ~30 → ~38-45 FPS on the simulator, with more headroom on
-device (no software-blit tax). Diminishing returns past that — the interpreter
+reduction** in interpreter CPU time. (The original ~38-45 FPS target is
+unreachable by design: Snakes caps itself at ~40.) Diminishing returns past that — the interpreter
 is the product, so squeeze dispatch (Stages 2 + 5) hardest.
 
 ## Verification strategy (per stage)
@@ -297,10 +305,13 @@ soft/host A/B 连结果位与 FPSCR 都零差异，另有连续 VMLA microbenchm
 1.45x）。Asphalt
 Release 完整比赛回归 9/9；整机仍在 22–27 FPS 波动，对照 26–27 FPS，说明约
 80% self 的模拟器软件 GLES 继续掩盖这部分 guest CPU 收益，不能把场景 FPS
-噪声当成净提升。
+噪声当成净提升。(2026-09-25: this is a simulator-only effect; on device, graphics
+is ~1-2% and the saving should be read from host CPU time, not FPS.)
 
-**Conclusion:** the remaining general dispatch/ALU wins are exhausted. The only
-structural multiplier (JIT) is off-limits on iOS. The landed wins — ASID
+**Conclusion (revised 2026-09-25):** the landed wins below stand. The earlier
+claim that general dispatch/ALU wins are exhausted rested on Snakes FPS at its
+own cap and is withdrawn; see the host-CPU re-measurement below. JIT remains
+off-limits on iOS. The landed wins — ASID
 instruction cache, simulator render-scale cap, ReadCode-via-TLB, inlined
 AddWithCarry, block-L1, inline memory fast-path, VFP MAC fast-path, and Release
 VFP trace removal — stand.
@@ -343,3 +354,30 @@ VFP trace removal — stand.
   A/B wiring), then each optimization lands against it with its own corpus
   additions. This is the prerequisite for items 1-4 above; without it, those
   changes shouldn't go into shared CPU code.
+
+### Host-CPU re-measurement (2026-09-26)
+
+Scene: Snakes on the 5320 (rm-409), Release, iPhone 16 Pro simulator, the first
+level between 15 and 51 s after it starts (the snake dies at about 60 s). The
+game caps itself at 32 FPS here and the interpreter thread sits at ~65%. Metric:
+host CPU time of the Symbian OS thread per executed guest instruction, from a
+temporary instruction counter and per-thread CPU time; runs interleaved with the
+baseline, noise about ±0.5%. Profile: 6.46 guest instructions per block,
+CMP→B<cond> about 3% of instructions.
+
+| Change | ns / instruction vs 5.13 baseline | Outcome |
+|---|---:|---|
+| Block linking (per-exit link slots with a translation generation) | −4.0% | Landed, upstream #735 |
+| CMP + B<cond> fusion (ARM and Thumb) | −1.3% | Landed, upstream #735 |
+| Block L1 index drops PC bit 0 (half the table was unused) | −1.1% | Landed, upstream #735 |
+| All three | −6.6% (thread load 64.6% → 60.3%) | |
+| Separate dispatch branch per handler (empty `asm volatile`) | +4.2% | Rejected |
+| Predecoded rotated shifter immediates | +3.8% | Rejected |
+| Handler offset cached in `arm_inst` | +0.9% | Rejected |
+
+Block linking and fusion, previously reverted or skipped as "FPS-neutral", do
+reduce CPU. The dispatch-site and handler-cache ideas that won in the
+microbenchmark in
+[dyncom-dispatch-and-ios-performance.md](./dyncom-dispatch-and-ios-performance.md)
+lose on this real workload. The old shifter-specialization variant is superseded
+by the landed inline `SHIFTER_OPERAND` fast paths and was not retested.

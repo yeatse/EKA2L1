@@ -1,5 +1,11 @@
 # iOS Metal acceleration via ANGLE (GLES → Metal)
 
+> **Correction (2026-09-25).** The performance motivation below is wrong.
+> Snakes' ~38 FPS is the game's own ~40 FPS cap, not a render fence or an
+> interpreter limit, and on device the graphics thread uses only about 1-2%.
+> ANGLE has no expected device performance benefit; its remaining value is
+> Metal compatibility and a GPU-backed simulator for development.
+
 **Core conclusion:** keep EKA2L1's existing GLES command-list renderer and run it on
 ANGLE's Metal backend through EGL. This hardware-accelerates **both the iOS
 Simulator and the device** with no rewrite of the renderer, behind a build flag
@@ -88,8 +94,8 @@ e.g. the PVRTC path — only matters for titles that use it; revisit if one brea
 **Phase 4 — Measure + decide — PARTIAL (sim measured).** Snakes Release FPS A/B
 (overlay-crop): **ANGLE ≈ EAGL ≈ 38 FPS — neutral**, NOT the hoped-for jump. Why:
 the present is already double-buffered, so the software-GL render latency was
-*hidden* off the guest thread's critical path; the interpreter is the true ~38 FPS
-cap. Swapping the renderer to hardware Metal therefore doesn't raise sim FPS (it
+*hidden* off the guest thread's critical path, and ~38-40 FPS is Snakes' own
+frame cap (originally misattributed to the interpreter). Swapping the renderer to hardware Metal therefore doesn't raise sim FPS (it
 does move triangle fill off a host CPU core onto the GPU — better dev
 thermals/battery, FPS-neutral). The standing value of ANGLE is then: render
 correctness on Metal, future-proofing against Apple's GLES deprecation, and a

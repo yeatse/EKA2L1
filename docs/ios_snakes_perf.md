@@ -1,5 +1,15 @@
 # iOS Snakes / dyncom performance investigation (2026-06-14)
 
+> **Correction (2026-09-25).** Snakes caps its own frame rate at about 40 FPS.
+> The ~38 FPS plateau in the 2026-06 follow-up below is that cap, not a
+> render-bound simulator or an interpreter limit, so FPS-neutral results there
+> do not show that an optimization is ineffective. The simulator's heavy graphics
+> thread comes from its software GLES; on an iPhone 17 the graphics thread uses
+> about 1-2% while the interpreter thread dominates. Compare host CPU time for
+> the same scene instead of FPS (see
+> [dyncom-dispatch-and-ios-performance.md](./dyncom-dispatch-and-ios-performance.md)).
+> The improvements up to ~38 FPS, measured below the cap, still stand.
+
 Goal: Snakes (uid `0x2000730F`, N95) ≥ 30 FPS on the iOS **simulator** while
 staying on the dyncom CPU backend (dynarmic still SIGSEGVs Calculator). Baseline:
 ~22–23 FPS in active 3D gameplay, host CPU pinned.
@@ -112,7 +122,7 @@ graphics thread is ~80 % idle. os_thread leaf weights (of 3746 samples):
   main remaining bounded dyncom win (~2-3 %); note the data TLB is also flushed on
   every process switch so it re-warms after each IPC.
 
-## 2026-06 follow-up: dispatch-reduction is the wrong lever; sim is render-bound
+## 2026-06 follow-up (superseded: the plateau is the game's frame cap)
 
 After the double-buffer was re-added, Snakes 3D gameplay steadies at **~38 FPS
 (36–40, ±2 noise)** on the iPhone Air simulator (Release/O3). A fresh `sample`
@@ -143,8 +153,8 @@ single Release build:
   but it cuts real interpreter work in the hottest functions and should help on
   device / in CPU-bound apps. **Kept.**
 
-Conclusion: the dyncom interpreter is at the point of diminishing returns for the
-simulator; further FPS work on Snakes needs either hardware-accelerated rendering
-(device, or a Metal/HW-GL sim path) or a JIT (off-limits on iOS). Remaining bounded
-CPU ideas (route `ReadCode` through the TLB execute slot; block linking) are
-predicted neutral *in the sim* for the same render-bound reason.
+Original conclusion, now withdrawn: "the interpreter is at diminishing returns
+and the simulator is render-bound". Both FPS-neutral results above were measured
+at Snakes' own ~40 FPS cap, so they say nothing about CPU cost. Re-measured by
+host CPU time in 2026-09, fusion and block linking both pay off and have landed
+(see the re-measurement in [dyncom_optimization_plan.md](./dyncom_optimization_plan.md)).
