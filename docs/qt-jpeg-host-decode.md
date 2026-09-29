@@ -50,11 +50,15 @@ bytes to the host and fills a `QImage` with the result:
 - The plugin reaches them through the same `swi 0xC10000` stub the other
   patches use.
 
-It is installed onto the **C drive** (`C:\sys\bin\qjpeg.dll` plus the
-`imageformats` stub that names it), not over the ROM copy. Qt scans the
-writable drives before the ROM, so ours wins where it works — and if a ROM ever
-rejects it, Qt simply continues to the ROM plugin. The install is skipped
-entirely on devices whose ROM has no `qjpeg.dll`.
+The loader substitutes it for `qjpeg.dll`: `qjpeg.dll.map` declares a
+`replace` patch, so whenever an application loads the ROM's `qjpeg.dll`,
+`lib_manager` loads `qjpeg_general.dll` under that path instead. Nothing is
+written to the guest drives, and every frontend gets it. The map requires the
+original in ROM with Qt's plugin UID, and `qt-plugin` makes the loader compare
+both images' `QT_PLUGIN_VERIFICATION_DATA` the way `QLibraryPrivate::isPlugin()`
+does (same major version, minor not newer, same build key and debug flag); a
+ROM whose Qt would reject ours keeps its own plugin. The plugin carries the ROM
+plugin's UID3 (0x2001E61B) and capabilities (`ALL -TCB`).
 
 ## Result
 
@@ -82,12 +86,11 @@ not limited by decoding alone.
   ordinals, which is what Symbian actually uses. With them swapped the plugin
   loads, gets rejected silently, and Qt moves on to the ROM one — the symptom is
   simply that nothing changes.
-- **The patch-map mechanism cannot serve a plugin that links Qt.** Patch DLLs
+- **Export routing cannot serve a plugin that links Qt.** Routed patch DLLs
   are loaded during boot and their imports are resolved once, at a point where
   `qtcore.dll` is not attached to any process, so every Qt import resolves to
-  zero (78 `Invalid ordinal` lines, all from our DLL). Installing the plugin as
-  an ordinary DLL that Qt loads inside the application process avoids this
-  entirely.
+  zero (78 `Invalid ordinal` lines, all from our DLL). A `replace` patch is
+  only loaded when the original is, inside the application process.
 - `add_symbian_patch` copies `group/` into the build output but never deletes;
   a `.map` removed from the source tree stays in `bin/patch` and in the app
   bundle, and keeps being applied. Clear both when removing one.

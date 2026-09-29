@@ -946,48 +946,6 @@ namespace eka2l1::ios {
     // than over the ROM copy: Qt scans the writable drives first but falls back
     // to the ROM plugin if it rejects ours (a build key or Qt version this ROM
     // will not load), so a device we cannot serve keeps working untouched.
-    static void install_qt_image_plugins(emulator *state) {
-        if (!state || !state->symsys) {
-            return;
-        }
-
-        auto *io = state->symsys->get_io_system();
-
-        // Only ROMs that already ship the Qt plugin can use ours.
-        if (!io->exist(u"Z:\\sys\\bin\\qjpeg.dll")) {
-            return;
-        }
-
-        const std::string source = eka2l1::add_path(eka2l1::runtime_resource_path("patch"), "qjpeg_general.dll");
-        if (!common::exists(source)) {
-            return;
-        }
-
-        auto dll_dest = io->get_raw_path(u"C:\\sys\\bin\\qjpeg.dll");
-        auto stub_dest = io->get_raw_path(u"C:\\resource\\qt\\plugins\\imageformats\\qjpeg.qtplugin");
-
-        if (!dll_dest.has_value() || !stub_dest.has_value()) {
-            return;
-        }
-
-        const std::string dll_path = common::ucs2_to_utf8(dll_dest.value());
-        const std::string stub_path = common::ucs2_to_utf8(stub_dest.value());
-
-        common::create_directories(eka2l1::file_directory(dll_path));
-        common::create_directories(eka2l1::file_directory(stub_path));
-
-        common::copy_file(source, dll_path, true);
-
-        // Qt locates the plugin binary in \sys\bin from this stub's name; its
-        // content is never parsed.
-        FILE *stub = fopen(stub_path.c_str(), "wb");
-        if (stub) {
-            static const char *kStubText = "This file is a Qt plugin stub file. The real Qt plugin is located in /sys/bin.";
-            fwrite(kStubText, 1, strlen(kStubText), stub);
-            fclose(stub);
-        }
-    }
-
     static void install_required_rom_patches(emulator *state) {
         if (!state || !state->symsys) {
             return;
@@ -1026,7 +984,6 @@ namespace eka2l1::ios {
             common::copy_file(source, dest, true);
         }
 
-        install_qt_image_plugins(state);
     }
 }
 
