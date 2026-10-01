@@ -586,7 +586,8 @@ namespace eka2l1 {
                 std::optional<entry_info> info = inst->get_entry_info(path_to_retinfo);
 
                 if (info.has_value()) {
-                    if ((attribute & io_attrib_include_file) && (attribute & io_attrib_allow_uid)) {
+                    if ((info->type == io_component_type::file) && (attribute & io_attrib_allow_uid)
+                        && (utype.uid1 || utype.uid2 || utype.uid3)) {
                         epoc::uid_type temp_uid;
 
                         common::ro_std_file_stream temp_file_holder(eka2l1::add_path(iterator->dir_name, entry.name), true);

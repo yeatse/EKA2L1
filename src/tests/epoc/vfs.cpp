@@ -8,6 +8,44 @@
 
 #include <fstream>
 
+TEST_CASE("uid_directory_listing_preserves_directories_and_untyped_files", "vfs") {
+    const std::string root = "vfs_uid_listing";
+    eka2l1::common::delete_folder(root);
+    eka2l1::common::create_directories(eka2l1::add_path(root, "Free Demo Levels"));
+    {
+        std::ofstream empty(eka2l1::add_path(root, "empty.dat"), std::ios::binary);
+        std::ofstream typed(eka2l1::add_path(root, "typed.dat"), std::ios::binary);
+        const eka2l1::epoc::uid_type uid{ 1, 2, 3 };
+        typed.write(reinterpret_cast<const char *>(&uid), sizeof(uid));
+    }
+
+    eka2l1::io_system io;
+    auto fs = eka2l1::create_physical_filesystem(epocver::epoc70, "");
+    io.add_filesystem(fs);
+    REQUIRE(io.mount_physical_path(drive_number::drive_a, drive_media::physical, io_attrib_internal,
+        eka2l1::common::utf8_to_ucs2(root)));
+
+    const auto attributes = io_attrib_include_file | io_attrib_include_dir | io_attrib_allow_uid;
+    auto dir = io.open_dir(u"A:\\", {}, attributes);
+    REQUIRE(dir);
+    std::vector<std::string> names;
+    while (auto entry = dir->get_next_entry()) {
+        names.push_back(entry->name);
+    }
+    std::sort(names.begin(), names.end());
+    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "empty.dat", "typed.dat" });
+
+    dir = io.open_dir(u"A:\\", { 1, 2, 3 }, attributes);
+    REQUIRE(dir);
+    names.clear();
+    while (auto entry = dir->get_next_entry()) {
+        names.push_back(entry->name);
+    }
+    std::sort(names.begin(), names.end());
+    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "typed.dat" });
+    eka2l1::common::delete_folder(root);
+}
+
 struct io_scope_guard {
     eka2l1::io_system *io;
 
