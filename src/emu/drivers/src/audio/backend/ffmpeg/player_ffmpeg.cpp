@@ -20,6 +20,7 @@
 #include <common/buffer.h>
 #include <common/log.h>
 #include <common/time.h>
+#include <loader/sound.h>
 
 #include <drivers/audio/backend/ffmpeg/player_ffmpeg.h>
 
@@ -28,19 +29,33 @@ extern "C" {
 }
 
 namespace eka2l1::drivers {
+    namespace {
+        struct wave_memory_stream : common::rw_stream {
+            std::vector<std::uint8_t> data;
+            common::ro_buf_stream reader;
+
+            explicit wave_memory_stream(std::vector<std::uint8_t> bytes)
+                : data(std::move(bytes)), reader(data.data(), data.size()) {}
+            std::uint64_t read(void *buffer, const std::uint64_t size) override { return reader.read(buffer, size); }
+            void seek(const std::int64_t amount, common::seek_where where) override { reader.seek(amount, where); }
+            std::uint64_t tell() override { return reader.tell(); }
+            std::uint64_t size() override { return data.size(); }
+            std::uint64_t left() override { return reader.left(); }
+        };
+    }
+
     void player_ffmpeg::deinit() {
         if (format_context_) {
             avformat_close_input(&format_context_);
             avformat_free_context(format_context_);
         }
 
-        if (custom_io_buffer_) {
-            av_freep(&custom_io_buffer_);
-        }
-
         if (custom_io_) {
+            // libavformat may replace the buffer supplied to avio_alloc_context.
+            av_freep(&custom_io_->buffer);
             avio_context_free(&custom_io_);
         }
+        converted_stream_.reset();
 
         if (codec_) {
             avcodec_free_context(&codec_);
@@ -253,19 +268,27 @@ namespace eka2l1::drivers {
         flags_ &= ~1;
         deinit();
 
+        the_stream->seek(0, common::seek_where::beg);
+        auto converted = loader::epoc_record_to_wave(*the_stream);
+        the_stream->seek(0, common::seek_where::beg);
+        if (converted) {
+            converted_stream_ = std::make_unique<wave_memory_stream>(std::move(*converted));
+            the_stream = converted_stream_.get();
+        }
+
         static constexpr std::uint32_t CUSTOM_IO_BUFFER_SIZE = 8192;
 
-        custom_io_buffer_ = reinterpret_cast<std::uint8_t *>(av_malloc(CUSTOM_IO_BUFFER_SIZE));
+        auto *custom_io_buffer = reinterpret_cast<std::uint8_t *>(av_malloc(CUSTOM_IO_BUFFER_SIZE));
 
-        if (!custom_io_buffer_) {
+        if (!custom_io_buffer) {
             return false;
         }
 
-        custom_io_ = avio_alloc_context(custom_io_buffer_, CUSTOM_IO_BUFFER_SIZE,
+        custom_io_ = avio_alloc_context(custom_io_buffer, CUSTOM_IO_BUFFER_SIZE,
             0, the_stream, ffmpeg_custom_rw_io_read, ffmpeg_custom_rw_io_write, ffmpeg_custom_rw_io_seek);
 
         if (!custom_io_) {
-            av_freep(&custom_io_buffer_);
+            av_freep(&custom_io_buffer);
             return false;
         }
 
@@ -398,11 +421,8 @@ namespace eka2l1::drivers {
         }
 
         auto do_free_custom = [&]() {
-            if (custom_io_buffer_) {
-                av_freep(&custom_io_buffer_);
-            }
-
             if (custom_io_) {
+                av_freep(&custom_io_->buffer);
                 avio_context_free(&custom_io_);
             }
         };
@@ -416,9 +436,6 @@ namespace eka2l1::drivers {
 
             return false;
         }
-
-        // The open input above already freed the custom IO buffer
-        custom_io_buffer_ = nullptr;
 
         if (!open_ffmpeg_stream()) {
             format_context_ = nullptr;
@@ -437,7 +454,6 @@ namespace eka2l1::drivers {
         , output_encoder_(nullptr)
         , channel_layout_dest_(0)
         , custom_io_(nullptr)
-        , custom_io_buffer_(nullptr)
         , duration_us_(0) {
         av_init_packet(&packet_);
     }

@@ -252,7 +252,7 @@ if (NOT MSVC)
     target_compile_options(miniBAE_EMU PRIVATE -Wno-int-conversion -Wno-implicit-function-declaration)
 endif()
 
-target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls)
+target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls epocloader)
 if (APPLE)
     target_sources(drivers PRIVATE src/network/tls_trust_apple.cpp)
     target_link_libraries(drivers PRIVATE "-framework Security" "-framework CoreFoundation")
