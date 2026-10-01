@@ -1549,14 +1549,18 @@ namespace eka2l1::epoc {
             draw_surface(builder, background_surface_);
 
             if (!segments.empty() && !server_clip.empty()) {
-                builder.clip_bitmap_region(server_clip, scr->display_scale_factor);
-
-                gdi_command_builder gdi_builder(client->get_ws().get_graphics_driver(), builder,
-                    *client->get_ws().get_bitmap_cache(), filter, abs_rect.top, scr->display_scale_factor,
-                    server_clip);
-
                 for (std::size_t i = 0; i < segments.size(); i++) {
                     if (segments[i]->type_ != gdi_store_command_segment_pending_redraw) {
+                        common::region segment_clip = segments[i]->region_;
+                        segment_clip.advance(abs_rect.top);
+                        segment_clip = segment_clip.intersect(server_clip);
+                        if (segment_clip.empty()) {
+                            continue;
+                        }
+                        builder.clip_bitmap_region(segment_clip, scr->display_scale_factor);
+                        gdi_command_builder gdi_builder(client->get_ws().get_graphics_driver(), builder,
+                            *client->get_ws().get_bitmap_cache(), filter, abs_rect.top, scr->display_scale_factor,
+                            segment_clip);
                         gdi_builder.build_segment(*segments[i]);
                     }
                 }
