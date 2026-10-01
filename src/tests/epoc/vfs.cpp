@@ -21,7 +21,11 @@ TEST_CASE("uid_directory_listing_preserves_directories_and_untyped_files", "vfs"
         const auto checksum = eka2l1::crypt::calculate_checked_uid_checksum(reinterpret_cast<const std::uint32_t *>(&uid));
         typed.write(reinterpret_cast<const char *>(&checksum), sizeof(checksum));
         std::ofstream short_file(eka2l1::add_path(root, "short.dat"), std::ios::binary);
-        short_file.write(reinterpret_cast<const char *>(&uid), 4);
+        short_file.write(reinterpret_cast<const char *>(&uid), sizeof(uid));
+        std::ofstream corrupt(eka2l1::add_path(root, "corrupt.dat"), std::ios::binary);
+        corrupt.write(reinterpret_cast<const char *>(&uid), sizeof(uid));
+        const std::uint32_t invalid_checksum = checksum ^ 1;
+        corrupt.write(reinterpret_cast<const char *>(&invalid_checksum), sizeof(invalid_checksum));
     }
 
     eka2l1::io_system io;
@@ -38,7 +42,7 @@ TEST_CASE("uid_directory_listing_preserves_directories_and_untyped_files", "vfs"
         names.push_back(entry->name);
     }
     std::sort(names.begin(), names.end());
-    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "empty.dat", "short.dat", "typed.dat" });
+    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "corrupt.dat", "empty.dat", "short.dat", "typed.dat" });
 
     dir = io.open_dir(u"A:\\", { 1, 2, 3 }, attributes);
     REQUIRE(dir);
