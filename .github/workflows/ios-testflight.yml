@@ -106,17 +106,15 @@ jobs:
           {
             echo "short_sha=$(git rev-parse --short HEAD)"
             echo "ffmpeg=$(git -C src/external/ffmpeg rev-parse HEAD)"
+            echo "image=$ImageVersion"
           } >> "${GITHUB_OUTPUT}"
 
-      # Same reasoning as build.yml's iOS job: ffmpeg ships no iOS slice and
-      # building one takes longer than the app. Keyed on the submodule commit,
-      # so a bump rebuilds it and nothing else does.
       - name: Cache iOS ffmpeg
         if: steps.guard.outputs.configured == 'true'
         uses: actions/cache@v4
         with:
-          path: src/external/ffmpeg/ios/device
-          key: ffmpeg-ios-device-${{ steps.target.outputs.ffmpeg }}
+          path: build/ffmpeg-cache
+          key: ffmpeg-ios-device-${{ steps.target.outputs.image }}-${{ steps.target.outputs.ffmpeg }}-${{ hashFiles('scripts/build_ios.sh', 'cmake/ios.toolchain.cmake', '.github/workflows/ios-testflight.yml') }}
 
       - name: Select Xcode
         if: steps.guard.outputs.configured == 'true'
