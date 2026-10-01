@@ -88,6 +88,7 @@ namespace eka2l1::epoc {
             pen
         };
 
+        void apply_origin(gdi_store_command &cmd) const;
         void add_draw_command(gdi_store_command &cmd);
         void set_origin(service::ipc_context &context, ws_cmd &cmd);
         void reset_internal_status();

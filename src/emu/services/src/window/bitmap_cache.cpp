@@ -288,7 +288,7 @@ namespace eka2l1::epoc {
     drivers::handle bitmap_cache::add_or_get(drivers::graphics_driver *driver, epoc::bitwise_bitmap *bmp, 
         drivers::graphics_command_builder *builder, gdi_store_command *update_cmd,
         std::shared_ptr<drivers::handle> *snapshot) {
-        if (!fbss_) {
+        if (!fbss_ && kern) {
             server_ptr ss = kern->get_by_name<service::server>(epoc::get_fbs_server_name_by_epocver(
                 kern->get_epoc_version()));
 
@@ -360,16 +360,8 @@ namespace eka2l1::epoc {
             if (texture_snapshots[idx]) {
                 texture_snapshots[idx].reset();
             } else if (driver_textures[idx]) {
-                if (builder) {
-                    builder->destroy_bitmap(driver_textures[idx]);
-                }
-
-                if (update_cmd) {
-                    gdi_store_command_update_texture_data &data = update_cmd->get_data_struct<gdi_store_command_update_texture_data>();
-            
-                    update_cmd->opcode_ = gdi_store_command_update_texture;
-                    data.destroy_handle_ = driver_textures[idx];
-                }
+                const std::lock_guard<std::mutex> lock(retired_->mutex);
+                retired_->handles.push_back(driver_textures[idx]);
             }
 
             driver_textures[idx] = drivers::create_bitmap(driver, bmp->header_.size_pixels, suit_bpp);
@@ -383,7 +375,7 @@ namespace eka2l1::epoc {
             }
         }
 
-        if (should_upload) {
+        if (should_upload || should_recreate) {
             char *data_pointer = reinterpret_cast<char *>(bmp->data_pointer(fbss_));
             std::uint32_t raw_size = 0;
             std::size_t pixels_per_line = 0;

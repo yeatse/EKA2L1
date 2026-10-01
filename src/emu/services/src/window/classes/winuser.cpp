@@ -1447,8 +1447,15 @@ namespace eka2l1::epoc {
         }
 
         gdi_store_command_segment *current_segment = redraw_segments_.get_current_segment();
+        const bool retains_pixels = client->get_ws().no_redraw_storing_enabled();
+        if (!retains_pixels) {
+            // Symbian redraw stores retain bitmap handles, not copies of their pixels.
+            current_segment->add_command(command);
+        }
         canvas_base::add_draw_command(command);
-        current_segment->add_command(command);
+        if (retains_pixels) {
+            current_segment->add_command(command);
+        }
         // Without redraw storing, earlier pixels may exist only in the screen bitmap.
         if ((created_non_redraw_segment && !client->get_ws().no_redraw_storing_enabled()) || (flags & flags_enable_alpha)) {
             scr->flags_ |= screen::FLAG_SERVER_REDRAW_PENDING;

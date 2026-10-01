@@ -57,7 +57,7 @@ namespace eka2l1::epoc {
         context.complete(epoc::error_none);
     }
 
-    void graphic_context::add_draw_command(gdi_store_command &cmd) {
+    void graphic_context::apply_origin(gdi_store_command &cmd) const {
         switch (cmd.opcode_) {
         case gdi_store_command_draw_rect:
             cmd.get_data_struct<gdi_store_command_draw_rect_data>().rect_.top += origin;
@@ -84,6 +84,10 @@ namespace eka2l1::epoc {
         default:
             break;
         }
+    }
+
+    void graphic_context::add_draw_command(gdi_store_command &cmd) {
+        apply_origin(cmd);
         attached_window->add_draw_command(cmd);
     }
 
@@ -97,6 +101,11 @@ namespace eka2l1::epoc {
 
         // Attach context with window
         attached_window->attached_contexts.push(&context_attach_link);
+
+        origin = { 0, 0 };
+        clipping_rect.make_empty();
+        clipping_region.make_empty();
+        brush_color = attached_window->clear_color;
 
         // The client stores the reply as the GC's device (CWindowGc::Device()).
         epoc::window_group *group = attached_window->get_group();
@@ -122,16 +131,6 @@ namespace eka2l1::epoc {
             epoc::bitmap_backed_canvas *cv = reinterpret_cast<epoc::bitmap_backed_canvas*>(attached_window);
             cv->sync_from_bitmap();
         }
-
-        origin = { 0, 0 };
-
-        // Reset clipping. This is not mentioned in doc but is in official source code.
-        // See gc.cpp file. Opcode EWsGcOpActivate
-        clipping_rect.make_empty();
-        clipping_region.make_empty();
-
-        // In source code brush is also resetted
-        brush_color = attached_window->clear_color;
 
         do_submit_clipping();
     }
@@ -551,8 +550,13 @@ namespace eka2l1::epoc {
         }
 
         // Nothing outside the window can show; this also bounds the span count for huge polygons.
-        min_y = std::max(min_y, -origin.y);
-        max_y = std::min(max_y, attached_window->size().y - origin.y);
+        const std::int64_t window_top = -static_cast<std::int64_t>(origin.y);
+        const std::int64_t window_bottom = window_top + attached_window->size().y;
+        if (window_top > max_y || window_bottom < min_y) {
+            return;
+        }
+        min_y = static_cast<int>(std::max<std::int64_t>(min_y, window_top));
+        max_y = static_cast<int>(std::min<std::int64_t>(max_y, window_bottom));
 
         struct crossing {
             float x;

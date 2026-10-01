@@ -588,10 +588,10 @@ namespace eka2l1 {
                 if (info.has_value()) {
                     if ((info->type == io_component_type::file) && (attribute & io_attrib_allow_uid)
                         && (utype.uid1 || utype.uid2 || utype.uid3)) {
-                        epoc::uid_type temp_uid;
+                        epoc::uid_type temp_uid{};
 
                         common::ro_std_file_stream temp_file_holder(eka2l1::add_path(iterator->dir_name, entry.name), true);
-                        if (temp_file_holder.read(reinterpret_cast<char *>(&temp_uid), sizeof(temp_uid))) {
+                        if (temp_file_holder.read(reinterpret_cast<char *>(&temp_uid), sizeof(temp_uid)) == sizeof(temp_uid)) {
                             if (((utype.uid1 != 0) && (utype.uid1 != temp_uid.uid1)) || ((utype.uid2 != 0) && (utype.uid2 != temp_uid.uid2))
                                 || ((utype.uid3 != 0) && (utype.uid3 != temp_uid.uid3))) {
                                 continue;

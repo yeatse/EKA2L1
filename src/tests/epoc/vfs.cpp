@@ -1,6 +1,7 @@
 #include <catch2/catch.hpp>
 #include <common/algorithm.h>
 #include <common/cvt.h>
+#include <common/crypt.h>
 #include <common/fileutils.h>
 #include <common/path.h>
 #include <common/types.h>
@@ -17,6 +18,10 @@ TEST_CASE("uid_directory_listing_preserves_directories_and_untyped_files", "vfs"
         std::ofstream typed(eka2l1::add_path(root, "typed.dat"), std::ios::binary);
         const eka2l1::epoc::uid_type uid{ 1, 2, 3 };
         typed.write(reinterpret_cast<const char *>(&uid), sizeof(uid));
+        const auto checksum = eka2l1::crypt::calculate_checked_uid_checksum(reinterpret_cast<const std::uint32_t *>(&uid));
+        typed.write(reinterpret_cast<const char *>(&checksum), sizeof(checksum));
+        std::ofstream short_file(eka2l1::add_path(root, "short.dat"), std::ios::binary);
+        short_file.write(reinterpret_cast<const char *>(&uid), 4);
     }
 
     eka2l1::io_system io;
@@ -33,7 +38,7 @@ TEST_CASE("uid_directory_listing_preserves_directories_and_untyped_files", "vfs"
         names.push_back(entry->name);
     }
     std::sort(names.begin(), names.end());
-    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "empty.dat", "typed.dat" });
+    REQUIRE(names == std::vector<std::string>{ "Free Demo Levels", "empty.dat", "short.dat", "typed.dat" });
 
     dir = io.open_dir(u"A:\\", { 1, 2, 3 }, attributes);
     REQUIRE(dir);
