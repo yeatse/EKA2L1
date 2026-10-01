@@ -496,7 +496,8 @@ namespace eka2l1::epoc {
                         new_pointer = converted_gray_four_bpp_to_twenty_four_bpp_bitmap(bmp, reinterpret_cast<const std::uint8_t *>(data_pointer), raw_size_big);
                     } else {
                         new_pointer = converted_palette_bitmap_to_twenty_four_bitmap(bmp, reinterpret_cast<const std::uint8_t *>(data_pointer),
-                            epoc::get_suitable_palette_256(kern->get_epoc_version(), kern->get_system()->is_s80_device_active()),
+                            epoc::get_suitable_palette_256(kern->get_epoc_version(), kern->get_system()->is_s80_device_active(),
+                                kern->get_system()->is_uiq_2_device_active()),
                             epoc::color_16_palette, raw_size_big);
                     }
 
