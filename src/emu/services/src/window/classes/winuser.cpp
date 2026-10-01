@@ -766,12 +766,11 @@ namespace eka2l1::epoc {
     }
 
     void canvas_base::scroll(service::ipc_context &context, ws_cmd &cmd) {
-        eka2l1::rect clip_rect;
-        eka2l1::point offset;
-        eka2l1::rect source_rect;
-
-        ws_cmd_scroll *scroll_data = reinterpret_cast<ws_cmd_scroll*>(cmd.data_ptr);
-        offset = scroll_data->offset;
+        const auto *scroll_data = reinterpret_cast<const ws_cmd_scroll *>(cmd.data_ptr);
+        const eka2l1::point offset = scroll_data->offset;
+        eka2l1::rect clip_rect = bounding_rect();
+        // WSERV defines an omitted source so its destination covers the whole window.
+        eka2l1::rect source_rect(eka2l1::point(0, 0) - offset, size());
 
         if ((cmd.header.op == EWsWinOpScrollClip) || (cmd.header.op == EWsWinOpScrollClipRect)) {
             clip_rect = scroll_data->clip_rect;
@@ -1888,6 +1887,12 @@ namespace eka2l1::epoc {
             return false;
         }
 
+        clip_space = clip_space.intersect(bounding_rect());
+        source_rect = source_rect.intersect(clip_space);
+        if (source_rect.empty()) {
+            return false;
+        }
+
         drivers::graphics_driver *drv = client->get_ws().get_graphics_driver();
         drivers::graphics_command_builder cmd_builder;
 
@@ -1900,12 +1905,7 @@ namespace eka2l1::epoc {
             ping_pong_driver_win_id = drivers::create_bitmap(drv, abs_rect.size, 32);
         }
 
-        if (source_rect.empty()) {
-            source_rect.top = eka2l1::vec2(0, 0);
-            source_rect.size = abs_rect.size;
-        }
-        
-        eka2l1::rect dest_rect(offset, source_rect.size);
+        eka2l1::rect dest_rect(source_rect.top + offset, source_rect.size);
 
         cmd_builder.bind_bitmap(ping_pong_driver_win_id);
         cmd_builder.draw_bitmap(driver_win_id, 0, dest_rect, source_rect);
