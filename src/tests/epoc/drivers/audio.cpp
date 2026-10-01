@@ -107,5 +107,11 @@ TEST_CASE("EPOC Record custom audio decodes and can be reopened", "[audio]") {
     REQUIRE(player.duration() == 500000);
     REQUIRE(player.open_custom(&stream));
     REQUIRE(player.duration() == 500000);
+    player.set_repeat(1, 1000);
+    std::vector<std::int16_t> output(4500, -1);
+    REQUIRE(player.data_supply_callback(output.data(), output.size()) == output.size());
+    REQUIRE(std::all_of(output.begin(), output.begin() + 4000, [](auto sample) { return sample == 8; }));
+    REQUIRE(std::all_of(output.begin() + 4000, output.begin() + 4008, [](auto sample) { return sample == 0; }));
+    REQUIRE(std::all_of(output.begin() + 4008, output.end(), [](auto sample) { return sample == 8; }));
 }
 #endif

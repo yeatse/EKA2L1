@@ -17,7 +17,6 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/romimg.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/rsc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/spi.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/loader/sound.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/loader/svgb.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/package/manager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/system/gamecard.cpp
@@ -34,6 +33,7 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/surface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/scale.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/protocol.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/window/gctx.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/visibility.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/centralrepo/crebinloader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/domain/domain.cpp

@@ -9,7 +9,7 @@ endif ()
 # CoreAudio HAL types that the iOS SDK doesn't ship, so a direct
 # implementation is both smaller and easier to keep in sync with the iOS
 # audio APIs. Desktop / Android continue to use cubeb. FFmpeg is built
-# separately for iOS by the ffmpeg submodule's ios-build.sh, then linked here when
+# by the ffmpeg submodule's CMake target, then linked here when
 # EKA2L1_HAVE_FFMPEG is enabled by src/external.
 if (EKA2L1_IOS)
     set(DRIVERS_AUDIOUNIT_IOS_SRC
@@ -252,7 +252,7 @@ if (NOT MSVC)
     target_compile_options(miniBAE_EMU PRIVATE -Wno-int-conversion -Wno-implicit-function-declaration)
 endif()
 
-target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls epocloader)
+target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls)
 if (APPLE)
     target_sources(drivers PRIVATE src/network/tls_trust_apple.cpp)
     target_link_libraries(drivers PRIVATE "-framework Security" "-framework CoreFoundation")
