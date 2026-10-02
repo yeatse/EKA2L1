@@ -404,10 +404,13 @@ the title.
   the wrapper *captures* — 0xAC is not among them, because the shell never steals it.
 * `epoc.cpp`'s `var_resolver` still hardcodes `MANUFACTURER_NOKIA_UID` for every
   device, and `fill_machine_info` hardcodes `machine_unique_id_ = 0`.
-* Men in Black 2's RGB444 output and 90 degree rotation are the game's own fixed
-  P800-era profile, not an emulator bug: its device check is dead code and P900
-  genuinely reports 65536 colours. Correcting it would need a per-app compatibility
-  option.
+* Men in Black 2 writes RGB444 and rotates its picture by 90 degrees for the P800.
+  Its device check is dead code, so it still writes RGB444 on the RGB565 P900 panel.
+  On the P800 ROM, however, the same colour corruption was an emulator bug:
+  `WINDOWMODE COLOR4K` fell through the display-mode parser to `EColor16MA`, and
+  legacy DSA then interpreted the pixels as RGB565. Recognising `COLOR4K` selects
+  the existing RGB444 path, matching the P800 ROM's `scdv` screen-device factory,
+  which accepts only `EColor4K`. The P900 compatibility limitation remains.
 
 ## Recipes that paid off
 
