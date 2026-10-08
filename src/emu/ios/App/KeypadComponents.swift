@@ -2,8 +2,8 @@ import SwiftUI
 import UIKit
 
 // Shared building blocks for the on-screen keypad layouts in VirtualKeypad.swift:
-// scan codes, the press/release key primitive, key-cap styling, the sliding
-// d-pad and the numeric pads.
+// scan codes, the press/release key primitive, key-cap styling, the d-pad and
+// the numeric pads.
 
 // Symbian standard scan codes (see services/window/keys.h).
 enum Scan {
@@ -33,6 +33,11 @@ let keypadDigits: [(label: String, sub: String, scan: UInt32)] = [
 
 // MARK: - Key primitive
 
+enum Keypad {
+    // Barely-there tick: keys and the d-pad fire several times a second.
+    static let hapticIntensity = 0.3
+}
+
 struct HoldableRawKey<Label: View>: View {
     let scan: UInt32
     // Hit-test region for the key. Defaults to the full bounding rect; round
@@ -59,7 +64,7 @@ struct HoldableRawKey<Label: View>: View {
                     .accessibilityHidden(true)
             )
             .onDisappear(perform: release)
-            .hapticImpact(.light, trigger: impacts)
+            .hapticImpact(.light, intensity: Keypad.hapticIntensity, trigger: impacts)
     }
 
     private func press() {
@@ -175,6 +180,17 @@ private struct KeyCapModifier: ViewModifier {
     let pressed: Bool
 
     func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .foregroundStyle(.white)
+                .glassEffect(.regular.interactive(),
+                             in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        } else {
+            legacyBody(content)
+        }
+    }
+
+    private func legacyBody(_ content: Content) -> some View {
         content
             .foregroundStyle(.white)
             .background(
@@ -308,47 +324,75 @@ struct ClearKey: View {
     }
 }
 
-// MARK: - Sliding d-pad
+// MARK: - D-pad
 
-// Circular four-way pad with a centred OK (select), used by every layout.
-// The four direction zones are the ring quadrants split on the diagonals.
-// Each touch on the ring holds its own direction, so multiple direction keys
-// can remain pressed at once. Sliding a finger into another quadrant changes
-// only that touch's key. The centre OK is its own key — slides across it keep
-// the current direction (games treat OK as fire, so a transient press while
-// crossing the middle would misfire).
-struct SlidingDPad: View {
+// Ring of eight 45° direction sectors around a fixed OK key. A touch on the
+// ring presses the direction under it at once, then steers like a virtual
+// stick; diagonals hold both axis keys. A touch that starts on OK holds it
+// until it slides onto the ring, where it lets go of OK and steers instead.
+// One touch steers at a time; another finger can still hold OK.
+struct DirectionPad: View {
     var diameter: CGFloat = 130
 
-    private let innerRatio: CGFloat = 0.4
+    private let okRatio: CGFloat = 0.4
 
     @State private var activeScans: Set<UInt32> = []
+    @State private var sector: Int?
+    @State private var okPressed = false
     @State private var impacts = 0
 
-    private struct Direction {
-        let scan: UInt32
-        let symbol: String
-        let sectorStart: Double // degrees, SwiftUI convention (0° = +x, cw)
-        let labelOffset: CGVector
-    }
+    private static let cardinals: [(symbol: String, sector: Int)] = [
+        ("chevron.right", 0), ("chevron.down", 2), ("chevron.left", 4), ("chevron.up", 6),
+    ]
 
-    private var directions: [Direction] {
-        let r = diameter * 0.36
-        return [
-            Direction(scan: Scan.up, symbol: "chevron.up", sectorStart: 225,
-                      labelOffset: CGVector(dx: 0, dy: -r)),
-            Direction(scan: Scan.right, symbol: "chevron.right", sectorStart: 315,
-                      labelOffset: CGVector(dx: r, dy: 0)),
-            Direction(scan: Scan.down, symbol: "chevron.down", sectorStart: 45,
-                      labelOffset: CGVector(dx: 0, dy: r)),
-            Direction(scan: Scan.left, symbol: "chevron.left", sectorStart: 135,
-                      labelOffset: CGVector(dx: -r, dy: 0)),
-        ]
+    private var usesGlass: Bool {
+        if #available(iOS 26.0, *) { true } else { false }
     }
 
     var body: some View {
-        let okSize = diameter * innerRatio
+        let radius = diameter / 2
         ZStack {
+            ring
+
+            if let sector {
+                highlight(sector)
+            }
+
+            ForEach(Self.cardinals, id: \.sector) { cardinal in
+                let lit = sector.map { abs(Self.sectorDistance($0, cardinal.sector)) <= 1 } ?? false
+                let angle = Double(cardinal.sector) * .pi / 4
+                Image(systemName: cardinal.symbol)
+                    .font(.system(size: diameter * 0.1, weight: .semibold))
+                    .foregroundStyle(.white.opacity(lit ? 0.95 : (usesGlass ? 0.55 : 0.9)))
+                    .scaleEffect(lit && !usesGlass ? 0.86 : 1)
+                    .offset(x: cos(angle) * radius * 0.72, y: sin(angle) * radius * 0.72)
+            }
+
+            okCap(size: diameter * okRatio)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: "OK"))
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    EKA2L1Bridge.shared.tapRawKey(Scan.select)
+                }
+
+            // SwiftUI's DragGesture tracks one touch and starts late; the UIKit
+            // surface sees every finger as it lands.
+            DPadTouchSurface(okRatio: okRatio, onChange: update)
+                .accessibilityHidden(true)
+        }
+        .frame(width: diameter, height: diameter)
+        .onDisappear {
+            update(DPadState())
+        }
+        .hapticImpact(.light, intensity: Keypad.hapticIntensity, trigger: impacts)
+    }
+
+    @ViewBuilder private var ring: some View {
+        if #available(iOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular.interactive(), in: Circle())
+        } else {
             Circle()
                 .fill(
                     LinearGradient(
@@ -357,82 +401,54 @@ struct SlidingDPad: View {
                     )
                 )
                 .overlay(Circle().strokeBorder(.white.opacity(0.15), lineWidth: 1))
-                .overlay(PadDividers(innerRatio: innerRatio).stroke(.white.opacity(0.12), lineWidth: 1))
-
-            ForEach(directions, id: \.scan) { dir in
-                let pressed = activeScans.contains(dir.scan)
-                Sector(startAngle: .degrees(dir.sectorStart),
-                       endAngle: .degrees(dir.sectorStart + 90),
-                       innerRatio: innerRatio)
-                    .fill(.white.opacity(pressed ? 0.26 : 0.0001))
-                Image(systemName: dir.symbol)
-                    .font(.system(size: diameter * 0.1, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .scaleEffect(pressed ? 0.86 : 1)
-                    .offset(x: dir.labelOffset.dx, y: dir.labelOffset.dy)
-                    .animation(.easeOut(duration: 0.1), value: pressed)
-            }
-
-            // SwiftUI's DragGesture tracks only one touch. Use a UIKit surface
-            // so every held finger can contribute a direction simultaneously.
-            DPadTouchSurface(innerRatio: innerRatio) { point in
-                directionScan(at: point)
-            } onActiveDirectionsChanged: { scans in
-                updateActive(scans)
-            }
-
-            HoldableRawKey(scan: Scan.select, hitShape: AnyShape(Circle())) { pressed in
-                Text(verbatim: "OK")
-                    .font(.system(size: okSize * 0.28, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .frame(width: okSize, height: okSize)
-                    .background(
-                        Circle().fill(
-                            LinearGradient(
-                                colors: [.white.opacity(0.28), .white.opacity(0.12)],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                    )
-                    .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
-                    .scaleEffect(pressed ? 0.88 : 1)
-                    .opacity(pressed ? 0.7 : 1)
-                    .animation(.easeOut(duration: 0.12), value: pressed)
-            }
-        }
-        .frame(width: diameter, height: diameter)
-        .onDisappear {
-            updateActive([])
-        }
-        .hapticImpact(.light, trigger: impacts)
-    }
-
-    // Direction under the finger, or nil to keep that touch's current one
-    // (finger over the OK circle mid-slide, or outside the ring — holding past
-    // the rim is common in action games and should not drop the direction).
-    private func directionScan(at point: CGPoint) -> UInt32? {
-        let radius = diameter / 2
-        let dx = point.x - radius
-        let dy = point.y - radius
-        let dist = (dx * dx + dy * dy).squareRoot()
-        if dist <= radius * innerRatio || dist > radius {
-            return nil
-        }
-        var degrees = atan2(dy, dx) * 180 / .pi // -180..180, 0° = +x, cw
-        if degrees < 0 {
-            degrees += 360
-        }
-        switch degrees {
-        case 45..<135: return Scan.down
-        case 135..<225: return Scan.left
-        case 225..<315: return Scan.up
-        default: return Scan.right
         }
     }
 
-    private func updateActive(_ scans: Set<UInt32>) {
+    @ViewBuilder private func highlight(_ sector: Int) -> some View {
+        if usesGlass {
+            SectorArc(sector: sector)
+                .stroke(.white.opacity(0.75), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .padding(3)
+                .shadow(color: .white.opacity(0.5), radius: 4)
+        } else {
+            let centre = Double(sector) * 45
+            Sector(startAngle: .degrees(centre - 22.5), endAngle: .degrees(centre + 22.5),
+                   innerRatio: okRatio)
+                .fill(.white.opacity(0.26))
+        }
+    }
+
+    private func okCap(size: CGFloat) -> some View {
+        let top = usesGlass ? 0.38 : 0.28
+        let bottom = usesGlass ? 0.14 : 0.12
+        return Text(verbatim: "OK")
+            .font(.system(size: size * 0.28, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(
+                Circle().fill(
+                    LinearGradient(colors: [.white.opacity(top), .white.opacity(bottom)],
+                                   startPoint: .top, endPoint: .bottom)
+                )
+            )
+            .overlay(Circle().strokeBorder(.white.opacity(usesGlass ? 0.4 : 0.25), lineWidth: 1))
+            .shadow(color: .black.opacity(usesGlass ? 0.3 : 0), radius: 6, y: 2)
+            .scaleEffect(okPressed ? 0.88 : 1)
+            .opacity(okPressed && !usesGlass ? 0.7 : 1)
+            .animation(.spring(response: 0.18, dampingFraction: 0.62), value: okPressed)
+    }
+
+    private func update(_ state: DPadState) {
+        withAnimation(.easeOut(duration: 0.1)) {
+            sector = state.sector
+        }
+        okPressed = state.okPressed
+
+        var scans = Self.scans(for: state.sector)
+        if state.okPressed {
+            scans.insert(Scan.select)
+        }
         guard scans != activeScans else { return }
-
         for scan in activeScans.subtracting(scans).sorted() {
             EKA2L1Bridge.shared.submitRawKey(scan, pressed: false)
         }
@@ -440,15 +456,71 @@ struct SlidingDPad: View {
         for scan in pressedScans.sorted() {
             EKA2L1Bridge.shared.submitRawKey(scan, pressed: true)
         }
-        impacts += pressedScans.count
+        if !pressedScans.isEmpty {
+            impacts += 1
+        }
         activeScans = scans
+    }
+
+    // Sector 0 is +x and sectors advance clockwise in screen space.
+    private static func scans(for sector: Int?) -> Set<UInt32> {
+        guard let sector else { return [] }
+        var scans: Set<UInt32> = []
+        if [7, 0, 1].contains(sector) { scans.insert(Scan.right) }
+        if [1, 2, 3].contains(sector) { scans.insert(Scan.down) }
+        if [3, 4, 5].contains(sector) { scans.insert(Scan.left) }
+        if [5, 6, 7].contains(sector) { scans.insert(Scan.up) }
+        return scans
+    }
+
+    private static func sectorDistance(_ a: Int, _ b: Int) -> Int {
+        (a - b + 12) % 8 - 4
+    }
+}
+
+private struct DPadState: Equatable {
+    var sector: Int?
+    var okPressed = false
+}
+
+// Rim highlight spanning one 45° sector.
+private struct SectorArc: Shape {
+    let sector: Int
+
+    func path(in rect: CGRect) -> Path {
+        let centre = Double(sector) * 45
+        var path = Path()
+        path.addArc(center: CGPoint(x: rect.midX, y: rect.midY),
+                    radius: min(rect.width, rect.height) / 2,
+                    startAngle: .degrees(centre - 18), endAngle: .degrees(centre + 18),
+                    clockwise: false)
+        return path
+    }
+}
+
+// Annular wedge between innerRatio*R and R, spanning [startAngle, endAngle].
+private struct Sector: Shape {
+    let startAngle: Angle
+    let endAngle: Angle
+    var innerRatio: CGFloat = 0.4
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let outer = min(rect.width, rect.height) / 2
+        let inner = outer * innerRatio
+        var path = Path()
+        path.addArc(center: center, radius: outer, startAngle: startAngle,
+                    endAngle: endAngle, clockwise: false)
+        path.addArc(center: center, radius: inner, startAngle: endAngle,
+                    endAngle: startAngle, clockwise: true)
+        path.closeSubpath()
+        return path
     }
 }
 
 private struct DPadTouchSurface: UIViewRepresentable {
-    let innerRatio: CGFloat
-    let directionAtPoint: (CGPoint) -> UInt32?
-    let onActiveDirectionsChanged: (Set<UInt32>) -> Void
+    let okRatio: CGFloat
+    let onChange: (DPadState) -> Void
 
     func makeUIView(context: Context) -> DPadTouchView {
         let view = DPadTouchView()
@@ -465,19 +537,26 @@ private struct DPadTouchSurface: UIViewRepresentable {
     }
 
     private func configure(_ view: DPadTouchView) {
-        view.innerRatio = innerRatio
-        view.directionAtPoint = directionAtPoint
-        view.onActiveDirectionsChanged = onActiveDirectionsChanged
+        view.okRatio = okRatio
+        view.onChange = onChange
     }
 }
 
 private final class DPadTouchView: UIView {
-    var innerRatio: CGFloat = 0.34
-    var directionAtPoint: ((CGPoint) -> UInt32?)?
-    var onActiveDirectionsChanged: ((Set<UInt32>) -> Void)?
+    var okRatio: CGFloat = 0.4
+    var onChange: ((DPadState) -> Void)?
 
-    private var heldDirections: [ObjectIdentifier: UInt32] = [:]
-    private var publishedScans: Set<UInt32> = []
+    // Dead zone as a fraction of the radius, with hysteresis so a finger
+    // resting on the boundary does not chatter the keys.
+    private let engageRatio: CGFloat = 0.3
+    private let releaseRatio: CGFloat = 0.22
+    // Extra degrees a finger must pass a sector edge before switching.
+    private let sectorHysteresis: Double = 7
+
+    private var okTouches: Set<ObjectIdentifier> = []
+    private var steeringTouch: ObjectIdentifier?
+    private var sector: Int?
+    private var published = DPadState()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -491,116 +570,131 @@ private final class DPadTouchView: UIView {
         isMultipleTouchEnabled = true
     }
 
-    // Own only the annular direction region. This lets the SwiftUI OK button
-    // above the surface receive touches that begin in the centre.
+    private var radius: CGFloat {
+        min(bounds.width, bounds.height) / 2
+    }
+
+    private func distance(_ point: CGPoint) -> CGFloat {
+        hypot(point.x - bounds.midX, point.y - bounds.midY)
+    }
+
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        let radius = min(bounds.width, bounds.height) / 2
-        let centre = CGPoint(x: bounds.midX, y: bounds.midY)
-        let distance = hypot(point.x - centre.x, point.y - centre.y)
-        return distance > radius * innerRatio && distance <= radius
+        distance(point) <= radius
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
-            guard let scan = directionAtPoint?(touch.location(in: self)) else { continue }
-            heldDirections[ObjectIdentifier(touch)] = scan
+            let id = ObjectIdentifier(touch)
+            let point = touch.location(in: self)
+            if distance(point) <= radius * okRatio {
+                okTouches.insert(id)
+            } else if steeringTouch == nil {
+                steeringTouch = id
+                steer(point)
+            }
         }
-        publishActiveDirections()
+        publish()
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         for touch in touches {
-            let identifier = ObjectIdentifier(touch)
-            guard heldDirections[identifier] != nil,
-                  let scan = directionAtPoint?(touch.location(in: self)) else { continue }
-            heldDirections[identifier] = scan
+            let id = ObjectIdentifier(touch)
+            let point = touch.location(in: self)
+            if okTouches.contains(id) && distance(point) > radius * okRatio {
+                okTouches.remove(id)
+                if steeringTouch == nil {
+                    steeringTouch = id
+                }
+            }
+            if id == steeringTouch {
+                steer(point)
+            }
         }
-        publishActiveDirections()
+        publish()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        remove(touches)
+        end(touches)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        remove(touches)
+        end(touches)
     }
 
     func reset() {
-        heldDirections.removeAll()
-        publish([])
+        okTouches.removeAll()
+        steeringTouch = nil
+        sector = nil
+        publish()
     }
 
-    private func remove(_ touches: Set<UITouch>) {
+    private func end(_ touches: Set<UITouch>) {
         for touch in touches {
-            heldDirections.removeValue(forKey: ObjectIdentifier(touch))
+            let id = ObjectIdentifier(touch)
+            okTouches.remove(id)
+            if id == steeringTouch {
+                steeringTouch = nil
+                sector = nil
+            }
         }
-        publishActiveDirections()
+        publish()
     }
 
-    private func publishActiveDirections() {
-        publish(Set(heldDirections.values))
-    }
-
-    private func publish(_ scans: Set<UInt32>) {
-        guard scans != publishedScans else { return }
-        publishedScans = scans
-        onActiveDirectionsChanged?(scans)
-    }
-}
-
-// Annular wedge between innerRatio*R and R, spanning [startAngle, endAngle].
-private struct Sector: Shape {
-    let startAngle: Angle
-    let endAngle: Angle
-    var innerRatio: CGFloat = 0.34
-
-    func path(in rect: CGRect) -> Path {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let outer = min(rect.width, rect.height) / 2
-        let inner = outer * innerRatio
-        var path = Path()
-        path.addArc(center: center, radius: outer, startAngle: startAngle,
-                    endAngle: endAngle, clockwise: false)
-        path.addArc(center: center, radius: inner, startAngle: endAngle,
-                    endAngle: startAngle, clockwise: true)
-        path.closeSubpath()
-        return path
-    }
-}
-
-// The four diagonal separators (at 45/135/225/315°) from the OK circle out to
-// the rim, so the equal quadrant split is visible.
-private struct PadDividers: Shape {
-    var innerRatio: CGFloat = 0.34
-
-    func path(in rect: CGRect) -> Path {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        let outer = min(rect.width, rect.height) / 2
-        let inner = outer * innerRatio
-        var path = Path()
-        for degrees in stride(from: 45.0, to: 360.0, by: 90.0) {
-            let radians = degrees * .pi / 180.0
-            let dir = CGPoint(x: cos(radians), y: sin(radians))
-            path.move(to: CGPoint(x: center.x + dir.x * inner, y: center.y + dir.y * inner))
-            path.addLine(to: CGPoint(x: center.x + dir.x * outer, y: center.y + dir.y * outer))
+    private func steer(_ point: CGPoint) {
+        let dx = point.x - bounds.midX
+        let dy = point.y - bounds.midY
+        let threshold = radius * (sector == nil ? engageRatio : releaseRatio)
+        guard hypot(dx, dy) >= threshold else {
+            sector = nil
+            return
         }
-        return path
+
+        let degrees = atan2(dy, dx) * 180 / .pi
+        let nearest = (Int((degrees / 45).rounded()) % 8 + 8) % 8
+        if let current = sector {
+            var delta = abs(degrees - Double(current) * 45).truncatingRemainder(dividingBy: 360)
+            delta = min(delta, 360 - delta)
+            if delta > 22.5 + sectorHysteresis {
+                sector = nearest
+            }
+        } else {
+            sector = nearest
+        }
+    }
+
+    private func publish() {
+        let state = DPadState(sector: sector, okPressed: !okTouches.isEmpty)
+        guard state != published else { return }
+        published = state
+        onChange?(state)
     }
 }
 
 // MARK: - Numeric pads
 
-// Phone-style 3x4 numeric pad with a restrained 2pt separation between caps.
+// Phone-style 3x4 numeric pad. Glass caps need a wider gap than the flat
+// pre-26 caps to read as separate keys.
 struct CapsNumericPad: View {
     var size = CGSize(width: 150, height: 208)
 
-    private let spacing: CGFloat = 2
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
+    private var spacing: CGFloat {
+        if #available(iOS 26.0, *) { 4 } else { 2 }
+    }
 
     var body: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: 0) {
+                grid
+            }
+        } else {
+            grid
+        }
+    }
+
+    private var grid: some View {
         let keyHeight = (size.height - spacing * 3) / 4
-        LazyVGrid(columns: columns, spacing: spacing) {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: 3)
+        return LazyVGrid(columns: columns, spacing: spacing) {
             ForEach(keypadDigits, id: \.label) { digit in
                 HoldableRawKey(scan: digit.scan) { pressed in
                     VStack(spacing: 1) {

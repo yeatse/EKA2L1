@@ -347,6 +347,15 @@ private struct KeypadElementBackdrop: View {
     let element: KeypadElement
 
     @ViewBuilder var body: some View {
+        if #available(iOS 26.0, *) {
+            // Liquid Glass keys carry their own surface and must see what lies behind.
+            EmptyView()
+        } else {
+            legacyBackdrop
+        }
+    }
+
+    @ViewBuilder private var legacyBackdrop: some View {
         switch element {
         case .dpad:
             Circle().fill(.black)
@@ -500,7 +509,7 @@ struct VirtualKeypad: View {
                 runtimeElement(element) {
                     switch element {
                     case .dpad:
-                        SlidingDPad(diameter: KeypadElement.dpad.size(in: controlSize).width)
+                        DirectionPad(diameter: KeypadElement.dpad.size(in: controlSize).width)
                     case .leftSoft:
                         SoftKey(side: .left, size: KeypadElement.leftSoft.size(in: controlSize))
                     case .rightSoft:
@@ -752,7 +761,7 @@ struct KeypadLayoutEditor: View {
         let elementSize = element.size(in: controlSize)
         switch element {
         case .dpad:
-            SlidingDPad(diameter: elementSize.width)
+            DirectionPad(diameter: elementSize.width)
         case .leftSoft:
             SoftKey(side: .left, size: elementSize)
         case .rightSoft:
