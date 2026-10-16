@@ -143,16 +143,13 @@ struct ContentView: View {
         return String(localized: "home.empty.noApps")
     }
 
+    // DIAGNOSTIC: no type filtering, so files a provider types generically stay selectable.
     private var homeImporterTypes: [UTType] {
         switch homeImportTarget {
-        case .sis:
-            return sisTypes
         case .ngage, .card:
-            return gameCardTypes
-        case .ngage2:
-            return ngage2Types
-        case .font:
-            return fontTypes
+            return [.item, .folder]
+        case .sis, .ngage2, .font:
+            return [.item]
         }
     }
 
@@ -1036,12 +1033,9 @@ struct ImportDeviceView: View {
         }
     }
 
+    // DIAGNOSTIC: no type filtering; pick() still checks the extension.
     private func contentTypes(for target: PickTarget) -> [UTType] {
-        switch target {
-        case .rom: return romTypes
-        case .rpkg: return rpkgTypes
-        case .archive: return archiveTypes
-        }
+        return [.item]
     }
 
     private func expectedExtension(for target: PickTarget) -> String {
