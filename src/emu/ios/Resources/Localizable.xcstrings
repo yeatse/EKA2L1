@@ -3293,6 +3293,22 @@
         }
       }
     },
+    "settings.diagnostics" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Diagnostics"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "诊断"
+          }
+        }
+      }
+    },
     "settings.discord" : {
       "localizations" : {
         "en" : {
@@ -3325,6 +3341,22 @@
         }
       }
     },
+    "settings.extensiveLogging" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Extensive logging"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "大规模日志记录"
+          }
+        }
+      }
+    },
     "settings.fpsOverlay" : {
       "localizations" : {
         "en" : {
@@ -3353,22 +3385,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "手机显示名称"
-          }
-        }
-      }
-    },
-    "settings.graphics" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Graphics"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "图形"
           }
         }
       }
@@ -3597,22 +3613,6 @@
         }
       }
     },
-    "settings.integerScaling" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Integer scaling"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "整数倍缩放"
-          }
-        }
-      }
-    },
     "settings.jit" : {
       "localizations" : {
         "en" : {
@@ -3677,22 +3677,6 @@
         }
       }
     },
-    "settings.library" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Library"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "应用库"
-          }
-        }
-      }
-    },
     "settings.license" : {
       "localizations" : {
         "en" : {
@@ -3705,22 +3689,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "基于 GPLv3 授权"
-          }
-        }
-      }
-    },
-    "settings.nearestFiltering" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nearest filtering"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "邻近过滤"
           }
         }
       }
