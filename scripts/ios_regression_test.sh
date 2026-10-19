@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 #
-# iOS regression validation (xcodebuildmcp CLI based).
+# iOS regression validation (simulator control API based).
 #
 # Drives the booted iPhone simulator through known guest apps and asserts they
 # still behave, so unrelated emulator changes can be regression-checked quickly.
+# Device boot, app launch, keys, screenshots, the log and the session state all
+# go through the simulator control server (docs/ios-debug-control-server.md).
 # Screenshots for every checked state are saved under the results dir for human
 # review; the script also makes hard programmatic assertions and exits non-zero
 # if any fail.
 #
-# Assertions read the guest screen. Every screenshot goes through the Vision
-# OCR helper in scripts/ocr (built on demand) and is checked for the words that
-# screen has to be showing — "Last result" for the calculator's Options menu,
-# "Touch to continue" for the Asphalt title, and so on. A changed-pixel count
-# proves only that something repainted; naming the text proves the guest
-# reached the state, and a failure prints back what it did read.
+# Assertions read the guest screen. Screenshots are the guest picture alone;
+# each goes through the Vision OCR helper in scripts/ocr (built on demand) and
+# is checked for the words that screen has to be showing — "Last result" for
+# the calculator's Options menu, "Touch to continue" for the Asphalt title, and
+# so on. A failure prints back what it did read. A guest crash is a crash-pattern
+# log line or a session that is no longer running when the suite ends.
 #
 #   Final Battle (0xA0003C62) : reaches the first in-game prompt and does NOT
 #                               hit the E32USER-CBase 46 stray-signal panic.
@@ -31,7 +33,8 @@
 #                               permanently), then asserts a tap reaches the
 #                               episode carousel and a swipe pages it. Guards
 #                               the raw-touch pointer path (UITouch -> guest
-#                               pointer-slot mapping).
+#                               pointer-slot mapping), so its touches are real
+#                               HID events sent with `axe`, not API touches.
 #   Asphalt 6    (0x2003B2CC) : Symbian^3/Belle compatibility suite (opt-in,
 #                               not part of `all`): boots X7, asserts the early
 #                               Gameloft movie renders, reaches the main menu,
@@ -43,21 +46,16 @@
 #                               formatting drift is rewritten and `git add`ed.
 #
 # Two states carry no text and stay measured instead of read: Asphalt's intro
-# movie (guarded against a flat black band by its variance) and the
+# movie (guarded against a flat black picture by its variance) and the
 # calculator's entry display (seven-segment digits Vision cannot recognize).
 #
-# Requirements: a booted iPhone simulator with EKA2L1 installed and a device
-# (e.g. 5320/rm-409) mounted, the apps available, plus `xcodebuildmcp`, `jq`,
-# ImageMagick (`magick`) and a Swift toolchain (`xcrun swiftc`, for the OCR
-# helper) on PATH. The n95calc suite (part of `all`) additionally needs the N95
-# (rm-320) mounted. The angrybirds and asphalt6 suites additionally need the X7
-# (rm-707), their respective game installed, and the `axe` HID tool (bundled
-# inside xcodebuildmcp; auto-located). It does NOT build the emulator.
-#
-# Every tap is sent with a post-delay: on Xcode 27 `dtuhidd` activates its
-# virtual touchscreen service only once it has a peer and drops anything that
-# arrives before that, so a tap whose process exits immediately is reported as
-# SUCCEEDED and never reaches the guest (AXe #71).
+# Requirements: a booted iPhone simulator with a simulator build of EKA2L1
+# installed (device builds have no control server), the devices (5320/rm-409,
+# N95/rm-320) and apps available, plus `curl`, `jq`, ImageMagick (`magick`) and
+# a Swift toolchain (`xcrun swiftc`, for the OCR helper) on PATH. The angrybirds
+# and asphalt6 suites additionally need the X7 (rm-707) and their game
+# installed; angrybirds also needs the `axe` HID tool (bundled inside
+# xcodebuildmcp; auto-located). It does NOT build the emulator.
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
 # Debug (artifacts land in Debug-iphonesimulator) — build Release explicitly
@@ -80,10 +78,13 @@
 # Env overrides:
 #   EKA2L1_BUNDLE_ID         default com.eka2l1.emulator
 #   EKA2L1_REG_OUTDIR        default /tmp/eka2l1-regression
+#   EKA2L1_REG_API_PORT      control server port the app is launched with (default 8765)
+#   EKA2L1_REG_SHOT_SCALE    guest screenshot upscale factor (default 3)
+#   EKA2L1_REG_OCR_SCALE     further upscale before recognition (default 1)
 #   EKA2L1_REG_INGAME_WAIT   FBattle in-game dwell seconds (default 90)
 #   EKA2L1_REG_TAP_POST_DELAY
-#                            seconds a tap holds the HID connection open after
-#                            writing the event (default 0.6)
+#                            seconds an axe tap holds the HID connection open
+#                            after writing the event (default 0.6)
 #   EKA2L1_REG_AB_ROM        Angry Birds device firmware code (default rm-707)
 #   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
 #                            seconds, each phase (default 180)
@@ -94,9 +95,6 @@
 #                            interactive title is accepted (default 75)
 #   EKA2L1_REG_A6_TIMEOUT    Asphalt 6 boot and menu-transition budget
 #                            seconds, each phase (default 240)
-#   EKA2L1_REG_BAND_KEYPAD   normalized x,y,w,h crop of the guest picture that
-#   EKA2L1_REG_BAND_FULL     OCR reads, for the keypad and fullscreen layouts
-#   EKA2L1_REG_OCR_SCALE     upscale factor before recognition (default 2)
 
 set -uo pipefail
 
@@ -114,22 +112,26 @@ A6_INTRO_TIMEOUT="${EKA2L1_REG_A6_INTRO_TIMEOUT:-20}"
 A6_MOVIE_WAIT="${EKA2L1_REG_A6_MOVIE_WAIT:-75}"
 A6_TIMEOUT="${EKA2L1_REG_A6_TIMEOUT:-240}"
 A6_INTRO_STDEV_MAX="${EKA2L1_REG_A6_INTRO_STDEV_MAX:-0.24}"
+# Asphalt 6 menu targets as "x y", normalized over the landscape guest picture.
+A6_FREE_RACE="0.85 0.19"
+A6_TRACK="0.48 0.62"
+A6_NORMAL_RACE="0.30 0.35"
+A6_NEXT="0.91 0.89"
+A6_START="0.93 0.89"
 
 # Pixels that must differ for a screen to count as "changed" (ignores the small
-# clock / FPS-counter noise between captures). Only the calculator's entry
-# display still needs this: its seven-segment digits are not recognizable text.
-SCREEN_DIFF_MIN="${EKA2L1_REG_SCREEN_DIFF_MIN:-4000}"
+# clock noise between captures). Only the calculator's entry display still
+# needs this: its seven-segment digits are not recognizable text.
+SCREEN_DIFF_MIN="${EKA2L1_REG_SCREEN_DIFF_MIN:-1500}"
 # Grayscale stdev (0..1) below which a screenshot counts as blank.
 BLANK_STDEV_MAX="0.04"
 
-# Normalized (0..1) crop of the screenshot that holds the guest picture, per
-# keypad layout. OCR runs on this region only: the host keypad prints its own
-# letters, and the L/R soft-key pills sit on top of the guest's soft-key row.
-BAND_KEYPAD="${EKA2L1_REG_BAND_KEYPAD:-0,0.06,1,0.64}"
-BAND_FULL="${EKA2L1_REG_BAND_FULL:-0,0.34,1,0.32}"
-BAND="$BAND_KEYPAD"
-# Guest text is small; Vision reads it far more reliably upscaled.
-OCR_SCALE="${EKA2L1_REG_OCR_SCALE:-2}"
+API_PORT="${EKA2L1_REG_API_PORT:-8765}"
+# Screenshots are the guest picture alone (no host keypad or soft-key pills),
+# upscaled by the server; guest text is small and Vision reads it far more
+# reliably larger.
+SHOT_SCALE="${EKA2L1_REG_SHOT_SCALE:-3}"
+OCR_SCALE="${EKA2L1_REG_OCR_SCALE:-1}"
 
 CRASH_REGEX='Active scheduler dump|E32USER-CBase|panicked|access violation|Emulation halt|KERN-EXEC|Unhandled'
 
@@ -157,88 +159,86 @@ booted_sim() {
         | sed -n 's/.*(\([0-9A-Fa-f-]\{36\}\)) (Booted).*/\1/p' | head -1
 }
 
-log_path() {
-    local data; data="$(xcrun simctl get_app_container "$SIM" "$BUNDLE_ID" data 2>/dev/null)"
-    [ -n "$data" ] && echo "$data/Documents/data/EKA2L1.log"
-}
-
 wait_s() { local e=$((SECONDS+$1)); until [ $SECONDS -ge $e ]; do sleep 1; done; }
 
-# snapshot-ui; caches JSON to $SNAP. Also nudges the renderer to present a fresh
-# frame (the guest screen often lags behind a tap by a few seconds).
-SNAP="$OUTDIR/.snapshot.json"
-snapshot() {
-    xcodebuildmcp simulator snapshot-ui --simulator-id "$SIM" --output json 2>/dev/null >"$SNAP" || true
+# ---- control API -------------------------------------------------------------
+# Everything but the Angry Birds touches goes through the simulator control
+# server (docs/ios-debug-control-server.md).
+
+API="http://127.0.0.1:$API_PORT/v1"
+API_ERR=""
+
+# api <METHOD> <path> [json-body] : prints the body; non-2xx sets API_ERR and fails.
+api() {
+    local method="$1" path="$2" body="${3:-}" out code
+    out="$(mktemp)"
+    if [ -n "$body" ]; then
+        code="$(curl -s -o "$out" -w '%{http_code}' --max-time 600 -X "$method" "$API$path" -d "$body")"
+    else
+        code="$(curl -s -o "$out" -w '%{http_code}' --max-time 600 -X "$method" "$API$path")"
+    fi
+    if [ "${code:0:1}" = 2 ]; then
+        cat "$out"; rm -f "$out"; return 0
+    fi
+    API_ERR="HTTP $code $(jq -r '.error.message? // empty' "$out" 2>/dev/null || cat "$out")"
+    rm -f "$out"; return 1
 }
 
-# ref_for "<exact label>"  OR  ref_for "<prefix>" prefix
-ref_for() {
-    local want="$1" mode="${2:-exact}"
-    jq -r '.data.capture.targets[]' "$SNAP" 2>/dev/null | awk -F'|' -v w="$want" -v m="$mode" '
-        { lbl=$4 }
-        m=="exact"  && lbl==w        { print $1; exit }
-        m=="prefix" && index(lbl,w)==1 { print $1; exit }'
-}
+api_up() { curl -sf --max-time 2 "$API/status" >/dev/null 2>&1; }
 
-# Seconds an `axe tap` process must stay alive after writing the event. On
-# Xcode 27 dtuhidd activates its virtual touchscreen service only once it has a
-# peer and silently drops whatever arrives before that, so a tap that exits
-# immediately is reported as SUCCEEDED and never reaches the guest.
-TAP_POST_DELAY="${EKA2L1_REG_TAP_POST_DELAY:-0.6}"
-
-tap_ref() {
-    local ref="$1" i r
-    [ -z "$ref" ] && return 1
-    for i in 1 2 3 4 5 6; do
-        r="$(xcodebuildmcp ui-automation tap --simulator-id "$SIM" --element-ref "$ref" \
-             --post-delay "$TAP_POST_DELAY" --output json 2>/dev/null \
-             | grep -o '"status": "[A-Z]*"' | head -1)"
-        echo "$r" | grep -q SUCCEEDED && return 0
-        sleep 1
-    done
-    return 1
-}
-
-# tap_label "<label>" [exact|prefix] : resolve from a fresh snapshot, then tap.
-tap_label() {
-    snapshot
-    local ref; ref="$(ref_for "$1" "${2:-exact}")"
-    [ -z "$ref" ] && { echo "    ! no element for label '$1'" >&2; return 1; }
-    tap_ref "$ref"
-}
+key()  { api POST /input/key "{\"key\":\"$1\"}" >/dev/null; }
+keys() { local k; for k in "$@"; do key "$k" || return 1; sleep 0.5; done; }
 
 shot() {
-    local name="$1"
-    local path="$OUTDIR/$name.png"
-    snapshot                 # force a fresh frame before capturing
-    wait_s 2
-    xcrun simctl io "$SIM" screenshot "$path" >/dev/null 2>&1
+    local name="$1" path="$OUTDIR/$1.png"
+    curl -sf --max-time 30 -o "$path" "$API/screenshot?scale=$SHOT_SCALE" || rm -f "$path"
     echo "$path"
 }
 
-# launch_uid <uid> [rom] [keypad-layout]
+session_state() { api GET /session | jq -r '.state'; }
+
+# start_app [keypad-layout]
 # Default (no layout): -EKA2L1RegressionMode forces the classic keypad layout
-# regardless of the persisted preference, so soft-key assertions stay stable no
-# matter which layout the developer last selected (lands in NSArgumentDomain,
-# so it never overwrites the saved value). With an explicit layout, RegressionMode
-# must NOT be passed — it pins classic and overrides -LaunchKeypadLayout.
-launch_uid() {
-    local uid="$1" rom="${2:-rm-409}" layout="${3:-}"
+# regardless of the persisted preference (lands in NSArgumentDomain, so it never
+# overwrites the saved value). With an explicit layout, RegressionMode must NOT
+# be passed — it pins classic and overrides -LaunchKeypadLayout.
+start_app() {
+    local layout="${1:-}" i
     xcrun simctl terminate "$SIM" "$BUNDLE_ID" >/dev/null 2>&1 || true
     wait_s 2
-    local args=(-LaunchROMCode "$rom" -LaunchAppUID "$uid")
+    local args=(-DebugServerPort "$API_PORT")
     if [ -n "$layout" ]; then
         args+=(-LaunchKeypadLayout "$layout")
     else
         args+=(-EKA2L1RegressionMode 1)
     fi
     xcrun simctl launch "$SIM" "$BUNDLE_ID" "${args[@]}" >/dev/null 2>&1
+    for i in $(seq 1 60); do api_up && return 0; sleep 1; done
+    die "control server did not come up on port $API_PORT"
+}
+
+# launch_uid <uid> [rom] [keypad-layout] : fresh process, boot <rom>, launch the
+# app and wait for the guest launch result. Leaves LOG_BASE at the log offset
+# taken right before the guest app starts.
+LOG_BASE=0
+launch_uid() {
+    local uid="$1" rom="${2:-rm-409}" layout="${3:-}"
+    start_app "$layout"
+    api POST "/devices/$rom/boot" >/dev/null || die "boot $rom: $API_ERR"
+    LOG_BASE="$(log_offset)"
+    api POST "/apps/$uid/launch" '{"timeoutMs":120000}' >/dev/null || { echo "    ! launch $uid: $API_ERR"; return 1; }
+}
+
+log_offset() {
+    curl -s -D - -o /dev/null --max-time 10 "$API/log?tail=0" | tr -d '\r' \
+        | awk -F': ' 'tolower($1)=="x-log-offset"{print $2}'
 }
 
 # ---- coordinate touch (axe) -------------------------------------------------
-# Touch guests (fullscreen layout) expose no accessibility elements for the
-# guest screen, so ui-automation elementRef taps can't reach them. Drive them
-# with the AXe HID tool that ships inside xcodebuildmcp.
+# The control API injects pointers with its own ids and skips UIKit, so the
+# Angry Birds suite, which guards the UITouch -> guest pointer-slot mapping,
+# still drives real HID touches with the AXe tool that ships inside
+# xcodebuildmcp.
 
 AXE=""
 find_axe() {
@@ -258,11 +258,17 @@ screen_size() {
     [ -n "$SCR_W" ] && [ "$SCR_W" != null ] && [ "${SCR_W%.*}" -gt 0 ] 2>/dev/null
 }
 
+# Seconds an `axe` process must stay alive after writing the event. On Xcode 27
+# dtuhidd activates its virtual touchscreen service only once it has a peer and
+# silently drops whatever arrives before that (AXe #71).
+TAP_POST_DELAY="${EKA2L1_REG_TAP_POST_DELAY:-0.6}"
 tap_xy()   { "$AXE" tap -x "$1" -y "$2" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
-touch_xy() { "$AXE" touch -x "$1" -y "$2" --down --up --delay 0.08 --udid "$SIM" >/dev/null 2>&1; }
-double_touch_xy() { touch_xy "$1" "$2" && touch_xy "$1" "$2"; }
 swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
 pt() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", a*b}'; }
+
+# API touch in normalized guest coordinates.
+touch_n() { api POST /input/touch "{\"action\":\"tap\",\"x\":$1,\"y\":$2,\"space\":\"normalized\",\"holdMs\":80}" >/dev/null; }
+double_touch_n() { touch_n "$1" "$2" && sleep 0.15 && touch_n "$1" "$2"; }
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
 # notation for large diffs, so coerce to a plain integer).
@@ -271,17 +277,12 @@ screen_diff_px() {
 }
 screens_differ() { [ "$(screen_diff_px "$1" "$2")" -ge "$SCREEN_DIFF_MIN" ]; }
 
-# Standard deviation of the centred 3:2 guest display band. Asphalt's early
-# logo/movie frames are sparse on black (moderate variance), while the failure
-# mode is flat black. This lets the suite prove that it saw the movie, which
-# carries no text for OCR to key off.
-guest_band_stdev() {
-    local dims w h band y
-    dims="$(magick identify -format '%w %h' "$1" 2>/dev/null)" || return 1
-    w="${dims%% *}"; h="${dims##* }"
-    band=$((w * 2 / 3)); y=$(((h - band) / 2))
-    magick "$1" -crop "${w}x${band}+0+${y}" +repage -colorspace Gray \
-        -format "%[fx:standard_deviation]" info: 2>/dev/null
+# Grayscale standard deviation of the guest picture. Asphalt's early logo/movie
+# frames are sparse on black (moderate variance), while the failure mode is flat
+# black. This lets the suite prove that it saw the movie, which carries no text
+# for OCR to key off.
+guest_stdev() {
+    magick "$1" -colorspace Gray -format "%[fx:standard_deviation]" info: 2>/dev/null
 }
 
 # ---- screen text (OCR) -----------------------------------------------------
@@ -296,7 +297,7 @@ LAST_FLAT=""   # ... the same text, reduced to lowercase letters and digits
 flatten() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'; }
 
 ocr_read() {
-    LAST_OCR="$("$SCREENTEXT" "$1" --crop "$BAND" --scale "$OCR_SCALE" 2>/dev/null)"
+    LAST_OCR="$("$SCREENTEXT" "$1" --scale "$OCR_SCALE" 2>/dev/null)"
     LAST_FLAT="$(flatten "$LAST_OCR")"
 }
 
@@ -347,14 +348,20 @@ wait_text() {
     done
 }
 
-# crash check over log lines added since a recorded baseline
-log_baseline() { wc -l < "$LOG" 2>/dev/null | tr -d ' '; }
+# A guest crash shows either as a log line written since LOG_BASE, or as a
+# session that is no longer running. The second catches terminal panics whose
+# trace line never reaches the log.
 assert_no_crash() {
-    local base="$1" stage="$2" hit
-    hit="$(tail -n "+$((base+1))" "$LOG" 2>/dev/null | grep -niE "$CRASH_REGEX" | head -3)"
-    if [ -n "$hit" ]; then
+    local stage="$1" hit state fatal
+    hit="$(curl -s --max-time 30 "$API/log?since=$LOG_BASE&tail=0" | grep -niE "$CRASH_REGEX" | head -3)"
+    state="$(session_state 2>/dev/null)"
+    if [ -n "$hit" ] || [ "$state" != running ]; then
         check FAIL "$stage: no guest crash"
-        echo "$hit" | sed 's/^/      /'
+        [ -n "$hit" ] && echo "$hit" | sed 's/^/      /'
+        if [ "$state" != running ]; then
+            fatal="$(api GET /session 2>/dev/null | jq -r '.lastExit.fatal // empty' 2>/dev/null)"
+            echo "      session: ${state:-unreachable} ${fatal}"
+        fi
     else
         check PASS "$stage: no guest crash"
     fi
@@ -369,11 +376,7 @@ check() { # check PASS|FAIL "<desc>"
 
 test_fbattle() {
     echo "== Final Battle ($FBATTLE_UID) =="
-    BAND="$BAND_KEYPAD"
-    launch_uid "$FBATTLE_UID"
-    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
-    wait_s 8
-    local base; base="$(log_baseline)"
+    launch_uid "$FBATTLE_UID" || { check FAIL "FBattle: launch"; return; }
 
     if wait_text fbattle_1_language 60 "english" "deutsch" "italiano"; then
         check PASS "FBattle: language menu lists its languages"
@@ -387,30 +390,28 @@ test_fbattle() {
     # rather than trusting that the key was delivered.
     local i selected=false
     for i in 1 2 3 4; do
-        snapshot
-        tap_label "1" || true
+        key 1 || true
         wait_s 6
         ocr_read "$(shot fbattle_1_language)"
         if ! flat_has "deutsch" "italiano"; then selected=true; break; fi
     done
     [ "$selected" = true ] || check FAIL "FBattle: select language"
 
-    tap_label "OK"               || check FAIL "FBattle: Start Game (OK)"
+    key ok                       || check FAIL "FBattle: Start Game (OK)"
     wait_s 8
-    tap_label "OK"               || check FAIL "FBattle: confirm intro (OK)"
+    key ok                       || check FAIL "FBattle: confirm intro (OK)"
     echo "    in-game dwell ${INGAME_WAIT}s (the crash used to fire ~60s in)..."
     wait_s "$INGAME_WAIT"
 
-    # The first in-game prompt. Rendering can lag the guest by tens of seconds,
-    # so keep re-reading the screen instead of judging one frame; a confirm key
-    # lost to a screen transition needs another press rather than a verdict.
+    # The first in-game prompt. A confirm key lost to a screen transition needs
+    # another press rather than a verdict.
     local prompted=false
     for i in 1 2 3; do
         if wait_text fbattle_2_ingame 40 "what do you do" "open your eyes" "go on sleeping"; then
             prompted=true
             break
         fi
-        tap_label "OK" || true
+        key ok || true
     done
     if [ "$prompted" = true ]; then
         check PASS "FBattle: reached the first in-game prompt"
@@ -419,19 +420,14 @@ test_fbattle() {
         ocr_evidence
     fi
 
-    assert_no_crash "$base" "FBattle"
+    assert_no_crash "FBattle"
 }
 
 test_calculator() {
     echo "== Calculator ($CALC_UID) =="
-    BAND="$BAND_KEYPAD"
-    launch_uid "$CALC_UID"
-    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
-    wait_s 18
-    local base; base="$(log_baseline)"
+    launch_uid "$CALC_UID" || { check FAIL "Calculator: launch"; return; }
 
-    # 1) default render, keyed off the guest's own soft-key row. "Options" and
-    # "Exit" sit under the host's L/R pills; the centre label does not.
+    # 1) default render, keyed off the guest's own soft-key row.
     local s_default
     if wait_text calc_1_default 40 "select"; then
         check PASS "Calculator: default UI shows the Select soft key"
@@ -443,14 +439,8 @@ test_calculator() {
 
     # 2) number input -> the entry display repaints. This is the one assertion
     # that cannot be read: the display draws its digits in a seven-segment font
-    # that Vision does not recognize, so fall back to comparing the guest band.
-    snapshot
-    # The digit keys combine "2" and "ABC" into one accessibility label whose
-    # separator is locale-dependent ("2, ABC" vs "2、ABC"), so match the digit
-    # prefix instead of the whole label.
-    tap_label "1"           || check FAIL "Calculator: key 1"
-    tap_label "2" prefix    || check FAIL "Calculator: key 2"
-    tap_label "3" prefix    || check FAIL "Calculator: key 3"
+    # that Vision does not recognize, so fall back to comparing screenshots.
+    keys 1 2 3              || check FAIL "Calculator: keys 1 2 3"
     wait_s 3
     local s_input; s_input="$(shot calc_2_input)"
     screens_differ "$s_default" "$s_input" \
@@ -458,7 +448,7 @@ test_calculator() {
         || check FAIL "Calculator: number input changes the entry display"
 
     # 3) left soft key opens the Options menu, which is all text
-    tap_label "LSK"         || check FAIL "Calculator: press LSK"
+    key lsk                 || check FAIL "Calculator: press LSK"
     wait_s 4
     local s_menu; s_menu="$(shot calc_3_menu_open)"
     ocr_read "$s_menu"
@@ -471,7 +461,7 @@ test_calculator() {
 
     # 4) right soft key closes it: the menu items are gone and the calculator's
     # own soft-key row is back.
-    tap_label "RSK"         || check FAIL "Calculator: press RSK"
+    key rsk                 || check FAIL "Calculator: press RSK"
     wait_s 4
     local s_closed; s_closed="$(shot calc_4_menu_closed)"
     ocr_read "$s_closed"
@@ -482,7 +472,7 @@ test_calculator() {
         ocr_evidence
     fi
 
-    assert_no_crash "$base" "Calculator"
+    assert_no_crash "Calculator"
 }
 
 # N95 (rm-320) Calculator boot. Guards the patch-DLL inflate tail-word overread:
@@ -494,40 +484,24 @@ test_calculator() {
 # other suites never check because their failure mode was guest-side.
 test_n95calc() {
     echo "== N95 Calculator ($CALC_UID on rm-320) =="
-    BAND="$BAND_KEYPAD"
     local crash_stamp="$OUTDIR/.n95_launch_stamp"
     touch "$crash_stamp"
 
-    launch_uid "$CALC_UID" rm-320
-    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
-    wait_s 2
-    local base; base="$(log_baseline)"
-    wait_s 22
+    launch_uid "$CALC_UID" rm-320 || true
+    wait_s 20
 
-    # launchctl can publish the UIKitApplication label a few seconds after the
-    # first rendered frame when this suite follows another guest. Poll instead
-    # of turning that registration race into a false host-crash result.
-    local host_alive=false launch_services i
-    for i in 1 2 3 4 5 6 7 8; do
-        launch_services="$(xcrun simctl spawn "$SIM" launchctl list 2>/dev/null || true)"
-        if [[ "$launch_services" == *"UIKitApplication:$BUNDLE_ID"* ]]; then
-            host_alive=true
-            break
-        fi
-        wait_s 1
-    done
-
-    local host_crash
+    local host_crash host_alive=false
+    api_up && host_alive=true
     host_crash="$(find "$HOME/Library/Logs/DiagnosticReports" -name 'EKA2L1*.ips' -newer "$crash_stamp" 2>/dev/null | head -1)"
     if [ -z "$host_crash" ] && [ "$host_alive" = true ]; then
         check PASS "N95Calc: host process survives boot"
     else
         check FAIL "N95Calc: host process survives boot"
         [ -n "$host_crash" ] && echo "      crash report: $host_crash"
+        return
     fi
 
     # The N95 skin leaves the centre soft key empty, so key off the right one.
-    # OCR reads it through the host's R pill as "RExit".
     if wait_text n95calc_1_default 40 "exit"; then
         check PASS "N95Calc: calculator UI shows its Exit soft key"
     else
@@ -535,7 +509,7 @@ test_n95calc() {
         ocr_evidence
     fi
 
-    assert_no_crash "$base" "N95Calc"
+    assert_no_crash "N95Calc"
 }
 
 test_angrybirds() {
@@ -545,13 +519,12 @@ test_angrybirds() {
         return
     fi
 
-    BAND="$BAND_FULL"
-    launch_uid "$AB_UID" "$AB_ROM" fullscreen
-    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
-    local base; base="$(log_baseline)"
-
-    # Resolved up front: the loading screen is short-lived, so the trigger tap
-    # must not wait on a describe-ui round trip after the first frame lands.
+    # Launched without waiting: the loading screen is short-lived, so the
+    # trigger tap must not sit behind the launch round trip.
+    start_app fullscreen
+    api POST "/devices/$AB_ROM/boot" >/dev/null || die "boot $AB_ROM: $API_ERR"
+    LOG_BASE="$(log_offset)"
+    api POST "/apps/$AB_UID/launch?wait=0" >/dev/null || { check FAIL "AngryBirds: launch ($API_ERR)"; return; }
     screen_size || { check FAIL "AngryBirds: read screen geometry"; return; }
 
     # 1) Boot. The Rovio copyright card and the loading screen come first, but
@@ -561,7 +534,7 @@ test_angrybirds() {
     if ! wait_text ab_1_splash "$AB_TIMEOUT" "loading" "rovio" "play" "score"; then
         check FAIL "AngryBirds: boot renders the game UI"
         ocr_evidence
-        assert_no_crash "$base" "AngryBirds"
+        assert_no_crash "AngryBirds"
         return
     fi
     check PASS "AngryBirds: boot renders the game UI"
@@ -580,7 +553,7 @@ test_angrybirds() {
     if ! wait_text ab_2_menu "$AB_TIMEOUT" "play" "score"; then
         check FAIL "AngryBirds: menu survives the first touch"
         ocr_evidence
-        assert_no_crash "$base" "AngryBirds"
+        assert_no_crash "AngryBirds"
         return
     fi
     check PASS "AngryBirds: menu survives the first touch"
@@ -596,7 +569,7 @@ test_angrybirds() {
     else
         check FAIL "AngryBirds: tap opens the episode carousel (touch alive after loading tap)"
         ocr_evidence
-        assert_no_crash "$base" "AngryBirds"
+        assert_no_crash "AngryBirds"
         return
     fi
 
@@ -635,21 +608,11 @@ test_angrybirds() {
         ocr_evidence
     fi
 
-    assert_no_crash "$base" "AngryBirds"
+    assert_no_crash "AngryBirds"
 }
 
 test_asphalt6() {
     echo "== Asphalt 6 ($A6_UID on $A6_ROM) =="
-    if ! find_axe; then
-        check FAIL "Asphalt6: axe HID tool located"
-        return
-    fi
-
-    BAND="$BAND_FULL"
-    local launch_started=$SECONDS
-    launch_uid "$A6_UID" "$A6_ROM" fullscreen
-    LOG="$(log_path)"; [ -z "$LOG" ] && die "cannot find emulator log"
-    local base; base="$(log_baseline)"
 
     # The Symbian^3 video client must be patched into EKA2L1's FFmpeg-backed
     # player. Without the versioned v100 DLL, both intro movies consume their
@@ -663,16 +626,17 @@ test_asphalt6() {
         check FAIL "Asphalt6: Symbian^3 video patch shipped"
     fi
 
-    # Ignore the brief SwiftUI/app-list frame at launch. Require a moderately
-    # sparse non-black frame in the centred guest band before the interactive
+    local launch_started=$SECONDS
+    launch_uid "$A6_UID" "$A6_ROM" fullscreen || { check FAIL "Asphalt6: launch"; return; }
+
+    # Require a moderately sparse non-black guest frame before the interactive
     # title is eligible to appear; this is the animated Gameloft/movie content.
     # The movies are the one thing here with no text to read: the failure mode
-    # they guard against is a flat black band, which the variance catches.
-    wait_s 2
+    # they guard against is a flat black picture, which the variance catches.
     local s_intro="" intro_sd=0 deadline=$((SECONDS+A6_INTRO_TIMEOUT))
     while [ $SECONDS -lt $deadline ]; do
         s_intro="$(shot a6_0_gameloft_intro)"
-        intro_sd="$(guest_band_stdev "$s_intro")"
+        intro_sd="$(guest_stdev "$s_intro")"
         if awk -v s="${intro_sd:-0}" -v lo="$BLANK_STDEV_MAX" -v hi="$A6_INTRO_STDEV_MAX" \
             'BEGIN{exit !(s>=lo && s<=hi)}'; then
             break
@@ -683,8 +647,8 @@ test_asphalt6() {
         'BEGIN{exit !(s>=lo && s<=hi)}'; then
         check PASS "Asphalt6: early Gameloft movie rendered"
     else
-        check FAIL "Asphalt6: early Gameloft movie rendered"
-        assert_no_crash "$base" "Asphalt6"
+        check FAIL "Asphalt6: early Gameloft movie rendered (stdev ${intro_sd:-?})"
+        assert_no_crash "Asphalt6"
         return
     fi
 
@@ -697,19 +661,13 @@ test_asphalt6() {
     if ! wait_text a6_1_splash "$A6_TIMEOUT" "touch to continue"; then
         check FAIL "Asphalt6: interactive title invites a touch after the intro movies"
         ocr_evidence
-        assert_no_crash "$base" "Asphalt6"
+        assert_no_crash "Asphalt6"
         return
     fi
     check PASS "Asphalt6: interactive title invites a touch after the intro movies"
-    local s_splash="$WAIT_SHOT"
 
-    screen_size || { check FAIL "Asphalt6: read screen geometry"; return; }
-    local cx cy
-    cx="$(pt "$SCR_W" 0.50)"; cy="$(pt "$SCR_H" 0.50)"
-
-    # Use a physical down/up event on the stable "Touch to continue" title. The
-    # title can swallow the first one while it is still fading in.
-    touch_xy "$cx" "$cy"
+    # The title can swallow the first touch while it is still fading in.
+    touch_n 0.5 0.5
 
     deadline=$((SECONDS+A6_TIMEOUT))
     local reached_menu=false
@@ -718,22 +676,23 @@ test_asphalt6() {
         ocr_read "$(shot a6_2_menu)"
         if flat_has "free race"; then reached_menu=true; break; fi
         [ $SECONDS -ge $deadline ] && break
-        flat_has "touch to continue" && touch_xy "$cx" "$cy"
+        flat_has "touch to continue" && touch_n 0.5 0.5
     done
     if [ "$reached_menu" != true ]; then
         check FAIL "Asphalt6: main menu lists Free Race"
         ocr_evidence
-        assert_no_crash "$base" "Asphalt6"
+        assert_no_crash "Asphalt6"
         return
     fi
     check PASS "Asphalt6: main menu lists Free Race"
 
+    # Coordinates below are normalized over the landscape guest picture.
     # Main menu: Free Race is the second item in the right-hand list. Let the
     # showroom transition finish first — the guest drops pointer events that
     # land while a screen is still animating in — and confirm with the same
     # select-then-activate double touch the carousel cards below use.
     wait_s 8
-    double_touch_xy "$(pt "$SCR_W" 0.85)" "$(pt "$SCR_H" 0.42)"
+    double_touch_n $A6_FREE_RACE
     wait_s 10
     # Nassau also names the race-mode screen that follows, so key the track
     # carousel off its country line.
@@ -741,26 +700,24 @@ test_asphalt6() {
         "$(shot a6_3_track)" "bahamas"
 
     # Selected carousel cards use a two-tap confirmation gesture.
-    double_touch_xy "$(pt "$SCR_W" 0.48)" "$(pt "$SCR_H" 0.53)"
+    double_touch_n $A6_TRACK
     wait_s 12
     check_text "Asphalt6: Nassau opens race-mode select (Elimination/Collector)" \
         "$(shot a6_4_mode)" "elimination" "collector"
 
-    double_touch_xy "$(pt "$SCR_W" 0.30)" "$(pt "$SCR_H" 0.46)"
+    double_touch_n $A6_NORMAL_RACE
     wait_s 15
     check_text "Asphalt6: Normal Race opens car select (Top Speed/Handling)" \
         "$(shot a6_5_car)" "top speed" "handling"
 
     # RACE and the following two confirmation arrows share the bottom-right
     # location. Each uses the same selected-control double-tap behavior.
-    local next_x next_y
-    next_x="$(pt "$SCR_W" 0.91)"; next_y="$(pt "$SCR_H" 0.60)"
-    double_touch_xy "$next_x" "$next_y"
+    double_touch_n $A6_NEXT
     wait_s 25
     shot a6_6_preview >/dev/null
-    double_touch_xy "$next_x" "$next_y"
+    double_touch_n $A6_NEXT
     wait_s 10
-    double_touch_xy "$(pt "$SCR_W" 0.93)" "$next_y"
+    double_touch_n $A6_START
     wait_s 25
 
     # The race HUD prints the speedometer and the position readout. Requiring
@@ -774,7 +731,7 @@ test_asphalt6() {
         ocr_evidence
     fi
 
-    assert_no_crash "$base" "Asphalt6"
+    assert_no_crash "Asphalt6"
 }
 
 # Static (no-simulator) suite: keep the Localizable string catalog in sync with
@@ -914,7 +871,7 @@ PY
 need xcrun
 SCREENTEXT=""
 if [ "$SUITE" != strings ]; then
-    need xcodebuildmcp; need jq; need magick
+    need curl; need jq; need magick
     SCREENTEXT="$("$REPO_ROOT/scripts/ocr/build.sh")" || die "cannot build the screentext OCR helper"
     SIM="$(booted_sim)"; [ -z "$SIM" ] && die "no booted iPhone simulator"
 else

@@ -18,15 +18,18 @@ architecture must keep working.
   (`Debug-iphonesimulator`); set `EKA2L1_IOS_CONFIGURATION=Release` for anything you
   intend to benchmark or regression-test, and make sure you didn't install the stale
   artifact from the other configuration.
-- Launch args skip the UI: `-LaunchROMCode rm-707 -LaunchAppUID 0x2000023D`.
 - Simulator builds serve an HTTP control API on `127.0.0.1:8765` (devices, installs,
-  card mount, launch/close, keys/touch, screenshots, log, files); prefer it over UI
-  taps. See `docs/ios-debug-control-server.md`.
+  card mount, launch/close, keys/touch, guest screenshots, log, files, config). Drive
+  repros and checks through it with `curl` rather than UI taps or launch args. See
+  `docs/ios-debug-control-server.md`. Device builds do not include it.
+- API touches skip UIKit. For bugs in the UITouch path itself, send real HID touches
+  with the AXe tool shipped with XcodeBuildMCP.
 - Give a freshly launched guest app ~20s before judging a screenshot — Symbian
   services, window server, and the first frame need time to settle.
 - Emulator log: `Documents/data/EKA2L1.log` inside the app data container
   (`xcrun simctl get_app_container booted com.eka2l1.emulator data`).
-- Use the XcodeBuildMCP skill before calling XcodeBuildMCP tools. When performing actions XcodeBuildMCP doesn't support (eg. guest touch or system file browser), use AXE tool shipped with XcodeBuildMCP.
+- Use the XcodeBuildMCP skill before calling XcodeBuildMCP tools, e.g. for the system
+  file browser or other host UI the control API does not cover.
 
 ### Symbian source-guided diagnosis
 
@@ -81,9 +84,10 @@ suite once against the final **Release** simulator build:
 scripts/ios_regression_test.sh --install build/ios-simulator/src/emu/ios/Release-iphonesimulator/EKA2L1.app
 ```
 
+The suite drives the app through the control API, so it needs a simulator build.
 Add `scripts/ios_regression_test.sh angrybirds` for input/touch or Symbian^3 changes.
-See the script header for other suites and prerequisites; screenshots land in
-`/tmp/eka2l1-regression`. Cover the affected app path and a known-good control,
+See the script header for other suites and prerequisites; screenshots (guest picture
+only) land in `/tmp/eka2l1-regression`. Cover the affected app path and a known-good control,
 reusing suite coverage where it overlaps. Confirm the result visually and scan the
 log for panics, access violations, graphics halts, and leftover diagnostics.
 

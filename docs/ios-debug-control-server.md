@@ -114,5 +114,9 @@ curl -s "$api/log?grep=panic|Access violation&tail=50"
 curl -s -X DELETE $api/session
 ```
 
+API touches are injected straight into the emulator with their own pointer
+ids; they do not go through UIKit. A bug in the UITouch path needs real HID
+touches (AXe), which is what the Angry Birds regression suite still uses.
+
 Menu screens often ignore a second key that arrives within a few hundred
 milliseconds. Put a `waitMs` of about 500 between menu steps.
