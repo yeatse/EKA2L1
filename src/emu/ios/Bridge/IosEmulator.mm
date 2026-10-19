@@ -1389,7 +1389,9 @@ namespace eka2l1::ios {
 
 - (NSString *)currentDeviceDrivePath:(unichar)driveLetter {
     const unichar letter = static_cast<unichar>(tolower(driveLetter));
-    if (!_state || !_state->mounted || !_state->symsys || (letter < 'c') || (letter > 'e')) {
+    // Not gated on `mounted`: the os loop stays parked after an app closes, but
+    // the device and its drive folders are unchanged.
+    if (!_state || !_state->symsys || (letter < 'c') || (letter > 'e')) {
         return nil;
     }
     auto *dvc = _state->symsys->get_device_manager();

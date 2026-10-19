@@ -3,7 +3,7 @@ import Network
 import UIKit
 
 // Navigation and session signals shared by the frontend and the simulator-only
-// control server (docs/IOS_DEBUG_CONTROL_SERVER.md). All are posted on the main queue.
+// control server. All are posted on the main queue.
 extension Notification.Name {
     // userInfo["uid"]: UInt32. ContentView pushes the emulator screen for it.
     static let eka2l1RemoteLaunchApp = Notification.Name("eka2l1RemoteLaunchApp")
@@ -402,7 +402,6 @@ private final class DebugControlServer {
     private func endpointIndex() -> JSON {
         [
             "api": Self.apiVersion,
-            "docs": "docs/IOS_DEBUG_CONTROL_SERVER.md",
             "endpoints": [
                 "GET /v1/status",
                 "GET /v1/devices", "POST /v1/devices", "POST /v1/devices/rescan",
@@ -1041,19 +1040,21 @@ private final class DebugControlServer {
             let layerScale = max(view.layer.contentsScale, 0.01)
             let rect = EKA2L1Bridge.shared.guestDisplayRect
             guard !rect.isEmpty else { throw APIError.conflict("no_frame", "no frame presented yet") }
-            let frame = CGRect(x: rect.minX / layerScale, y: rect.minY / layerScale,
-                               width: rect.width / layerScale, height: rect.height / layerScale)
             let snapshot = EKA2L1Bridge.shared.guestScreenModeSnapshotRaw()
             var size = CGSize(width: (snapshot["width"] as? NSNumber)?.doubleValue ?? 0,
                               height: (snapshot["height"] as? NSNumber)?.doubleValue ?? 0)
             if size.width <= 0 || size.height <= 0 { size = rect.size }
             size = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-            let sx = size.width / frame.width
-            let sy = size.height / frame.height
-            image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-                view.drawHierarchy(in: CGRect(x: -frame.minX * sx, y: -frame.minY * sy,
-                                              width: view.bounds.width * sx, height: view.bounds.height * sy),
+            // Capture at the surface's own resolution and scale afterwards: drawHierarchy
+            // returns a black image once the view is drawn a few times larger than itself.
+            let surface = UIGraphicsImageRenderer(size: rect.size, format: format).image { _ in
+                view.drawHierarchy(in: CGRect(x: -rect.minX, y: -rect.minY,
+                                              width: view.bounds.width * layerScale,
+                                              height: view.bounds.height * layerScale),
                                    afterScreenUpdates: false)
+            }
+            image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                surface.draw(in: CGRect(origin: .zero, size: size))
             }
         case "screen":
             guard let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
