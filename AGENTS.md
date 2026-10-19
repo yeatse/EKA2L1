@@ -19,6 +19,9 @@ architecture must keep working.
   intend to benchmark or regression-test, and make sure you didn't install the stale
   artifact from the other configuration.
 - Launch args skip the UI: `-LaunchROMCode rm-707 -LaunchAppUID 0x2000023D`.
+- Simulator builds serve an HTTP control API on `127.0.0.1:8765` (devices, installs,
+  card mount, launch/close, keys/touch, screenshots, log, files); prefer it over UI
+  taps. See `docs/ios-debug-control-server.md`.
 - Give a freshly launched guest app ~20s before judging a screenshot — Symbian
   services, window server, and the first frame need time to settle.
 - Emulator log: `Documents/data/EKA2L1.log` inside the app data container
