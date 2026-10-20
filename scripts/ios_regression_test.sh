@@ -448,11 +448,9 @@ test_calculator() {
         || check FAIL "Calculator: number input changes the entry display"
 
     # 3) left soft key opens the Options menu, which is all text
+    # The first open loads the AIW help provider and takes ~6 s on the 5320.
     key lsk                 || check FAIL "Calculator: press LSK"
-    wait_s 4
-    local s_menu; s_menu="$(shot calc_3_menu_open)"
-    ocr_read "$s_menu"
-    if flat_has_all "last result" "memory" "help"; then
+    if wait_text calc_3_menu_open 20 "help" && flat_has_all "last result" "memory" "help"; then
         check PASS "Calculator: LSK opens the Options menu (Last result/Memory/Help)"
     else
         check FAIL "Calculator: LSK opens the Options menu (Last result/Memory/Help)"
