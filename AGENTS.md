@@ -100,12 +100,26 @@ before landing; report unrelated pre-existing issues without expanding the fix.
 
 ## Upstream contributions
 
-- Develop and validate on the fork, PR against `EKA2L1/EKA2L1:master`, then sync the
-  fork's `master` and merge it into `ios-next`. No second fork-internal PR for the
-  same changes.
+Develop and validate on the fork, PR against `EKA2L1/EKA2L1:master`, then sync the
+fork's `master` and merge it into `ios-next`. No second fork-internal PR for the
+same changes.
+
+### Review before opening the PR
+
+- Check correctness against the Symbian sources and the ROM contract.
+- Review the architecture and the code style.
+
+### Assembling the PR
+
 - Inspect the current upstream diff and select only relevant hunks; fork commits
-  and whole files can contain unrelated changes. Keep fork-only docs out of the
-  upstream PR; put the rationale in the commit message or PR description.
+  and whole files can contain unrelated changes.
+- Keep fork-only docs out of the upstream PR; put the rationale in the commit
+  message or PR description.
+- Specify the repository in `gh` commands: `-R EKA2L1/EKA2L1` for upstream,
+  `-R yeatse/EKA2L1` for fork workflows.
+
+### Verification and tests
+
 - Reuse the fork's verification as described above. Do not require a second full
   simulator run on an upstream worktree or revert each fix just to produce a PR
   table. Add targeted checks only for a concrete gap in coverage; use upstream CI
@@ -115,8 +129,6 @@ before landing; report unrelated pre-existing issues without expanding the fix.
   the run completed rather than trusting a partial summary after a fatal signal.
 - Review generated translation diffs after Qt builds; discard only build-generated
   changes, preserving pre-existing edits.
-- Specify the repository in `gh` commands: `-R EKA2L1/EKA2L1` for upstream,
-  `-R yeatse/EKA2L1` for fork workflows.
 
 ## Code comments
 
