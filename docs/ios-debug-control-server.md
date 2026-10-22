@@ -69,7 +69,7 @@ it (`DebugControlServer.swift` is `#if targetEnvironment(simulator)`).
 | `PUT /v1/card` | `{"path"}` | Job. Mount a card folder or zip on E: |
 | `DELETE /v1/card` | | Eject |
 | `GET /v1/keys` | | Key names → scan codes |
-| `POST /v1/input/key` | `{"key" \| "keys": [...], "action": "tap\|down\|up", "holdMs": 80, "repeat": 1, "gapMs": 80}` | `keys` presses a chord. `down` keys stay held until `up` or `/v1/input/release` |
+| `POST /v1/input/key` | `{"key" \| "keys": [...], "action": "tap\|down\|up", "holdMs": 80, "repeat": 1, "gapMs": 80}` | Names include `a`…`z` (case-insensitive), digits and the names from `/v1/keys`; numbers or hex strings send scan codes directly. `keys` presses a chord. `down` keys stay held until `up` or `/v1/input/release` |
 | `POST /v1/input/touch` | `{"action": "tap\|down\|move\|up\|swipe", "x", "y", "toX"?, "toY"?, "durationMs"?, "holdMs"?, "id"?, "space"?}` | Coordinates are guest pixels by default, the same grid as `/v1/screenshot`. `space: "normalized"` uses 0…1; `"surface"` uses raw render-surface pixels. `id` keeps multi-touch pointers apart |
 | `POST /v1/input/text` | `{"text", "intervalMs"?}` | Taps letter/digit keys; the guest input method decides what they produce |
 | `POST /v1/input/sequence` | `{"steps": [...]}` | Each step is a key, touch (`{"touch": {...}}`), text or `{"waitMs"}` object. A step's own `waitMs` runs after it |
@@ -95,6 +95,13 @@ File paths take three forms:
 
 URL-encode backslashes, or use forward slashes.
 
+Letter keys send Symbian keyboard scan codes (`a` → `0x41`, …, `z` →
+`0x5A`), including on Series 80 devices. They do not select the letters printed
+on a phone's number pad. Uppercase names select the same physical keys as
+lowercase names; hold `shift` in a chord when a modifier is needed. The guest
+decides how to interpret the resulting events. This also applies to
+`/v1/input/text`, which sends key presses rather than inserting text directly.
+
 ## Examples
 
 ```sh
@@ -106,6 +113,8 @@ curl -s -X POST $api/wait -d '{"until":"frames","count":60}'
 curl -s -X POST $api/input/sequence -d '{"steps":[{"key":"down","waitMs":600},{"key":"ok"}]}'
 curl -s -X POST $api/input/key -d '{"key":"5","action":"down"}'          # hold accelerate
 curl -s -X POST $api/input/key -d '{"keys":["5","left"],"holdMs":1500}'  # chord
+curl -s -X POST $api/input/key -d '{"key":"s","holdMs":500}'            # Series 80 letter key
+curl -s -X POST $api/input/key -d '{"keys":["s","enter"],"holdMs":200}' # move + jump, if bound by the game
 curl -s -X POST $api/input/touch -d '{"action":"swipe","x":180,"y":500,"toX":180,"toY":200}'
 curl -s -o shot.png "$api/screenshot?scale=2"
 curl -s "$api/files?path=C:/system/apps/6R63/gameprogress.bin" -o save.bin
