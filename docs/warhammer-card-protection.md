@@ -79,7 +79,46 @@ simply be paired with the synthetic identity used by the other package.
 The observed failure is therefore a protection-data/card-identity mismatch
 in this setup, not evidence that the constructor, MMC layout, or CPU needs a
 Warhammer-specific workaround. This does not establish that the original
-ZIP is damaged, nor recover the original card's missing CID.
+ZIP is damaged. A subsequent investigation below recovers an equivalent
+identity, without uniquely recovering the original card's full CID.
+
+## Recovering a usable identity for the original ZIP
+
+A later investigation recovered a functional CID without replacing `nc.dat`.
+In EKA2L1's four-word configuration format, one working value is:
+
+```
+00000000-0e000000-0b3f1959-00000400
+```
+
+This is an equivalent identity for the game, not the complete original card's
+unique hardware CID. The game copies only CID bytes 14 down to 7. The other
+eight bytes above were filled with zero, and the protected key computation
+also admits collisions among the bytes it does consume.
+
+The recovery uses the game's own decoder, rather than guessing the original
+128-bit register. Function `0x10111098` builds the filename `cwivenc.dat`.
+The caller passes those tables and the 16-byte `nc.dat` to `0x10139E38`.
+Capturing its decoded output exposes the inputs to the bytewise combination
+at `0x10136330`. Executing that combination offline with ARM emulation
+reproduces the working RAR's initialization key exactly. Enumerating each
+CID byte against that known-good key then yields an input byte sequence
+`00 04 00 0B 3F 19 59 0E`, in the game's reverse-copy order. The configuration
+value above supplies those bytes through the ordinary MMC driver.
+
+With all original ZIP contents retained and the probes removed, mounting an
+extracted, read-only card folder with this identity reaches the title screen
+on RH-29 and NEM-4. All 128 extracted files were compared byte-for-byte
+with the archive. No launcher, executable, license, or resource replacement
+is used.
+
+Direct ZIP mounting is a separate limit of this check: its writable cache
+copy gets past the original fault but later takes a read/write open of
+`wh40kECP.cwa` and faults at `0x101100CC`, reading `0xC9C`. The cached CWA
+still matches the original file byte-for-byte. The reason for that later
+writable-path failure has not been established; the verified setup here is
+the read-only folder mount. It must not be confused with the original
+invalid-key failure at `0x10156448`.
 
 ## Two diagnostic traps
 
