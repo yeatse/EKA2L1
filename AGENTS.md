@@ -19,9 +19,10 @@ architecture must keep working.
   intend to benchmark or regression-test, and make sure you didn't install the stale
   artifact from the other configuration.
 - Simulator builds serve an HTTP control API on `127.0.0.1:8765` (devices, installs,
-  card mount, launch/close, keys/touch, guest screenshots, log, files, config). Drive
-  repros and checks through it with `curl` rather than UI taps or launch args. See
-  `docs/ios-debug-control-server.md`. Device builds do not include it.
+  card mount, launch/close, keys/touch/accelerometer, guest screenshots, log, files,
+  config). Drive repros and checks through it with `curl` rather than UI taps or launch
+  args. Its reference is the doc comment on `DebugControl` in
+  `src/emu/ios/App/DebugControlServer.swift`. Device builds do not include it.
 - API touches skip UIKit. For bugs in the UITouch path itself, send real HID touches
   with the AXe tool shipped with XcodeBuildMCP.
 - Give a freshly launched guest app ~20s before judging a screenshot — Symbian

@@ -8,7 +8,6 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 | 2026-10-21 | [Rayman 9210 on the Nokia 9500 ROM](./rayman-s80-rom-compatibility.md) |
 | 2026-10-21 | [Let’s Fly: IAP startup dependencies and cross-process communication](./lets-fly-iap-startup.md) |
 | 2026-10-20 | [Smash The Bugs: unavailable X7 haptics becomes USER 0](./x7-smash-the-bugs-haptics-panic.md) |
-| 2026-10-19 | [Simulator control server](./ios-debug-control-server.md) |
 | 2026-10-02 | [Nokia 7710: Series 90 ROM and window protocol contracts](./nokia-7710-series90-rom-contracts.md) |
 | 2026-09-19 | [The N-Gage Radio icon, and why mask polarity is the display mode after all](./icon-mask-polarity-is-the-display-mode.md) |
 | 2026-09-13 | [Restoring Tomb Raider's original N-Gage Arena](./tomb-raider-arena-networking.md) |

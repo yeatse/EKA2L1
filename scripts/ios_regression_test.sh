@@ -5,7 +5,8 @@
 # Drives the booted iPhone simulator through known guest apps and asserts they
 # still behave, so unrelated emulator changes can be regression-checked quickly.
 # Device boot, app launch, keys, screenshots, the log and the session state all
-# go through the simulator control server (docs/ios-debug-control-server.md).
+# go through the simulator control server (see DebugControl in
+# src/emu/ios/App/DebugControlServer.swift).
 # Screenshots for every checked state are saved under the results dir for human
 # review; the script also makes hard programmatic assertions and exits non-zero
 # if any fail.
@@ -163,7 +164,7 @@ wait_s() { local e=$((SECONDS+$1)); until [ $SECONDS -ge $e ]; do sleep 1; done;
 
 # ---- control API -------------------------------------------------------------
 # Everything but the Angry Birds touches goes through the simulator control
-# server (docs/ios-debug-control-server.md).
+# server (see DebugControl in src/emu/ios/App/DebugControlServer.swift).
 
 API="http://127.0.0.1:$API_PORT/v1"
 API_ERR=""
