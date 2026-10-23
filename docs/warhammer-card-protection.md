@@ -112,13 +112,17 @@ on RH-29 and NEM-4. All 128 extracted files were compared byte-for-byte
 with the archive. No launcher, executable, license, or resource replacement
 is used.
 
-Direct ZIP mounting is a separate limit of this check: its writable cache
-copy gets past the original fault but later takes a read/write open of
-`wh40kECP.cwa` and faults at `0x101100CC`, reading `0xC9C`. The cached CWA
-still matches the original file byte-for-byte. The reason for that later
-writable-path failure has not been established; the verified setup here is
-the read-only folder mount. It must not be confused with the original
-invalid-key failure at `0x10156448`.
+With a writable archive mount, the game gets past the original fault but
+later takes a read/write open of `wh40kECP.cwa` and faults at `0x101100CC`,
+reading `0xC9C`. The cached CWA still matches the original file byte-for-byte.
+The reason for that writable-path failure has not been established. It must
+not be confused with the original invalid-key failure at `0x10156448`.
+
+iOS archive mounts now use the same write protection as folder mounts and
+retain it across guest relaunches. The unchanged ZIP reaches the title screen
+on NEM-4 with the recovered identity supplied either by its filename or by
+the MMC ID setting; the latter also reaches the main menu. All 128 extracted
+files still match the archive.
 
 ## Two diagnostic traps
 
