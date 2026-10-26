@@ -26,6 +26,7 @@
 #include <qt/mainwindow.h>
 #include <qt/state.h>
 #include <system/devices.h>
+#include <system/installation/rpkg.h>
 
 #include <package/manager.h>
 
@@ -88,6 +89,7 @@ void register_command_line_options(eka2l1::common::arg_parser &parser) {
                            "\t\t\t Example: --device RH-29",
         device_set_option_handler);
     parser.add("--install, -i", "Install a SIS.", app_install_option_handler);
+    parser.add("--installdevice", "Install a device from a ROM image and its RPKG: --installdevice <rom> <rpkg>", device_install_option_handler);
     parser.add("--remove, -r", "Remove an package.", package_remove_option_handler);
     parser.add("--fullscreen, -f", "Display the emulator in fullscreen.", fullscreen_option_handler);
     parser.add("--mount, -m", "Load a folder/zip as a Game Card ROM.", mount_card_option_handler);
@@ -139,6 +141,34 @@ bool app_install_option_handler(eka2l1::common::arg_parser *parser, void *userda
         return false;
     }
 
+    return true;
+}
+
+bool device_install_option_handler(eka2l1::common::arg_parser *parser, void *userdata, std::string *err) {
+    const char *rom = parser->next_token();
+    const char *rpkg = rom ? parser->next_token() : nullptr;
+
+    if (!rpkg) {
+        *err = "Request to install a device, but ROM and RPKG paths not given";
+        return false;
+    }
+
+    desktop::emulator *emu = reinterpret_cast<desktop::emulator *>(userdata);
+    device_manager *dvcmngr = emu->symsys->get_device_manager();
+
+    const std::string rom_resident_path = eka2l1::add_path(emu->conf.storage, "roms/");
+    const std::string root_z_path = eka2l1::add_path(emu->conf.storage, "drives/z/");
+
+    const device_installation_error error = loader::install_rom_with_optional_rpkg(dvcmngr, rom, rpkg,
+        rom_resident_path, root_z_path, false, [](const std::size_t, const std::size_t) {}, []() { return false; });
+
+    if (error != device_installation_none) {
+        *err = "Device installation failed with error " + std::to_string(static_cast<int>(error));
+        return false;
+    }
+
+    dvcmngr->save_devices();
+    std::cout << "Installed device " << dvcmngr->lastest()->firmware_code << std::endl;
     return true;
 }
 
