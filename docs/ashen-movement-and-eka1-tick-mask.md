@@ -147,7 +147,7 @@ explains the retail game's behavior on hardware. The parity check is a recurring
 time window rather than a framework-readiness flag; observed failures included
 ticks `0x149` and `0x14f`.
 
-## Final validation
+## Tick-only validation
 
 The final Release simulator binary, built on `5d2134f0c` with this working-tree
 change, has SHA-256
@@ -178,3 +178,59 @@ and mounting the same ZIP succeeded. The cause and any connection with this
 change remain unresolved; this observation is outside the passing suite and
 must not be treated as a proven pre-existing issue. The crash report remains
 outside the repository.
+
+## Legacy audio Stop follow-up
+
+WWP's MOSND `E32USER-CBase 45` panic was independently reproduced with the
+tick-only Release build. This is `EReqTooManyStops`, not the stray-signal panic
+46: `CActiveScheduler::Stop()` decremented its active-loop count below zero.
+A guest scheduler trace showed the same sound thread first stopping from
+Mophun's `MaoscPlayComplete` callback (return `0xe010dda4`, error zero, loop
+count 1), then stopping from its original stop `RunL` (return `0xe010cf14`,
+loop count already 0).
+
+The N-Gage ROM's original output-stream vtable at `0x505f0618` resolves `Stop`
+(slot 40) to Thumb code `0x505efe18`. That function stops the stream and returns
+queued buffers through `MaoscBufferCopied(KErrAbort)` without directly invoking
+`MaoscPlayComplete`. The separate playback-completion active object, constructed
+at stream offset `0x40` with priority 19, is armed through server request 4 in
+`0x505efeec`; its `RunL` at `0x505efff0` forwards its completion status through
+`MaoscPlayComplete`. Inspecting only the Stop function would miss this
+asynchronous notification path.
+
+An experiment dropping the legacy completion avoided WWP's panic but stalled
+Ashen at its initial Loading screen. Replacing only that guest DLL with the
+original DLL in the same native build restored Ashen's story screen. The
+retained repair must therefore preserve the notification while deferring it.
+
+The guest patch now schedules the legacy success completion with an owned
+`CAsyncCallBack` at priority 19. It is allocated separately through `CBase` so
+its active-object state is zeroed; embedding it in the non-CBase stream
+properties object leaves that state uninitialized when the heap is reused.
+Destruction deletes the callback, canceling any pending notification.
+MMF retains its synchronous `MaoscPlayComplete(KErrCancel)`, matching the
+available Symbian MMF source. Buffer-abort notifications remain intact. The
+native dispatcher also releases audio-renderer occupancy before returning the
+legacy callback-selection result; previously that return bypassed the release.
+
+Both guest DLL variants were rebuilt with their private support library:
+S60 2nd FP3 ARMI UREL for `_v81a`, and S60 5th GCCE UREL for `_general`.
+The general image passed the E32 header verifier; the EKA1 image retained its
+UIDs, flags, CPU, code base, import-library count and 37-export ABI. The final Release
+simulator build passed WWP's menu / Quick Game / 20-second battle / exit
+sequence in Dynarmic and Dyncom, with zero fresh panics or access violations
+in either run. Ashen passed its full opening, chapter load, four alternating
+one-second direction holds and exit. The scene was stationary in every
+release +0.4-second versus +2-second comparison, and its fresh log contained
+no panic or access violation. The default regression passed all 12 assertions,
+including Final Battle's 90-second dwell and both Calculator devices; the
+resulting guest screens were reviewed.
+
+Audio follow-up Release provenance (built on `ios-next` `9b71b9fb4` plus the
+above change):
+
+- Executable SHA-256: `6e1c6e8fca62bab302ad00a65d76846ac9fc6b43be07b2575933fccf24b08489`.
+- EKA1 DLL SHA-256: `61157793988695b825ee8b58f1129c10d2f72692b67c642f2e2bcffdae9bfe42`.
+- General DLL SHA-256: `5a5287729542b434c156df3838cbff6f5620a03c3d636633e061be92be1b1eb8`.
+
+The earlier one-off ZIP mount crash remains a separate unresolved observation.
