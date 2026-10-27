@@ -5,6 +5,7 @@ iOS port: symptom, how it was narrowed down, and the conclusion/fix. Newest firs
 
 | Date | Doc |
 |---|---|
+| 2026-10-27 | [Ashen movement timing and the Worms EKA1 tick mask](./ashen-movement-and-eka1-tick-mask.md) |
 | 2026-10-26 | [EKA1 framebuffer refresh and the OS 7 ROMs](./eka1-framebuffer-refresh-contracts.md) |
 | 2026-10-24 | [Warhammer: card protection and the startup crash](./warhammer-card-protection.md) |
 | 2026-10-21 | [Rayman 9210 on the Nokia 9500 ROM](./rayman-s80-rom-compatibility.md) |
