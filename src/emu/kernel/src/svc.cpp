@@ -2342,6 +2342,24 @@ namespace eka2l1::epoc {
             exit_category = reason_des.get(pr)->to_std_string(pr);
         }
 
+        if (etype == kernel::entity_exit_type::panic && exit_category.find("EXEC") != std::string::npos) {
+            // Local debugging aid: dump the panicking thread's registers and stack.
+            arm::core *cpu = kern->get_cpu();
+            std::string regs;
+            for (int i = 0; i < 16; i++) {
+                regs += fmt::format("r{}={:08x} ", i, cpu->get_reg(i));
+            }
+            LOG_ERROR(KERNEL, "PANICDUMP {} {}: {}", exit_category, reason, regs);
+            const std::uint32_t sp = cpu->get_reg(13);
+            for (std::uint32_t off = 0; off < 0x2000; off += 4) {
+                std::uint32_t *word = eka2l1::ptr<std::uint32_t>(sp + off).get(pr);
+                if (!word) {
+                    break;
+                }
+                LOG_ERROR(KERNEL, "PANICSTACK {:08x}: {:08x}", sp + off, *word);
+            }
+        }
+
         thr->kill(etype, common::utf8_to_ucs2(exit_category), reason);
         return epoc::error_none;
     }
