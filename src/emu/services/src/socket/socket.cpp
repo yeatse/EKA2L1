@@ -307,13 +307,23 @@ namespace eka2l1::epoc::socket {
         
         std::uint32_t *size_return = nullptr;
         if (has_return_length) {
-            size_return = reinterpret_cast<std::uint32_t*>(ctx->get_descriptor_argument_ptr(0));
+            // Newer ESock passes TIpcArgs(flags, &length, &data); older ones put
+            // the length package (holding the flags) in the first slot.
+            const bool flags_first = !((int)ctx->msg->args.get_arg_type(0) & (int)ipc_arg_type::flag_des)
+                && ((int)ctx->msg->args.get_arg_type(1) & (int)ipc_arg_type::flag_des);
+            if (flags_first) {
+                flags = ctx->get_argument_value<std::uint32_t>(0);
+                size_return = reinterpret_cast<std::uint32_t*>(ctx->get_descriptor_argument_ptr(1));
+            } else {
+                size_return = reinterpret_cast<std::uint32_t*>(ctx->get_descriptor_argument_ptr(0));
+                if (size_return) {
+                    flags = *size_return;
+                }
+            }
             if (!size_return) {
                 ctx->complete(epoc::error_argument);
                 return;
             }
-
-            flags = *size_return;
         } else {
             flags = ctx->get_argument_value<std::uint32_t>(0);
         }
