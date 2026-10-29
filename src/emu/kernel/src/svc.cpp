@@ -3486,6 +3486,24 @@ namespace eka2l1::epoc {
         return eka2l1::random();
     }
 
+    // Math::Random(TDes8&): fills the descriptor to its maximum length. Symbian^3
+    // draws these from the kernel's secure generator; mbedTLS seeds from it.
+    BRIDGE_FUNC(std::int32_t, math_secure_random, eka2l1::ptr<epoc::des8> buffer_ptr) {
+        kernel::process *crr_pr = kern->crr_process();
+        epoc::des8 *buffer = buffer_ptr.get(crr_pr);
+        if (!buffer) {
+            return epoc::error_argument;
+        }
+
+        std::string bytes(buffer->get_max_length(crr_pr), '\0');
+        for (auto &b : bytes) {
+            b = static_cast<char>(eka2l1::random() & 0xFF);
+        }
+
+        buffer->assign(crr_pr, bytes);
+        return epoc::error_none;
+    }
+
     BRIDGE_FUNC(void, add_event, epoc::raw_event *evt) {
         if (!evt) {
             LOG_ERROR(KERNEL, "Event to add is null, ignored");
@@ -6162,6 +6180,7 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0xE6, session_security_info),
         BRIDGE_REGISTER(0xE9, btrace_out),
         BRIDGE_REGISTER(0xF6, thread_user_exiting),
+        BRIDGE_REGISTER(0x109, math_secure_random),
         BRIDGE_REGISTER(0x10B, static_call_done),
         BRIDGE_REGISTER(0x10C, library_entry_call_start),
         BRIDGE_REGISTER(0x10D, library_load_prepare)
