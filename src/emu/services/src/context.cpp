@@ -285,8 +285,9 @@ namespace eka2l1 {
             const bool is_eka1 = sys->get_kernel_system()->is_eka1();
 
             if (!is_eka1) {
-                if ((static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::unspecified))
-                    || (static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::handle))) {
+                // handle shares its bit with flag_16b, so compare the whole type:
+                // masking with it made every 16-bit descriptor look like a handle.
+                if (arg_type == ipc_arg_type::handle) {
                     return 4;
                 }
             }
@@ -315,8 +316,9 @@ namespace eka2l1 {
             const bool is_eka1 = sys->get_kernel_system()->is_eka1();
 
             if (!is_eka1) {
-                if ((static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::unspecified))
-                    || (static_cast<int>(arg_type) & static_cast<int>(ipc_arg_type::handle))) {
+                // handle shares its bit with flag_16b, so compare the whole type:
+                // masking with it made every 16-bit descriptor look like a handle.
+                if (arg_type == ipc_arg_type::handle) {
                     return 4;
                 }
             }
