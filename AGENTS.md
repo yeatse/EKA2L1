@@ -1,8 +1,12 @@
 # AGENTS.md
 
-An iOS-focused fork of upstream EKA2L1. The goal is a practical, debuggable iOS port
-that still preserves upstream emulator behavior — Android, desktop Qt, and the shared
-architecture must keep working.
+A development fork of upstream EKA2L1 for all supported platforms. The iOS port is
+stable and its implementation has been upstreamed. iOS is a primary environment for
+developing and validating general emulator capabilities, alongside Android and desktop Qt.
+
+Emulator and frontend code changes, including iOS code, are intended for upstream.
+Only fork-specific investigation documents and development/validation scripts remain
+exclusive to this fork. Tests supporting an upstream fix belong with that fix.
 
 ## Priorities
 
@@ -13,6 +17,9 @@ architecture must keep working.
 - Strip temporary logging, tracing, and debug probes before committing.
 
 ## iOS workflow
+
+Use iOS for general emulator development and validation as well as iOS-specific work.
+The validation platform does not determine whether a code change belongs upstream.
 
 - Build: `./scripts/build_ios.sh simulator`. Defaults to **Debug**
   (`Debug-iphonesimulator`); set `EKA2L1_IOS_CONFIGURATION=Release` for anything you
@@ -114,8 +121,9 @@ same changes.
 
 - Inspect the current upstream diff and select only relevant hunks; fork commits
   and whole files can contain unrelated changes.
-- Keep fork-only docs out of the upstream PR; put the rationale in the commit
-  message or PR description.
+- Keep fork-specific investigation documents and development/validation scripts out
+  of the upstream PR; put the rationale in the commit message or PR description.
+  Include relevant code and supporting tests regardless of platform, including iOS.
 - Specify the repository in `gh` commands: `-R EKA2L1/EKA2L1` for upstream,
   `-R yeatse/EKA2L1` for fork workflows.
 
