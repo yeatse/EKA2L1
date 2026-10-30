@@ -32,10 +32,10 @@
 #                               of `all`): boots the X7 (rm-707), taps the
 #                               loading screen once (used to wedge all input
 #                               permanently), then asserts a tap reaches the
-#                               episode carousel and a swipe pages it. Guards
-#                               the raw-touch pointer path (UITouch -> guest
-#                               pointer-slot mapping), so its touches are real
-#                               HID events sent with `axe`, not API touches.
+#                               episode carousel and a swipe pages it. Uses
+#                               normalized control API touches by default.
+#                               Set EKA2L1_REG_TOUCH_BACKEND=hid to exercise
+#                               UIKit's UITouch -> guest pointer-slot mapping.
 #   Asphalt 6    (0x2003B2CC) : Symbian^3/Belle compatibility suite (opt-in,
 #                               not part of `all`): boots X7, asserts the early
 #                               Gameloft movie renders, reaches the main menu,
@@ -55,7 +55,7 @@
 # N95/rm-320) and apps available, plus `curl`, `jq`, ImageMagick (`magick`) and
 # a Swift toolchain (`xcrun swiftc`, for the OCR helper) on PATH. The angrybirds
 # and asphalt6 suites additionally need the X7 (rm-707) and their game
-# installed; angrybirds also needs the `axe` HID tool (bundled inside
+# installed. The optional HID backend needs `axe` (bundled inside
 # xcodebuildmcp; auto-located). It does NOT build the emulator.
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
@@ -83,8 +83,9 @@
 #   EKA2L1_REG_SHOT_SCALE    guest screenshot upscale factor (default 3)
 #   EKA2L1_REG_OCR_SCALE     further upscale before recognition (default 1)
 #   EKA2L1_REG_INGAME_WAIT   FBattle in-game dwell seconds (default 90)
+#   EKA2L1_REG_TOUCH_BACKEND  angrybirds input: api (default) or hid (UIKit coverage)
 #   EKA2L1_REG_TAP_POST_DELAY
-#                            seconds an axe tap holds the HID connection open
+#                            HID only: seconds an axe tap holds the connection open
 #                            after writing the event (default 0.6)
 #   EKA2L1_REG_AB_ROM        Angry Birds device firmware code (default rm-707)
 #   EKA2L1_REG_AB_TIMEOUT    Angry Birds boot->splash / splash->menu budget
@@ -235,12 +236,11 @@ log_offset() {
         | awk -F': ' 'tolower($1)=="x-log-offset"{print $2}'
 }
 
-# ---- coordinate touch (axe) -------------------------------------------------
-# The control API injects pointers with its own ids and skips UIKit, so the
-# Angry Birds suite, which guards the UITouch -> guest pointer-slot mapping,
-# still drives real HID touches with the AXe tool that ships inside
-# xcodebuildmcp.
+# ---- normalized touch -------------------------------------------------------
+# API coordinates follow guest rotation. HID coordinates use the current host
+# window size and require the fullscreen layout used by the Angry Birds suite.
 
+TOUCH_BACKEND="${EKA2L1_REG_TOUCH_BACKEND:-api}"
 AXE=""
 find_axe() {
     AXE="$(command -v axe 2>/dev/null || true)"
@@ -263,13 +263,36 @@ screen_size() {
 # dtuhidd activates its virtual touchscreen service only once it has a peer and
 # silently drops whatever arrives before that (AXe #71).
 TAP_POST_DELAY="${EKA2L1_REG_TAP_POST_DELAY:-0.6}"
-tap_xy()   { "$AXE" tap -x "$1" -y "$2" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
-swipe_xy() { "$AXE" swipe --start-x "$1" --start-y "$2" --end-x "$3" --end-y "$4" --duration "${5:-0.5}" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1; }
 pt() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.0f", a*b}'; }
 
 # API touch in normalized guest coordinates.
 touch_n() { api POST /input/touch "{\"action\":\"tap\",\"x\":$1,\"y\":$2,\"space\":\"normalized\",\"holdMs\":80}" >/dev/null; }
 double_touch_n() { touch_n "$1" "$2" && sleep 0.15 && touch_n "$1" "$2"; }
+
+tap_n() {
+    if [ "$TOUCH_BACKEND" = api ]; then
+        touch_n "$1" "$2"
+    else
+        screen_size || return 1
+        "$AXE" tap -x "$(pt "$SCR_W" "$1")" -y "$(pt "$SCR_H" "$2")" \
+            --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1
+    fi
+}
+
+swipe_n() {
+    if [ "$TOUCH_BACKEND" = api ]; then
+        local body
+        body="$(jq -nc --argjson x "$1" --argjson y "$2" --argjson ex "$3" \
+            --argjson ey "$4" --argjson duration "${5:-0.5}" \
+            '{action:"swipe",space:"normalized",x:$x,y:$y,toX:$ex,toY:$ey,durationMs:($duration*1000|round)}')" || return 1
+        api POST /input/touch "$body" >/dev/null
+    else
+        screen_size || return 1
+        "$AXE" swipe --start-x "$(pt "$SCR_W" "$1")" --start-y "$(pt "$SCR_H" "$2")" \
+            --end-x "$(pt "$SCR_W" "$3")" --end-y "$(pt "$SCR_H" "$4")" \
+            --duration "${5:-0.5}" --post-delay "$TAP_POST_DELAY" --udid "$SIM" >/dev/null 2>&1
+    fi
+}
 
 # differing-pixel count between two screenshots (AE can be printed in scientific
 # notation for large diffs, so coerce to a plain integer).
@@ -512,11 +535,12 @@ test_n95calc() {
 }
 
 test_angrybirds() {
-    echo "== Angry Birds ($AB_UID on $AB_ROM) =="
-    if ! find_axe; then
-        check FAIL "AngryBirds: axe HID tool located"
-        return
-    fi
+    echo "== Angry Birds ($AB_UID on $AB_ROM, $TOUCH_BACKEND input) =="
+    case "$TOUCH_BACKEND" in
+        api) echo "    control API input bypasses UIKit; use EKA2L1_REG_TOUCH_BACKEND=hid for UITouch coverage" ;;
+        hid) find_axe || { check FAIL "AngryBirds: axe HID tool located"; return; } ;;
+        *) die "EKA2L1_REG_TOUCH_BACKEND must be api or hid" ;;
+    esac
 
     # Launched without waiting: the loading screen is short-lived, so the
     # trigger tap must not sit behind the launch round trip.
@@ -524,7 +548,6 @@ test_angrybirds() {
     api POST "/devices/$AB_ROM/boot" >/dev/null || die "boot $AB_ROM: $API_ERR"
     LOG_BASE="$(log_offset)"
     api POST "/apps/$AB_UID/launch?wait=0" >/dev/null || { check FAIL "AngryBirds: launch ($API_ERR)"; return; }
-    screen_size || { check FAIL "AngryBirds: read screen geometry"; return; }
 
     # 1) Boot. The Rovio copyright card and the loading screen come first, but
     # both are short-lived and a fast boot can be at the PLAY menu by the time
@@ -538,10 +561,9 @@ test_angrybirds() {
     fi
     check PASS "AngryBirds: boot renders the game UI"
 
-    # 2) Tap the loading screen once. This is the regression trigger: the
-    # UITouch identity from this tap must not poison the guest pointer slots
-    # (pre-fix it permanently killed all later gestures on Symbian^3 guests).
-    tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
+    # With HID input, this first touch also guards the UITouch identity path
+    # that previously poisoned guest pointer slots on Symbian^3.
+    tap_n 0.5 0.5 || { check FAIL "AngryBirds: send initial tap"; return; }
     echo "    tapped the loading screen; waiting for the main menu..."
 
     # 3) The first touch must leave the UI alive and interactive: the main menu
@@ -561,7 +583,7 @@ test_angrybirds() {
     # got there, the episode carousel is what proves a tap reached the guest.
     if ! flat_has "score"; then
         wait_s 5
-        tap_xy "$(pt "$SCR_W" 0.5)" "$(pt "$SCR_H" 0.5)"
+        tap_n 0.5 0.5 || { check FAIL "AngryBirds: send PLAY tap"; return; }
     fi
     if wait_text ab_3_episodes 60 "score"; then
         check PASS "AngryBirds: tap opens the episode carousel (touch alive after loading tap)"
@@ -587,11 +609,11 @@ test_angrybirds() {
     local y sx ex i moved=false
     for i in 1 2 3; do
         case $i in
-            1) y="$(pt "$SCR_H" 0.54)"; sx=0.8; ex=0.2 ;;
-            2) y="$(pt "$SCR_H" 0.46)"; sx=0.8; ex=0.2 ;;
-            *) y="$(pt "$SCR_H" 0.58)"; sx=0.2; ex=0.8 ;;
+            1) y=0.54; sx=0.8; ex=0.2 ;;
+            2) y=0.46; sx=0.8; ex=0.2 ;;
+            *) y=0.58; sx=0.2; ex=0.8 ;;
         esac
-        swipe_xy "$(pt "$SCR_W" "$sx")" "$y" "$(pt "$SCR_W" "$ex")" "$y" 0.5
+        swipe_n "$sx" "$y" "$ex" "$y" 0.5 || { check FAIL "AngryBirds: send swipe"; return; }
         wait_s 4
         ocr_read "$(shot ab_4_swiped)"
         if [ -n "$LAST_FLAT" ] && [ "$LAST_FLAT" != "$before" ]; then
