@@ -68,13 +68,51 @@ The following are code-relative offsets, not process addresses:
   by the PostingSurface `PostBuffer` call. This branch performs no RGB444
   expansion before presenting the data as RGBx8888.
 
+For RGB444, the proposed format and the fallback format are both RGBx8888:
+`r5 == r6` in the code above. Both outcomes of `FormatSupported` therefore store
+the same posting format and `EColor16MU` display mode. Changing that capability
+response cannot repair this particular format mismatch. The PostingSurface API
+has no RGB444 posting format to advertise instead.
+
 The confirmed fault boundary is the guest RGB444 producer / N-Gage posting
 adapter: the pixel data reaching EKA2L1 disagrees with the declared posting
-format. The evidence does not yet distinguish an N97 runtime/game compatibility
-assumption from an emulated capability response that selected this combination.
-A general fix must resolve that negotiation or convert the source in the guest
-adapter. Inferring a format from image contents in the host renderer would
-hide the contract violation and affect unrelated software.
+format, and this adapter's copy path does not expand it. A general fix must
+resolve the producer/adapter agreement or convert the source before posting.
+Inferring a format from image contents in the host renderer would hide the
+contract violation and affect unrelated software. This does not yet establish
+why the producer ignores the adapter's returned display mode, or whether a
+different emulated capability selects a different backend before this point.
+
+## Comparison with the working 5320 package
+
+The locally available package `N-Gage 2.0 v1.40.1557 by BodyZ, Fixed by
+FROST_A-52.sis` supplies a different `ngibackbuffer.dll`, with the same UID3,
+file size 46,999 bytes, code size `0x25018`, and SHA-256
+`53c628ddb0e8926f7fb1f8b33577ed6352ca5b3ebf0b3ab7f6bf3c42ec921af6`.
+Its decompressed code contains DirectScreenAccess and RGB444 conversion
+classes, but lacks the PostingSurface backend identifiers and profile keys
+present in the N97 library. Both libraries contain RGB444 conversion classes;
+their mere presence does not show that the active path uses them.
+
+The comparison used the same clean Release emulator at `3973d5f49`, the same
+installed Snakes game, and temporary isolated copies of the C: and E: drives.
+Installation and guest input used the HTTP control API.
+
+| ROM / runtime | Result |
+|---|---|
+| N97 / original 1.30 runtime | Starts, with the RGB444-as-RGBx8888 corruption described above |
+| 5320 / complete 1.40.1557 package | Starts with one correctly colored, full 320×240 menu |
+| N97 / complete 1.40.1557 package | Startup error 3, including after discarding the isolated old device-profile cache |
+| N97 / original runtime with only the 1.40 backbuffer DLL | Startup error 3 |
+| 5320 / 1.40 runtime with only the original N97 backbuffer DLL | Startup error 3 |
+
+The working 5320 configuration is a useful control for the game and emulator,
+but does not exercise the N97 PostingSurface adapter. The failed mixed-DLL
+experiments do not isolate a conversion fix; the libraries cannot be treated as
+interchangeable. The complete 1.40 package is not a validated N97 workaround,
+and its startup error remains a separate investigation from the observed
+posting-buffer corruption. The original N97 DLL and device-drive configuration
+were restored byte for byte, and the temporary isolated drives were removed.
 
 ## Controls and remaining limits
 
