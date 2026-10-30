@@ -81,7 +81,7 @@ identifies how its public backbuffer interface bypasses the conversion.
 
 ## The public backbuffer shortcuts bypass format conversion
 
-A follow-up on `af827b10e` traced the installed N97 library in the Release
+A follow-up on `aac7dabde` traced the installed N97 library in the Release
 simulator. The internal buffer-acquisition function returns `EColor16MU` (11),
 a 1,280-byte stride, and the temporary posting-buffer pointer. The public
 backbuffer still reports its requested `0x4010` format from the getter at
