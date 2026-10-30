@@ -76,12 +76,90 @@ has no RGB444 posting format to advertise instead.
 
 The confirmed fault boundary is the guest RGB444 producer / N-Gage posting
 adapter: the pixel data reaching EKA2L1 disagrees with the declared posting
-format, and this adapter's copy path does not expand it. A general fix must
-resolve the producer/adapter agreement or convert the source before posting.
-Inferring a format from image contents in the host renderer would hide the
-contract violation and affect unrelated software. This does not yet establish
-why the producer ignores the adapter's returned display mode, or whether a
-different emulated capability selects a different backend before this point.
+format, and this adapter's copy path does not expand it. The follow-up below
+identifies how its public backbuffer interface bypasses the conversion.
+
+## The public backbuffer shortcuts bypass format conversion
+
+A follow-up on `af827b10e` traced the installed N97 library in the Release
+simulator. The internal buffer-acquisition function returns `EColor16MU` (11),
+a 1,280-byte stride, and the temporary posting-buffer pointer. The public
+backbuffer still reports its requested `0x4010` format from the getter at
+`0x3140`; it has not changed the application's rendering format to RGBx8888.
+
+The public lock function starts at `0x3170`. In the observed call it takes
+the posting branch at `0x3364`, calls the internal acquisition function at
+`0x3384`, and returns its pointer at `0x3388`. That branch ignores the actual
+display mode returned in its stack output parameter. Unlike the alternate
+branch beginning at `0x31D4`, it does not compare the returned format with the
+public backbuffer's requested format or fall back to its software buffer.
+The acquisition trace confirms the return address at library offset `0x3388`
+and output mode 11, alongside requested format `0x4010`.
+
+The public presentation function also shortcuts the converter: the posting
+branch at `0x38BC` calls the raw posting operation at `0x38D4` and skips the
+software blit beginning at `0x38DC`. Its return address at `0x38D8` was observed
+at posting time. The library contains RGB444-to-RGB888 blitter classes, but
+these two shortcuts do not use them. Thus the application receives a buffer
+through an interface that still advertises RGB444, while the library submits
+its contents as RGBx8888 without converting them. This explains why merely
+returning mode 11 internally does not change the application's pixels.
+
+An explicitly diagnostic interception preserved the acquisition and posting
+flow and expanded the known RGB444 source into the actual 32-bit posting
+chunk before `PostBuffer`, leaving the source untouched. The normal colors,
+single full-height menu, and level-selection screen returned together. This
+is a causal check of the missing conversion, not a production fix. A separate
+attempt to disable only the two shortcuts produced a black frame; routing
+this backend through the existing software path requires more than removing
+those branches.
+
+The defect is in this N97 NGI backbuffer's RGB444 posting adaptation, rather
+than the host texture's interpretation of the format it was given. A lasting
+fix must preserve the public backbuffer's format agreement and convert before
+posting, or select a compatible runtime/backend. Guessing a format from pixel
+contents in the host renderer would affect unrelated software. The diagnostic
+interception must not become a title-specific emulator workaround.
+
+## Other games on the same N97 runtime
+
+The follow-up also installed Tetris and Worms World Party into temporary
+isolated copies of the N97 drives. All guest operations used the control API.
+Hooked and Space Impact were already present in the copied installation.
+
+| Game | Requested NGI format → posting format | Observed result |
+|---|---|---|
+| Snakes Subsonic | RGB444 `0x4010` → RGBx8888 `0x01000004` | Purple duplicated menu; diagnostic expansion restores the menu and level selection |
+| Hooked: Creatures of the Deep | RGBx8888 `0x40020` → RGBx8888 `0x01000004` | Correct language-selection picture; prior clean validation also reached save-slot selection |
+| Worms World Party | RGBx8888 `0x40020` → RGBx8888 `0x01000004` | Correct title and main menu |
+| Tetris | RGB565 `0x10010` → RGB565 `0x01000001` | Scrambled picture with the same data interpreted as 320×240; decoding it as 240×320 restores the normal menu |
+| Space Impact: Kappa Base | Not reached | Starts and returns to the launcher before the backbuffer probes; no color conclusion |
+
+Tetris is a second layout failure rather than an RGB444 conversion failure.
+The adapter submits a 320×240 RGB565 buffer, no rotation or mirroring, and
+the same (80, 0)–(560, 360) destination used by the other games. Its exact
+153,600 source bytes form a normal 240×320 RGB565 menu. Interpreting them as
+RGB444 or 32-bit pixels does not repair it. This also rules out texture upload
+as the origin of its scrambled picture. A second build with only read-only
+layout logging reproduced it without the CPU breakpoints or conversion probe.
+At submission time, the public backbuffer's parameter size, its reported size,
+and the internal posting size all say 320×240. The origin of the 240×320 pixel
+layout is therefore not yet established, and the shortcut cannot yet be
+assigned as its cause. Although that shortcut bypasses size checks too, there
+is no recorded size disagreement at this boundary in Tetris.
+
+These results do not establish that all N-Gage games fail, or that every
+16-bit title fails. The two verified 32-bit landscape controls work. Other
+RGB444 titles using this adapter would face the same unchecked format path,
+but this sample establishes that cause only for Snakes. Each title's requested
+format and dimensions must be checked before assigning its symptoms to that
+cause. Menu checks are not a claim of full-game compatibility.
+
+All breakpoint, layout, buffer-dump, and conversion probes were removed after
+the investigation. A clean Release application was rebuilt and installed. The
+original N97 drive configuration and backbuffer DLL were verified after
+restoration, and the temporary installations and drive copies were discarded.
+Only this investigation record changes the repository.
 
 ## Comparison with the working 5320 package
 
@@ -117,9 +195,9 @@ were restored byte for byte, and the temporary isolated drives were removed.
 ## Controls and remaining limits
 
 Using converted copies of the Symbian rectangles in the host blit did not
-remove the duplication, consistent with the raw-buffer finding. Separately,
-the current blit ignores the displayed rectangle's (80, 0) origin, explaining
-the leftward placement; that is not the source of the duplicated pixels.
+remove the duplication, consistent with the raw-buffer finding. The separate
+80-pixel placement error was fixed in upstream PR #968; it does not resolve
+the pixel-format or source-layout mismatches described here.
 
 Temporarily setting `backbufferscaling` to 0 selects a different path, but
 Snakes then reports startup error 3 and logs guest access violations. It is
