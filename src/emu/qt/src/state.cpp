@@ -177,9 +177,9 @@ namespace eka2l1::desktop {
             }
 
             // Copy additional DLLs
-            std::vector<std::tuple<std::u16string, std::string, epocver>> dlls_need_to_copy = {
-                { u"Z:\\sys\\bin\\goommonitor.dll", eka2l1::add_path("patch", "goommonitor_general.dll"), epocver::epoc94 },
-                { u"Z:\\sys\\bin\\avkonfep.dll", eka2l1::add_path("patch", "avkonfep_general.dll"), epocver::epoc93fp1 }
+            std::vector<std::tuple<std::u16string, std::string, epocver, epocver>> dlls_need_to_copy = {
+                { u"Z:\\sys\\bin\\goommonitor.dll", eka2l1::add_path("patch", "goommonitor_general.dll"), epocver::epoc94, epocver::epoc95 },
+                { u"Z:\\sys\\bin\\avkonfep.dll", eka2l1::add_path("patch", "avkonfep_general.dll"), epocver::epoc93fp1, epocver::epocverend }
             };
 
             for (std::size_t i = 0; i < dlls_need_to_copy.size(); i++) {
@@ -193,9 +193,18 @@ namespace eka2l1::desktop {
 
                 const std::string &source_copy = std::get<1>(dlls_need_to_copy[i]);
 
-                if (where_to_copy.has_value() && common::exists(source_copy)) {
+                if (where_to_copy.has_value()) {
                     std::string where_to_copy_u8 = common::ucs2_to_utf8(where_to_copy.value());
                     std::string where_to_backup_u8 = where_to_copy_u8 + ".bak";
+                    if (symsys->get_symbian_version_use() >= std::get<3>(dlls_need_to_copy[i])) {
+                        if (common::exists(where_to_backup_u8)) {
+                            common::copy_file(where_to_backup_u8, where_to_copy_u8, true);
+                        }
+                        continue;
+                    }
+                    if (!common::exists(source_copy)) {
+                        continue;
+                    }
                     if (common::exists(where_to_copy_u8) && !common::exists(where_to_backup_u8)) {
                         common::move_file(where_to_copy_u8, where_to_copy_u8 + ".bak");
                     }
