@@ -123,6 +123,12 @@ namespace eka2l1::epoc {
             }
         }
 
+        // Animation executors retain canvases and may access them during destruction.
+        for (auto &object : objects) {
+            if (dynamic_cast<epoc::anim_dll *>(object.get())) {
+                object.reset();
+            }
+        }
         objects.clear();
 
         if (lock_screens) {
