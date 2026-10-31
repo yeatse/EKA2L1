@@ -543,11 +543,16 @@ void main_window::setup_package_installer_ui_hooks() {
     eka2l1::manager::packages *pkgmngr = system->get_packages();
 
     pkgmngr->show_text = [this](const char *text, const bool one_button) -> bool {
-        // We only have one receiver, so it's ok ;)
+        if (QThread::currentThread() == thread()) {
+            return on_package_install_text_ask(text, one_button);
+        }
         return emit package_install_text_ask(text, one_button);
     };
 
     pkgmngr->choose_lang = [this](const int *languages, const int language_count) -> int {
+        if (QThread::currentThread() == thread()) {
+            return on_package_install_language_choose(languages, language_count);
+        }
         return emit package_install_language_choose(languages, language_count);
     };
 }
