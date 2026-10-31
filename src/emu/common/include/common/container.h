@@ -95,7 +95,11 @@ namespace eka2l1::common {
         }
 
         iterator begin() {
-            return iterator(this, data_.begin());
+            auto ite = data_.begin();
+            while (ite != data_.end() && check_(*ite)) {
+                ++ite;
+            }
+            return iterator(this, ite);
         }
 
         iterator end() {
