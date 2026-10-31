@@ -2028,6 +2028,12 @@ bool main_window::control_launch(std::uint32_t uid) {
 }
 
 bool main_window::control_boot(int index) {
+    if (!emulator_state_.symsys->get_kernel_system()) {
+        on_new_device_added();
+        if (emulator_state_.symsys->get_device_manager()->get_current_index() == index) {
+            return emulator_state_.symsys->get_kernel_system() != nullptr;
+        }
+    }
     on_device_set_requested(index);
     return emulator_state_.symsys->get_device_manager()->get_current_index() == index;
 }
