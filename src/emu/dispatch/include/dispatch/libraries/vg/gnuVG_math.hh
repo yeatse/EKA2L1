@@ -1,3 +1,5 @@
+#include <cmath>
+using std::isnan;
 /*
  * gnuVG - a free Vector Graphics library
  * Copyright (C) 2014 by Anton Persson

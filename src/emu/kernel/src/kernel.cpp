@@ -932,6 +932,17 @@ namespace eka2l1 {
         /* Create process through kernel system. */
         process_ptr pr = create<kernel::process>(mem_, process_name, path, cmd_arg);
 
+        // EKA1 applications read launcher parameters through the legacy
+        // process parameter slot rather than the EKA2 command-line field.
+        // Populate slot 1 for old N-Gage helper EXEs (notably
+        // ngiinstaller.exe), which otherwise sees an unused descriptor and
+        // jumps through a null startup callback.
+        if (pr && get_epoc_version() < epocver::epoc95 && !cmd_arg.empty()) {
+            const auto *raw = reinterpret_cast<const std::uint8_t *>(cmd_arg.data());
+            pr->set_arg_slot(1, const_cast<std::uint8_t *>(raw),
+                cmd_arg.size() * sizeof(char16_t));
+        }
+
         if (!pr) {
             return nullptr;
         }

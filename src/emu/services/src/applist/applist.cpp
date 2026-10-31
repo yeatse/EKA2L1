@@ -723,7 +723,18 @@ namespace eka2l1 {
 
     void applist_server::get_app_icon_file_name(service::ipc_context &ctx) {
         const epoc::uid app_uid = *ctx.get_argument_value<epoc::uid>(0);
+        LOG_INFO(SERVICE_APPLIST, "GetAppIconFileName uid=0x{:X}", app_uid);
         apa_app_registry *reg = get_registration(app_uid);
+
+        // The N-Gage Games client treats the icon filename as optional.
+        // Belle ROM registration records may carry a path format that the
+        // old client cannot consume; report unsupported and let it use the
+        // already registered bitmap instead of returning a malformed
+        // descriptor.
+        if (app_uid == 0x20007B39) {
+            ctx.complete(epoc::error_not_supported);
+            return;
+        }
 
         // Either the registeration doesn't exist, or the icon file doesn't exist
         if (!reg) {
@@ -1420,6 +1431,7 @@ namespace eka2l1 {
 
     void applist_session::fetch(service::ipc_context *ctx) {
         const int llevel = server<applist_server>()->legacy_level();
+        LOG_INFO(SERVICE_APPLIST, "AppList request function={} legacy={}", ctx->msg->function, llevel);
         if (llevel == APA_LEGACY_LEVEL_OLD) {
             switch (ctx->msg->function) {
             case applist_request_oldarch_app_info:
@@ -1643,6 +1655,10 @@ namespace eka2l1 {
     bool applist_server::launch_app(const std::u16string &exe_path, const std::u16string &cmd, kernel::uid *thread_id,
                                     kernel::process *requester, const epoc::uid known_uid, std::function<void(kernel::process*)> app_exit_callback,
                                     const std::string *environment_main) {
+        LOG_INFO(SERVICE_APPLIST, "LaunchApp exe={} uid=0x{:X} cmd_chars={} env_bytes={}",
+            common::ucs2_to_utf8(exe_path), known_uid, cmd.size(),
+            environment_main ? environment_main->size() : 0);
+
         static constexpr std::size_t MINIMAL_LAUNCH_STACK_SIZE = 0x10000;
         static constexpr std::size_t MINIMAL_LAUNCH_STACK_SIZE_S3 = 0x80000;
 

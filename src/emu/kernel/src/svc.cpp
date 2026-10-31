@@ -372,8 +372,12 @@ namespace eka2l1::epoc {
         auto slot_ptr = crr_process->get_arg_slot(slot);
 
         if (!slot_ptr || !slot_ptr->used) {
-            LOG_ERROR(KERNEL, "Getting descriptor length of unused slot: {}", slot);
-            return epoc::error_not_found;
+            // Symbian clients use optional process parameter slots for
+            // launcher metadata. The ROM returns an empty descriptor for an
+            // unused slot; returning KErrNotFound leaves legacy N-Gage
+            // startup code with an invalid length and a null indirect call.
+            LOG_TRACE(KERNEL, "Getting descriptor length of unused slot: {}", slot);
+            return 0;
         }
 
         return static_cast<std::int32_t>(slot_ptr->data.size());
@@ -425,12 +429,12 @@ namespace eka2l1::epoc {
             return epoc::error_argument;
         }
 
-        auto slot = *pr->get_arg_slot(slot_num);
-
-        if (!slot.used) {
-            LOG_ERROR(KERNEL, "Parameter slot unused, error: {}", slot_num);
-            return epoc::error_not_found;
+        auto slot_ptr = pr->get_arg_slot(slot_num);
+        if (!slot_ptr || !slot_ptr->used) {
+            LOG_TRACE(KERNEL, "Parameter slot unused: {}", slot_num);
+            return 0;
         }
+        auto slot = *slot_ptr;
 
         if (length < slot.data.size()) {
             LOG_ERROR(KERNEL, "Given length is not large enough to slot length ({} vs {})",
