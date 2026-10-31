@@ -313,6 +313,7 @@ namespace eka2l1 {
         void get_preferred_buf_size(service::ipc_context &ctx);
         void get_app_for_document(service::ipc_context &ctx);
         void get_app_for_data_type(service::ipc_context &ctx);
+        void start_document(service::ipc_context &ctx);
         void get_app_for_document_by_file_handle(service::ipc_context &ctx);
         void get_app_for_document_impl(service::ipc_context &ctx, const std::u16string &path);
         void get_app_executable_name_given_app_uid(service::ipc_context &ctx);

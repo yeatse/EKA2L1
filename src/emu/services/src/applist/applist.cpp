@@ -1081,6 +1081,52 @@ namespace eka2l1 {
         get_app_for_document_impl(ctx, source_file->file_name());
     }
 
+    void applist_server::start_document(service::ipc_context &ctx) {
+        // RApaLsSession::StartDocument is used by the SWI launcher.
+        // EKA2L1 previously left this modern opcode unhandled, returning -1
+        // to guests that hand it a SIS/SISX document.
+        std::optional<std::u16string> path = ctx.get_argument_value<std::u16string>(2);
+        if (!path.has_value()) {
+            path = ctx.get_argument_value<std::u16string>(0);
+        }
+        if (!path.has_value()) {
+            ctx.complete(epoc::error_argument);
+            return;
+        }
+
+        const std::u16string ext = eka2l1::path_extension(path.value());
+        if (common::compare_ignore_case(ext, u".sis") != 0
+            && common::compare_ignore_case(ext, u".sisx") != 0) {
+            ctx.complete(epoc::error_not_supported);
+            return;
+        }
+
+        constexpr epoc::uid SWI_INSTALLER_UID = 0x101F875A;
+        apa_app_registry *registry = get_registration(SWI_INSTALLER_UID);
+        if (!registry) {
+            ctx.complete(epoc::error_not_found);
+            return;
+        }
+
+        epoc::apa::command_line parameter;
+        std::u16string executable;
+        registry->get_launch_parameter(executable, parameter);
+        parameter.launch_cmd_ = epoc::apa::command_open;
+        parameter.document_name_ = path.value();
+        parameter.executable_path_ = executable;
+
+        kernel::uid thread_id = 0;
+        const bool started = launch_app(executable, parameter.to_string(false), &thread_id,
+            ctx.msg->own_thr->owning_process(), SWI_INSTALLER_UID);
+        if (!started) {
+            ctx.complete(epoc::error_no_memory);
+            return;
+        }
+
+        ctx.write_data_to_descriptor_argument<kernel::uid>(1, thread_id);
+        ctx.complete(epoc::error_none);
+    }
+
     void applist_server::get_app_for_document(service::ipc_context &ctx) {
         // The 6.x-8.0 clients send the filename in slot 0; 7.0s/8.0 take the 272-byte result in slot 1.
         const int filename_slot = (legacy_level() <= APA_LEGACY_LEVEL_S60V2) ? 0 : 2;
@@ -1500,6 +1546,10 @@ namespace eka2l1 {
 
             case applist_request_app_for_document:
                 server<applist_server>()->get_app_for_document(*ctx);
+                break;
+
+            case applist_request_start_document:
+                server<applist_server>()->start_document(*ctx);
                 break;
 
             case applist_request_app_for_data_type:
