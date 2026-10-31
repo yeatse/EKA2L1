@@ -351,7 +351,15 @@ namespace eka2l1::kernel {
                         const std::uint16_t adj = (import >> 16) & 0xFFFF;
                         const std::uint32_t offset_to_apply = (import >> 32) & 0xFFFFFFFF;
 
-                        const address addr = dependency.dep_->lookup(new_foe, ord);
+                        address addr = dependency.dep_->lookup(new_foe, ord);
+                        // Belle ROM dumps expose three legacy StarterClient
+                        // exports as null entries. The original N-Gage
+                        // Installer uses them as status-returning helpers;
+                        // map them to the ROM success export for EKA2L1.
+                        if (!addr && (ord == 7 || ord == 8 || ord == 9)
+                            && dependency.dep_->name().find("starterclient") != std::string::npos) {
+                            addr = dependency.dep_->lookup(new_foe, 1);
+                        }
                         if (!addr) {
                             // The import is left pointing at address zero, so the first call
                             // through it runs off into unmapped memory. Name the importer and
