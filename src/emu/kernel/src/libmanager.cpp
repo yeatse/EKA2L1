@@ -1212,6 +1212,30 @@ namespace eka2l1::hle {
         auto load_depend_on_drive = [&](const std::u16string &lib_path, const bool is_driver_lib = false) -> codeseg_ptr {
             symfile f = io_->open_file(lib_path, READ_MODE | BIN_MODE | additional_mode_);
             if (!f) {
+                // A replacement patch can provide a compatibility DLL that is
+                // absent from a ROM dump altogether.  This is needed by the
+                // Symbian^3 N-Gage runtime: PostingSurfaceFactory.dll is an
+                // optional platform component, while EKA2L1 ships a compatible
+                // replacement image.  The normal path requires an original
+                // file in order to inspect its UID pair, so handle replacement
+                // entries with no UID requirements directly.
+                const std::string missing_name = common::ucs2_to_utf8(eka2l1::filename(lib_path));
+                auto replacement = std::find_if(replacements_.begin(), replacements_.end(),
+                    [&](const image_replacement &candidate) {
+                        return common::compare_ignore_case(missing_name.c_str(), candidate.name_.c_str()) == 0
+                            && candidate.req_uid2_ == 0 && candidate.req_uid3_ == 0;
+                    });
+                if (replacement != replacements_.end()) {
+                    symfile replacement_file = eka2l1::physical_file_proxy(replacement->image_path_, READ_MODE | BIN_MODE);
+                    if (replacement_file) {
+                        eka2l1::ro_file_stream replacement_stream(replacement_file.get());
+                        auto image = loader::parse_e32img(&replacement_stream);
+                        if (image) {
+                            LOG_TRACE(KERNEL, "Loading {} for missing {}", replacement->image_path_, common::ucs2_to_utf8(lib_path));
+                            return load_as_e32img(*image, lib_path);
+                        }
+                    }
+                }
                 LOG_ERROR(KERNEL, "Can't open {}", common::ucs2_to_utf8(lib_path));
                 return nullptr;
             }
