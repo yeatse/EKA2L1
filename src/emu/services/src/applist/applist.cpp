@@ -850,7 +850,24 @@ namespace eka2l1 {
     }
 
     void applist_server::launch_app(service::ipc_context &ctx, const bool return_thread_id) {
-        std::optional<std::u16string> cmd_line = ctx.get_argument_value<std::u16string>(0);
+        // The EKA1 AppArc client passes the command line as an 8-bit
+        // descriptor. EKA2L1 used to unconditionally decode every EKA1
+        // descriptor as desc16 here; that consumes two bytes per character,
+        // producing a path packed into CJK code points and reading past the
+        // descriptor. PlayServer then hands the malformed command line back
+        // to AppArc and faults inside aparc.dll. Keep the old descriptor width
+        // and widen it explicitly.
+        std::optional<std::u16string> cmd_line;
+        const auto cmd_arg_type = ctx.msg->args.get_arg_type(0);
+        const bool cmd_arg_is_descriptor = (static_cast<int>(cmd_arg_type) & static_cast<int>(ipc_arg_type::flag_des)) != 0;
+        const bool cmd_arg_is_16bit = (static_cast<int>(cmd_arg_type) & static_cast<int>(ipc_arg_type::flag_16b)) != 0;
+        if (kern->is_eka1() || (cmd_arg_is_descriptor && !cmd_arg_is_16bit)) {
+            if (const auto narrow = ctx.get_argument_value<std::string>(0)) {
+                cmd_line = common::utf8_to_ucs2(*narrow);
+            }
+        } else {
+            cmd_line = ctx.get_argument_value<std::u16string>(0);
+        }
         if (!cmd_line) {
             LOG_ERROR(SERVICE_APPLIST, "Failed to launch a new app! Command line is not available.");
             ctx.complete(epoc::error_argument);
@@ -1096,9 +1113,29 @@ namespace eka2l1 {
         // RApaLsSession::StartDocument is used by the SWI launcher.
         // EKA2L1 previously left this modern opcode unhandled, returning -1
         // to guests that hand it a SIS/SISX document.
-        std::optional<std::u16string> path = ctx.get_argument_value<std::u16string>(2);
+        // Some S^3 ROM clients use a descriptor8 for the document path even
+        // though this is the modern AppList service. Decode according to the
+        // IPC type instead of assuming every path is descriptor16.
+        auto get_document_path = [&ctx](const int slot) -> std::optional<std::u16string> {
+            const auto arg_type = ctx.msg->args.get_arg_type(slot);
+            const int arg_flags = static_cast<int>(arg_type);
+            if ((arg_flags & static_cast<int>(ipc_arg_type::flag_des)) == 0) {
+                return std::nullopt;
+            }
+
+            if ((arg_flags & static_cast<int>(ipc_arg_type::flag_16b)) == 0) {
+                if (const auto narrow = ctx.get_argument_value<std::string>(slot)) {
+                    return common::utf8_to_ucs2(*narrow);
+                }
+                return std::nullopt;
+            }
+
+            return ctx.get_argument_value<std::u16string>(slot);
+        };
+
+        std::optional<std::u16string> path = get_document_path(2);
         if (!path.has_value()) {
-            path = ctx.get_argument_value<std::u16string>(0);
+            path = get_document_path(0);
         }
         if (!path.has_value()) {
             ctx.complete(epoc::error_argument);
@@ -1667,7 +1704,16 @@ namespace eka2l1 {
         // For reference: see variable KMinApplicationStackSize and this line at file:
         // https://github.com/SymbianSource/oss.FCL.sf.mw.appsupport/blob/master/appfw/apparchitecture/apgrfx/apgstart.cpp#L164
         // Value of S^3 is based on the proud Doodle Farm (for some reason using 0.3mb of stack in a single function when in EXE it ask for 0.1mb)
-        process_ptr pr = kern->spawn_new_process(exe_path, (legacy_level() < APA_LEGACY_LEVEL_MORDEN) ? cmd : u"",
+        // S60v5 (EPOC94) still supplies the serialized AppArc command line
+        // through RProcess::CommandLine even though its AppList service uses
+        // the modern opcode set. Dropping it for legacy_level()==0 leaves
+        // PlayServer without its document and makes ROM AppArc fault while
+        // decoding the launch request. Belle (EPOC95+) uses the newer
+        // environment path and keeps the empty command line here.
+        const bool pass_process_command_line = legacy_level() < APA_LEGACY_LEVEL_MORDEN
+            || kern->get_epoc_version() <= epocver::epoc94;
+        process_ptr pr = kern->spawn_new_process(exe_path,
+            pass_process_command_line ? cmd : u"",
             0, (kern->get_epoc_version() >= epocver::epoc95) ? MINIMAL_LAUNCH_STACK_SIZE_S3 : MINIMAL_LAUNCH_STACK_SIZE);
 
         if (!pr) {
