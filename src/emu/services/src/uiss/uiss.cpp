@@ -23,8 +23,8 @@
 #include <utils/err.h>
 
 namespace eka2l1 {
-    uiss_server::uiss_server(eka2l1::system *sys)
-        : service::typical_server(sys, "!UISS") {
+    uiss_server::uiss_server(eka2l1::system *sys, const char *name)
+        : service::typical_server(sys, name) {
     }
 
     void uiss_server::connect(service::ipc_context &context) {

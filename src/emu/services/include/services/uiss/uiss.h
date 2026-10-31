@@ -26,7 +26,7 @@
 namespace eka2l1 {
     class uiss_server : public service::typical_server {
     public:
-        explicit uiss_server(eka2l1::system *sys);
+        explicit uiss_server(eka2l1::system *sys, const char *name = "!UISS");
 
         void connect(service::ipc_context &context) override;
     };

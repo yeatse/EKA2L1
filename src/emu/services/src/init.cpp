@@ -344,6 +344,10 @@ namespace eka2l1 {
             CREATE_SERVER(sys, nifman_server);
             CREATE_SERVER(sys, drm_notifier_server);
             CREATE_SERVER(sys, sisregistry_server);
+            // Symbian^3 N-Gage SIS helper clients use both aliases.
+            CREATE_SERVER(sys, uiss_server);
+            std::unique_ptr<service::server> install_server = std::make_unique<uiss_server>(sys, "!InstallServer");
+            sys->get_kernel_system()->add_custom_server(install_server);
             CREATE_SERVER(sys, alarm_server);
             CREATE_SERVER(sys, socket_server);
 
