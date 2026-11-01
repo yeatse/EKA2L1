@@ -98,7 +98,12 @@ namespace eka2l1::epoc {
 
     void graphic_context::active(service::ipc_context &context, ws_cmd cmd) {
         const std::uint32_t window_to_attach_handle = *reinterpret_cast<std::uint32_t *>(cmd.data_ptr);
-        attached_window = reinterpret_cast<epoc::canvas_base *>(client->get_object(window_to_attach_handle));
+        auto *target = dynamic_cast<epoc::canvas_base *>(client->get_object(window_to_attach_handle));
+        if (!target) {
+            client->request_panic(6); // EWservPanicWindow, as HandleToClientWindow requires.
+            return;
+        }
+        attached_window = target;
 
         // Attach context with window
         attached_window->attached_contexts.push(&context_attach_link);

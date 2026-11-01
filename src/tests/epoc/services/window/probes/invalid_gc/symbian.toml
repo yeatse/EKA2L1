@@ -1,0 +1,15 @@
+[project]
+architecture = "armv6"
+name = "ngage_invalid_gc"
+kind = "e32-import-experiment"
+cmake_preset = "symbian-pic"
+uid3 = 0xe0000980
+[package]
+uid = 0xe0000981
+name = "WSERV invalid GC regression probe"
+vendor = "ngage-installer-symbian3"
+executable_name = "ngage_invalid_gc.exe"
+version = [1, 0, 0]
+[application]
+caption = "Invalid GC probe"
+short_caption = "Invalid GC probe"

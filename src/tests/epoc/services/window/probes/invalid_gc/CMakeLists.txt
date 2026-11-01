@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+project(ngage_invalid_gc LANGUAGES CXX ASM)
+include(SymbianApp)
+symbian_add_executable(ngage_invalid_gc main.cc)
+target_include_directories(ngage_invalid_gc SYSTEM PRIVATE "${SYMBIAN_SDK_PREFIX}/include/native")
+target_link_libraries(ngage_invalid_gc PRIVATE Symbian::Stackless Symbian::EUser Symbian::WindowServer Symbian::Gdi)
+symbian_publish_executable(ngage_invalid_gc UID3 0xe0000980)

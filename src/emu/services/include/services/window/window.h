@@ -190,6 +190,9 @@ namespace eka2l1::epoc {
         epoc::window_client_obj *last_obj;
 
         epoc::version cli_version;
+        std::optional<int> pending_panic_;
+
+        bool complete_pending_panic(service::ipc_context &ctx);
 
         epoc::redraw_fifo redraws;
         epoc::event_fifo events;
@@ -277,6 +280,12 @@ namespace eka2l1::epoc {
 
         std::uint32_t add_object(window_client_obj_ptr &obj);
         epoc::window_client_obj *get_object(const std::uint32_t handle);
+
+        void request_panic(const int reason) {
+            if (!pending_panic_) {
+                pending_panic_ = reason;
+            }
+        }
 
         bool delete_object(const std::uint32_t handle);
 

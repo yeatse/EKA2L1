@@ -184,7 +184,20 @@ namespace eka2l1::epoc {
         , uid_counter(0) {
     }
 
+    bool window_server_client::complete_pending_panic(service::ipc_context &ctx) {
+        if (!pending_panic_) {
+            return false;
+        }
+        last_obj = nullptr;
+        ctx.complete(epoc::error_bad_handle);
+        ctx.msg->own_thr->kill(kernel::entity_exit_type::panic, u"WSERV", *pending_panic_);
+        return true;
+    }
+
     void window_server_client::execute_commands(service::ipc_context &ctx, std::vector<ws_cmd> cmds) {
+        if (complete_pending_panic(ctx)) {
+            return;
+        }
         for (auto &cmd : cmds) {
             if (cmd.obj_handle == guest_session->unique_id()) {
                 if (last_obj) {
@@ -208,6 +221,9 @@ namespace eka2l1::epoc {
                         last_obj = nullptr;
                     }
                 }
+            }
+            if (complete_pending_panic(ctx)) {
+                return;
             }
         }
 
