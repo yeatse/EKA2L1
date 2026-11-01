@@ -1,0 +1,15 @@
+[project]
+architecture = "armv6"
+name = "alpha_window"
+kind = "e32-import-experiment"
+cmake_preset = "symbian-pic"
+uid3 = 0xe0000982
+[package]
+uid = 0xe0000983
+name = "WSERV alpha window regression probe"
+vendor = "EKA2L1"
+executable_name = "alpha_window.exe"
+version = [1, 0, 0]
+[application]
+caption = "Alpha window probe"
+short_caption = "Alpha window probe"

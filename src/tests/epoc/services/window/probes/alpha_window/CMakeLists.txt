@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.28)
+project(alpha_window LANGUAGES CXX ASM)
+include(SymbianApp)
+symbian_add_executable(alpha_window main.cc)
+target_include_directories(alpha_window SYSTEM PRIVATE "${SYMBIAN_SDK_PREFIX}/include/native")
+target_link_libraries(alpha_window PRIVATE Symbian::Stackless Symbian::EUser Symbian::WindowServer Symbian::Gdi)
+symbian_publish_executable(alpha_window UID3 0xe0000982)

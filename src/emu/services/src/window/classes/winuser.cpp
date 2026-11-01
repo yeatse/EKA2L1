@@ -570,6 +570,9 @@ namespace eka2l1::epoc {
     }
 
     epoc::display_mode canvas_base::display_mode() const {
+        if (flags & flags_enable_alpha) {
+            return epoc::display_mode::color16ma;
+        }
         // Fallback to screen
         return scr->disp_mode;
     }
@@ -1444,7 +1447,7 @@ namespace eka2l1::epoc {
         update_surface_ui(builder);
         builder.set_feature(drivers::graphics_feature::blend, false);
         builder.clip_bitmap_region(visible_region, scr->display_scale_factor);
-        if (clear_color_enable && !(surface_transparent_ && background_surface_.surface)) {
+        if (clear_color_enable && !(flags & flags_enable_alpha) && !(surface_transparent_ && background_surface_.surface)) {
             auto color = common::rgba_to_vec(clear_color);
             if (!is_display_mode_alpha(display_mode())) {
                 color.w = 255;
@@ -1724,7 +1727,7 @@ namespace eka2l1::epoc {
             return false;
         }
 
-        if (scr->is_screenplay_architecture() && (background_surface_.surface || surface_ui_)) {
+        if (scr->is_screenplay_architecture() && (background_surface_.surface || surface_ui_ || (flags & flags_enable_alpha))) {
             return draw_surface_window(builder);
         }
 
