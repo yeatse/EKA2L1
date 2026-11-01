@@ -1611,59 +1611,77 @@ bool main_window::input_dialog_open(const std::u16string &inital_text, const int
         return false;
     }
 
-    input_complete_callback_ = complete_callback;
+    input_complete_callback_ = std::move(complete_callback);
     input_initial_text_ = inital_text;
     input_text_max_len_ = max_length;
 
-    emit input_dialog_delay_launch_asked();
+    emit input_dialog_delay_launch_asked(++input_dialog_request_id_);
     return true;
 }
 
 void main_window::input_dialog_close() {
-    emit input_dialog_close_request();
+    emit input_dialog_close_request(input_dialog_request_id_);
 }
 
-void main_window::on_input_dialog_delay_launch_asked() {
-    // Give it a bit of time so that the Select (Middle/5) button release can be submitted
-    QTimer::singleShot(200, this, &main_window::on_input_dialog_open_request);
+void main_window::on_input_dialog_delay_launch_asked(quint64 request_id) {
+    // Keep the request identity across the Select-button release delay. A
+    // canceled request must not display a late dialog for a later request.
+    QTimer::singleShot(200, this, [this, request_id] {
+        on_input_dialog_open_request(request_id);
+    });
 }
 
 void main_window::on_finished_text_input(const QString &text, const bool force_close) {
-    if (input_complete_callback_) {
-        input_complete_callback_(text.toStdU16String());
-        input_complete_callback_ = nullptr;
-    }
-
-    if (!force_close) {
-        input_dialog_->done(QDialog::Accepted);
-    }
-
+    auto callback = std::move(input_complete_callback_);
+    input_complete_callback_ = nullptr;
+    auto *dialog = input_dialog_;
     input_dialog_ = nullptr;
+    ++input_dialog_request_id_;
+    if (!force_close && dialog) {
+        dialog->done(QDialog::Accepted);
+    }
+    if (callback) {
+        // Rejected (Escape/window close) is cancellation, including when the
+        // editor contains text. An accepted empty string is still a commit.
+        callback(force_close ? std::u16string{} : text.toStdU16String(), !force_close);
+    }
 }
 
-void main_window::on_input_dialog_open_request() {
+void main_window::on_input_dialog_open_request(quint64 request_id) {
+    if (request_id != input_dialog_request_id_ || !input_complete_callback_) {
+        return;
+    }
     if (input_dialog_) {
         LOG_ERROR(eka2l1::FRONTEND_UI, "Input dialog is already opened! We are aborting...");
         return;
     }
 
-    input_dialog_ = new symbian_input_dialog(this);
-    connect(input_dialog_, &symbian_input_dialog::finished_input, this, &main_window::on_finished_text_input);
-
-    input_dialog_->open_for_input(QString::fromStdU16String(input_initial_text_), input_text_max_len_);
+    auto *dialog = new symbian_input_dialog(this);
+    input_dialog_ = dialog;
+    connect(dialog, &symbian_input_dialog::finished_input, this,
+        [this, request_id, dialog](const QString &text, bool force_close) {
+            if (request_id == input_dialog_request_id_ && dialog == input_dialog_) {
+                on_finished_text_input(text, force_close);
+            }
+        });
+    dialog->open_for_input(QString::fromStdU16String(input_initial_text_), input_text_max_len_);
 }
 
-void main_window::on_input_dialog_close_request() {
-    if (input_dialog_) {
-        if (input_complete_callback_) {
-            input_complete_callback_(input_dialog_->get_current_text().toStdU16String());
-        }
-
-        input_dialog_->done(QDialog::Accepted);
-        input_dialog_ = nullptr;
+void main_window::on_input_dialog_close_request(quint64 request_id) {
+    if (request_id != input_dialog_request_id_) {
+        return;
     }
-
+    auto callback = std::move(input_complete_callback_);
     input_complete_callback_ = nullptr;
+    auto *dialog = input_dialog_;
+    input_dialog_ = nullptr;
+    ++input_dialog_request_id_;
+    if (dialog) {
+        dialog->done(QDialog::Rejected);
+    }
+    if (callback) {
+        callback({}, false);
+    }
 }
 
 void main_window::on_hide_system_apps_changed() {

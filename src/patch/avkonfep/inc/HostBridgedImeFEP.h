@@ -25,7 +25,7 @@
 #include <fepplugin.h>
 #include <fepitfr.h>
 #include <ecom/ecom.h>
-#include <ecom/ImplementationProxy.h>
+#include <ecom/implementationproxy.h>
 #include <aknedstsobs.h>
 #include <aknextendedinputcapabilities.h>
 
@@ -103,6 +103,7 @@ public:
         TInt aPositionInInlineText);
 
     void CommitChangedTextL();
+    void CancelChangedTextL();
 };
 
 class CHostBridgedImeFEPPlugin : public CCoeFepPlugIn {

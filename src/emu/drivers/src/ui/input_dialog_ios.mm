@@ -185,7 +185,7 @@ namespace eka2l1::drivers::ui {
                 g_active_alert = nil;
                 notify_input_available();
                 if (request->complete) {
-                    request->complete(result);
+                    request->complete(result, true);
                 }
             }];
             UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"Cancel"
@@ -199,7 +199,7 @@ namespace eka2l1::drivers::ui {
                 if (g_automatic_input) {
                     g_input.reset();
                     if (request->complete) {
-                        request->complete(request->text);
+                        request->complete({}, false);
                     }
                 }
             }];

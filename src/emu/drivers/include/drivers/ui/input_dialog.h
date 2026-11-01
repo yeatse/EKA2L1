@@ -24,7 +24,7 @@
 #include <string>
 
 namespace eka2l1::drivers::ui {
-    using input_dialog_complete_callback = std::function<void(const std::u16string &)>;
+    using input_dialog_complete_callback = std::function<void(const std::u16string &, bool accepted)>;
     using yes_no_dialog_complete_callback = std::function<void(int)>;
     using dialog_cancel_callback = std::function<void()>;
 

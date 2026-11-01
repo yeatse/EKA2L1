@@ -53,10 +53,10 @@ namespace eka2l1::dispatch {
         result_.clear();
     }
 
-    void ehui_input_view_controller::on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text) {
+    void ehui_input_view_controller::on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text, bool accepted) {
         if (request_id == request_id_ && is_another_input_dialog_active(kern)) {
-            result_ = result_text;
-            info_.complete(epoc::error_none);
+            result_ = accepted ? result_text : std::u16string{};
+            info_.complete(accepted ? epoc::error_none : epoc::error_cancel);
         }
     }
 
@@ -72,9 +72,9 @@ namespace eka2l1::dispatch {
 
         controller.set_notify_info(epoc::notify_info(status, kern->crr_thread()));
         const auto request_id = controller.request_id();
-        if (!drivers::ui::open_input_view(initial_text->to_std_string(kern->crr_process()), max_length, [&controller, kern, request_id](const std::u16string &result) {
+        if (!drivers::ui::open_input_view(initial_text->to_std_string(kern->crr_process()), max_length, [&controller, kern, request_id](const std::u16string &result, bool accepted) {
             kern->lock();
-            controller.on_input_view_complete(kern, request_id, result);
+            controller.on_input_view_complete(kern, request_id, result, accepted);
             kern->unlock();
         })) {
             controller.cancel(kern);

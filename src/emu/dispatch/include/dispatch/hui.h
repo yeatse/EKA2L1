@@ -35,7 +35,7 @@ namespace eka2l1::dispatch {
         epoc::notify_info info_;
         std::uint64_t request_id_ = 0;
     public:
-        void on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text);
+        void on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text, bool accepted);
         void set_notify_info(epoc::notify_info info);
         void cancel(kernel_system *kern);
 
