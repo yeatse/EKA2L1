@@ -22,33 +22,63 @@ namespace eka2l1::epoc {
         }
 
         static bool is_repeatable(std::uint32_t scan) {
-            return !is_shift(scan) && scan != std_key_device_0 && scan != std_key_device_1;
+            return !modifier_bit(scan) && scan != std_key_device_0 && scan != std_key_device_1;
+        }
+
+        static std::uint32_t modifier_bit(std::uint32_t scan) {
+            switch (scan) {
+            case std_key_left_shift: return event_modifier_left_shift;
+            case std_key_right_shift: return event_modifier_right_shift;
+            case std_key_left_ctrl: return event_modifier_left_ctrl;
+            case std_key_right_ctrl: return event_modifier_right_ctrl;
+            case std_key_left_alt: return event_modifier_left_alt;
+            case std_key_right_alt: return event_modifier_right_alt;
+            default: return 0;
+            }
+        }
+
+        // The ASCII keyboard profile supplies standard A-Z scan codes. Native
+        // editing commands use C0 control codes while retaining the physical
+        // scan, so Ctrl+H/I/M remain distinguishable from Backspace/Tab/Enter.
+        // This is not a host keyboard layout or an AltGr text translator.
+        std::uint32_t key_code_for_scan(std::uint32_t scan) const {
+            auto code = static_cast<std::uint32_t>(map_scancode_to_keycode(static_cast<std_scan_code>(scan)));
+            if (code >= 'A' && code <= 'Z') {
+                if ((modifiers_ & event_modifier_ctrl) && !(modifiers_ & event_modifier_alt))
+                    return code - 'A' + 1;
+                if (!(modifiers_ & event_modifier_shift))
+                    return code - 'A' + 'a';
+            }
+            return code;
         }
 
         std::optional<event> translate(event &raw) {
             const auto scan = static_cast<std_scan_code>(raw.key_evt_.scancode);
-            if (is_shift(scan)) {
-                const auto bit = scan == std_key_left_shift ? event_modifier_left_shift : event_modifier_right_shift;
+            const auto bit = modifier_bit(scan);
+            if (bit) {
                 if (raw.type == event_code::key_down) {
                     modifiers_ |= bit;
                 } else if (raw.type == event_code::key_up) {
                     modifiers_ &= ~bit;
                 }
-                modifiers_ &= ~event_modifier_shift;
-                if (modifiers_ & (event_modifier_left_shift | event_modifier_right_shift)) {
+                modifiers_ &= ~(event_modifier_shift | event_modifier_ctrl | event_modifier_alt);
+                if (modifiers_ & (event_modifier_left_shift | event_modifier_right_shift))
                     modifiers_ |= event_modifier_shift;
-                }
+                if (modifiers_ & (event_modifier_left_ctrl | event_modifier_right_ctrl))
+                    modifiers_ |= event_modifier_ctrl;
+                if (modifiers_ & (event_modifier_left_alt | event_modifier_right_alt))
+                    modifiers_ |= event_modifier_alt;
             }
 
             raw.key_evt_.modifiers = modifiers_;
             // WSERV reports modifier transitions through key up/down, never EEventKey.
-            if (is_shift(scan) || raw.type != event_code::key_down) {
+            if (bit || raw.type != event_code::key_down) {
                 return std::nullopt;
             }
 
             event key = raw;
             key.type = event_code::key;
-            key.key_evt_.code = map_scancode_to_keycode(scan);
+            key.key_evt_.code = key_code_for_scan(scan);
             if (is_repeatable(scan)) {
                 key.key_evt_.modifiers |= event_modifier_repeatable;
             }

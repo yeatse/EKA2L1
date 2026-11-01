@@ -2363,7 +2363,6 @@ namespace eka2l1 {
         repeatable_event_ = kern->get_ntimer()->register_event("WsRepeatableKeyEvent",
             [this](std::uint64_t data, std::uint64_t microsecs_late) {
                 const std::uint32_t scancode = static_cast<std::uint32_t>(data);
-                const std::uint32_t code = static_cast<std::uint32_t>(data >> 32);
 
                 epoc::event repeatable_evt;
                 ntimer *timing = kern->get_ntimer();
@@ -2375,7 +2374,8 @@ namespace eka2l1 {
 
                     repeatable_evt.handle = get_focus()->client_handle;
                     repeatable_evt.time = kern->universal_time();
-                    repeatable_evt.key_evt_.code = code;
+                    // A modifier may change while this key remains held.
+                    repeatable_evt.key_evt_.code = key_shipper.translator_.key_code_for_scan(scancode);
                     repeatable_evt.key_evt_.scancode = scancode;
                     repeatable_evt.key_evt_.repeats = 1;
 
