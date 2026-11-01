@@ -664,3 +664,29 @@ TEST_CASE("uninstall_leaves_invalid_targets_alone", "package_manager") {
     REQUIRE(env.packages->uninstall_package(*pkg));
     REQUIRE(env.io.exist(u"C:\\sys\\bin\\victim.exe"));
 }
+
+TEST_CASE("SID filename lookup follows executable SIDs and optional drive, including augmentations", "[package]") {
+    package_test_env env("sid_filename");
+    REQUIRE(env.install_if_block_sis());
+    auto *base = env.packages->package(IF_BLOCK_PACKAGE_UID);
+    REQUIRE(base);
+    package::file_description file{};
+    file.sid = 0xe1234999;
+    file.target = u"C:\\sys\\bin\\base.exe";
+    base->file_descriptions.push_back(file);
+    REQUIRE(env.packages->file_for_sid(file.sid)->target == file.target);
+    REQUIRE(env.packages->file_for_sid(file.sid, drive_e) == nullptr);
+    REQUIRE(env.packages->file_for_sid(0) == nullptr);
+    REQUIRE(env.packages->file_for_sid(file.sid + 1) == nullptr);
+    REQUIRE(env.packages->file_for_sid(file.sid, 26) == nullptr);
+    auto augmentation = *base;
+    augmentation.index = 1;
+    augmentation.install_type = package::install_type_augmentations;
+    augmentation.package_name = u"SID augmentation";
+    augmentation.file_descriptions.clear();
+    file.target = u"e:\\sys\\bin\\addon.exe";
+    augmentation.file_descriptions.push_back(file);
+    REQUIRE(env.packages->add_package(augmentation, nullptr));
+    REQUIRE(env.packages->file_for_sid(file.sid, drive_e)->target == file.target);
+    REQUIRE(env.packages->file_for_sid(file.sid, drive_c)->target == u"C:\\sys\\bin\\base.exe");
+}

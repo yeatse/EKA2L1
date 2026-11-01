@@ -109,6 +109,7 @@ namespace eka2l1 {
         void delete_entry(eka2l1::service::ipc_context *ctx);
         void package_exists_in_rom(eka2l1::service::ipc_context *ctx);
         void sid_to_package(eka2l1::service::ipc_context *ctx);
+        void sid_to_filename(eka2l1::service::ipc_context *ctx);
         void get_entry(eka2l1::service::ipc_context *ctx);
         void update_entry(eka2l1::service::ipc_context *ctx);
     };

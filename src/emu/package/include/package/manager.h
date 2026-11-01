@@ -121,6 +121,7 @@ namespace eka2l1 {
                 const std::u16string &vendor_name);
             std::vector<package::object *> dependents(const uid app_uid);
             std::vector<uid> installed_uids() const;
+            const package::file_description *file_for_sid(epoc::uid sid, std::int32_t drive = -1) const;
 
             bool controller(const uid app_uid, const std::uint32_t package_index, const std::uint32_t controller_offset,
                 loader::sis_controller &controller_output);

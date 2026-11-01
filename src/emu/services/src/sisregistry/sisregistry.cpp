@@ -220,6 +220,10 @@ namespace eka2l1 {
             sid_to_package(ctx);
             break;
         }
+        case sisregistry_sid_to_filename: {
+            sid_to_filename(ctx);
+            break;
+        }
 
         case sisregistry_get_entry: {
             get_entry(ctx);
@@ -700,6 +704,43 @@ namespace eka2l1 {
 
         LOG_TRACE(SERVICE_SISREGISTRY, "SidToPackage for 0x{:X} can't be found", package_sid.value());
         ctx->complete(epoc::error_not_found);
+    }
+
+    void sisregistry_client_session::sid_to_filename(eka2l1::service::ipc_context *ctx) {
+        const auto sid = ctx->get_argument_data_from_descriptor<epoc::uid>(0);
+        const auto drive = ctx->get_argument_value<std::int32_t>(2);
+        const auto type = ctx->msg->args.get_arg_type(1);
+        if (!sid || !drive || (type != ipc_arg_type::des8 && type != ipc_arg_type::des16)
+            || !ctx->get_descriptor_argument_ptr(1)) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        const auto *file = ctx->sys->get_packages()->file_for_sid(*sid, *drive);
+        if (!file) {
+            ctx->complete(epoc::error_not_found);
+            return;
+        }
+        if (type == ipc_arg_type::des16) {
+            int error = epoc::error_none;
+            ctx->write_data_to_descriptor_argument(1, reinterpret_cast<const std::uint8_t *>(file->target.data()),
+                static_cast<std::uint32_t>(file->target.size() * sizeof(char16_t)), &error);
+            ctx->complete(error);
+            return;
+        }
+        // Legacy clients receive an externalized file description; USIF uses UTF-16 above.
+        auto copied = *file;
+        common::chunkyseri seri(nullptr, 0, common::SERI_MODE_MEASURE);
+        copied.do_state(seri);
+        if (seri.size() > ctx->get_argument_max_data_size(1)) {
+            ctx->write_data_to_descriptor_argument(1, static_cast<std::uint32_t>(seri.size()));
+            ctx->complete(epoc::error_overflow);
+            return;
+        }
+        std::vector<std::uint8_t> bytes(seri.size());
+        seri = common::chunkyseri(bytes.data(), bytes.size(), common::SERI_MODE_WRITE);
+        copied.do_state(seri);
+        ctx->write_data_to_descriptor_argument(1, bytes.data(), static_cast<std::uint32_t>(bytes.size()));
+        ctx->complete(epoc::error_none);
     }
 
     void sisregistry_client_session::get_entry(eka2l1::service::ipc_context *ctx) {

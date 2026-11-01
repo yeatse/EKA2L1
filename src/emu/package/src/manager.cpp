@@ -241,6 +241,25 @@ namespace eka2l1 {
             return nullptr;
         }
 
+        const package::file_description *packages::file_for_sid(epoc::uid sid, std::int32_t drive) const {
+            if (!sid || drive < -1 || drive > 25) {
+                return nullptr;
+            }
+            for (const auto &[uid, object] : objects_) {
+                for (const auto &file : object.file_descriptions) {
+                    if (file.sid != sid) continue;
+                    if (drive != -1) {
+                        if (file.target.size() < 2 || file.target[1] != u':') continue;
+                        const char16_t letter = file.target[0] >= u'A' && file.target[0] <= u'Z'
+                            ? file.target[0] + (u'a' - u'A') : file.target[0];
+                        if (letter != u'a' + drive) continue;
+                    }
+                    return &file;
+                }
+            }
+            return nullptr;
+        }
+
         std::vector<package::object *> packages::augmentations(const uid app_uid) {
             std::vector<package::object *> results;
 
