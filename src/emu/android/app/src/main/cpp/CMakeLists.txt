@@ -42,6 +42,7 @@ add_dependencies(native-lib
         avkonfep
         ecam
         scdv
+        scdv_cdsb
         mediaclientaudio
         mediaclientaudiostream
         mediaclientvideo

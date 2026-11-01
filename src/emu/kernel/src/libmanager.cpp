@@ -473,6 +473,15 @@ namespace eka2l1::hle {
             patch_info the_patch;
 
             the_patch.name_ = original_map_name;
+            const auto target_node = map_file_parser.find("target");
+            if (target_node && target_node->get_node_type() == common::INI_NODE_PAIR) {
+                std::vector<std::string> targets(1);
+                auto *target = target_node->get_as<common::ini_pair>();
+                if (target->get_value_count() == 1) {
+                    target->get(targets);
+                    the_patch.name_ = targets.front();
+                }
+            }
             the_patch.patch_ = nullptr;
             the_patch.req_uid2_ = 0;
             the_patch.req_uid3_ = 0;
@@ -843,6 +852,7 @@ namespace eka2l1::hle {
             return false;
         }
 
+        bool applied = false;
         for (std::size_t i = 0; i < patches_.size(); i++) {
             if (does_condition_meet_for_patch(original, patches_[i], true)) {
                 if (!patches_[i].patch_) {
@@ -856,11 +866,11 @@ namespace eka2l1::hle {
                         original);
                 }
 
-                return true;
+                applied = true;
             }
         }
 
-        return false;
+        return applied;
     }
 
     void lib_manager::apply_pending_patches() {

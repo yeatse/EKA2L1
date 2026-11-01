@@ -245,6 +245,7 @@ add_dependencies(eka2l1_qt
     avkonfep
     ecam
     scdv
+    scdv_cdsb
     mediaclientaudio
     mediaclientaudiostream
     mediaclientvideo

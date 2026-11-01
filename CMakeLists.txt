@@ -23,6 +23,7 @@ option(EKA2L1_ENABLE_UNEXPECTED_EXCEPTION_HANDLER "Enable EKA2L1 to dump unexpec
 option(EKA2L1_BUILD_VULKAN_BACKEND "Build Vulkan backend" OFF)
 option(EKA2L1_DEPLOY_DMG "Deploy EKA2L1 as .dmg" OFF)
 option(EKA2L1_BUILD_PATCH "Enable building Symbian's DLL patches using Symbian SDK" OFF)
+set(EKA2L1_SYMBIAN_SDK_PREFIX "" CACHE PATH "symbian-platform SDK for CMake-based guest patches")
 option(EKA2L1_ENABLE_DISCORD_RICH_PRESENCE "Enable support for Discord Rich Presence" OFF)
 option(EKA2L1_ENABLE_QT_CAMERA "Build the desktop camera backend on Qt Multimedia" ON)
 

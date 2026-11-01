@@ -1,0 +1,3 @@
+EXPORTS
+    CreateDirectBitmap @ 1 NONAME
+    CreateDefaultDirectBitmap @ 2 NONAME

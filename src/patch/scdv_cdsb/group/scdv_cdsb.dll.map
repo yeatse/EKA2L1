@@ -1,0 +1,8 @@
+target = scdv.dll
+
+[requirements]
+uid3 = 0x100001ec
+
+[epoc100]
+1 43
+2 7
