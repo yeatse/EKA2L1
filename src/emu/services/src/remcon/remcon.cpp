@@ -35,7 +35,12 @@ namespace eka2l1 {
 
     remcon_session::remcon_session(service::typical_server *svr, kernel::uid client_ss_uid, epoc::version client_ver)
         : service::typical_session(svr, client_ss_uid, client_ver)
-        , type_(epoc::remcon::client_type_undefined) {
+        , type_(epoc::remcon::session_client_type(client_ver.major, client_ver.build)) {
+        if (type_ == epoc::remcon::client_type_target) {
+            detail_ = std::make_unique<epoc::remcon::target_session>();
+        } else if (type_ == epoc::remcon::client_type_controller) {
+            detail_ = std::make_unique<epoc::remcon::controller_session>();
+        }
     }
 
     void remcon_session::fetch(service::ipc_context *ctx) {
@@ -63,6 +68,7 @@ namespace eka2l1 {
 
         default:
             LOG_ERROR(SERVICE_REMCON, "Unimplemented remcon opcode {}", ctx->msg->function);
+            ctx->complete(epoc::error_not_supported);
         }
     }
 

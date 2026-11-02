@@ -50,6 +50,13 @@ namespace eka2l1::epoc::remcon {
         client_type_target = 2
     };
 
+    inline client_type session_client_type(const int major, const int build) {
+        if (major != 2) return client_type_undefined;
+        if (build == 1) return client_type_controller;
+        if (build == 2) return client_type_target;
+        return client_type_undefined;
+    }
+
     struct player_type_information {
         player_type type_;
         player_subtype subtype_;
