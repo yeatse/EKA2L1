@@ -231,6 +231,7 @@ namespace eka2l1::kernel {
         address lookup_no_relocate(const std::uint32_t ord);
 
         bool eligible_for_codeseg_reuse();
+        bool check_library_capabilities(const epoc::security_info &client) const;
 
         void set_full_path(const std::u16string &seg_full_path) {
             full_path = seg_full_path;

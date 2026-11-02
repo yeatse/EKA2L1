@@ -747,6 +747,27 @@ namespace eka2l1::kernel {
         }
     }
 
+    bool codeseg::check_library_capabilities(const epoc::security_info &client) const {
+        constexpr std::uint32_t valid_caps = (1u << epoc::cap_limit) - 1;
+        std::vector<std::pair<const codeseg *, const epoc::security_info *>> pending{ { this, &client } };
+        std::unordered_set<const codeseg *> visited;
+        while (!pending.empty()) {
+            const auto [segment, importer] = pending.back();
+            pending.pop_back();
+            if ((importer->caps_u[0] & ~segment->sinfo.caps_u[0] & valid_caps) != 0) {
+                return false;
+            }
+            // ROM dependency graphs are trusted; RAM imports use the importing image's caps.
+            if (segment->is_rom() || !visited.insert(segment).second) {
+                continue;
+            }
+            for (const auto &dependency : segment->dependencies) {
+                pending.emplace_back(dependency.dep_, &segment->sinfo);
+            }
+        }
+        return true;
+    }
+
     bool codeseg::add_dependency(const codeseg_dependency_info &codeseg) {
         // Check if this codeseg is unique first (no duplicate)
         // We don't check the UID though (TODO)

@@ -165,3 +165,42 @@ TEST_CASE("Failed cyclic DLL loads roll back without destroying their loading pa
     }
     common::delete_folder(root);
 }
+
+TEST_CASE("Library capabilities cover the client and each RAM importer", "[loader][security]") {
+    loader_fixture fixture;
+    const std::uint32_t all_caps = (1u << epoc::cap_limit) - 1;
+    const std::uint32_t all_except_tcb = all_caps & ~(1u << epoc::cap_tcb);
+    const auto make_segment = [&](const char *name, std::uint32_t caps, bool rom = false) {
+        kernel::codeseg_create_info info{};
+        std::uint8_t code[4]{};
+        info.code_size = sizeof(code);
+        info.code_data = code;
+        info.sinfo.caps_u[0] = caps;
+        info.code_load_addr = rom ? 0x80000000 : 0;
+        return fixture.kern.create<kernel::codeseg>(name, info);
+    };
+    auto root = make_segment("display.dll", all_caps);
+    auto bitmap = make_segment("bitmap.dll", all_except_tcb, true);
+    root->add_dependency({ bitmap, {} });
+    epoc::security_info client{ { epoc::cap_all_files, epoc::cap_sw_event } };
+    // A low-capability caller cannot waive the importing DLL's TCB requirement.
+    REQUIRE_FALSE(root->check_library_capabilities(client));
+    root->get_sec_info().caps_u[0] = all_except_tcb;
+    REQUIRE(root->check_library_capabilities(client));
+    client.caps_u[0] |= 1u << epoc::cap_tcb;
+    REQUIRE_FALSE(root->check_library_capabilities(client));
+    client.caps_u[0] = 0;
+    auto indirect = make_segment("indirect.dll", all_caps);
+    indirect->add_dependency({ bitmap, {} });
+    root->add_dependency({ indirect, {} });
+    REQUIRE_FALSE(root->check_library_capabilities(client));
+    indirect->get_sec_info().caps_u[0] = all_except_tcb;
+    REQUIRE(root->check_library_capabilities(client));
+    // Cycles still check each edge before reusing an already visited segment.
+    indirect->add_dependency({ root, {} });
+    REQUIRE(root->check_library_capabilities(client));
+    root->get_sec_info().caps_u[0] &= ~(1u << epoc::cap_sw_event);
+    REQUIRE_FALSE(root->check_library_capabilities(client));
+    indirect->clear_dependencies();
+    root->clear_dependencies();
+}

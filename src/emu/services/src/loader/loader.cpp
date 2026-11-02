@@ -23,6 +23,7 @@
 #include <services/loader/op.h>
 
 #include <kernel/kernel.h>
+#include <kernel/codeseg.h>
 #include <utils/des.h>
 
 #include <system/epoc.h>
@@ -221,6 +222,11 @@ namespace eka2l1 {
         if (!cs) {
             LOG_DEBUG(SERVICE_LOADER, "Try loading {} to {} failed", lib_name, own_pr->name());
             ctx.complete(epoc::error_not_found);
+            return;
+        }
+
+        if (!kern->is_eka1() && !cs->check_library_capabilities(own_pr->get_sec_info())) {
+            ctx.complete(epoc::error_permission_denied);
             return;
         }
 
