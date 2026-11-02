@@ -162,7 +162,7 @@ namespace eka2l1::j2me {
             static const char *UPDATE_ENTRY_STMT = "UPDATE apps SET "
                 "name=:name,"
                 "author=:author,"
-                "iconPath=iconPath,"
+                "iconPath=:iconPath,"
                 "title=:title,"
                 "originalTitle=:originalTitle,"
                 "version=:version WHERE id=:id";
@@ -208,14 +208,14 @@ namespace eka2l1::j2me {
         if (res == SQLITE_DONE) {
             // No entry, just add it
             if (!execute_insert(entry)) {
-                return false;
+                return static_cast<std::uint32_t>(-1);
             }
 
-            return true;
+            return static_cast<std::uint32_t>(sqlite3_last_insert_rowid(database_));
         }
 
         if (!replace_existing) {
-            return false;
+            return static_cast<std::uint32_t>(-1);
         }
 
         int id = sqlite3_column_int(find_existing_stmt_, 0);
