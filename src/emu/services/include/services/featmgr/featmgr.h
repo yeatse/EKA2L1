@@ -21,6 +21,7 @@
 #include <common/common.h>
 #include <kernel/server.h>
 
+#include <map>
 #include <vector>
 
 namespace eka2l1 {
@@ -43,6 +44,12 @@ namespace eka2l1 {
         uint32_t high_uid;
     };
 
+    struct feature_file_entry {
+        std::uint32_t uid;
+        std::uint32_t flags;
+        std::uint32_t data;
+    };
+
     struct feature_entry {
         std::uint32_t feature_id_;
         std::uint32_t flags_;
@@ -54,10 +61,16 @@ namespace eka2l1 {
         std::vector<epoc::uid> enable_features;
         std::vector<featmgr_config_range> enable_feature_ranges;
 
+        // Features listed by the ROM's feature files take precedence over defaults and ranges.
+        std::map<epoc::uid, bool> listed_features;
+
         bool config_loaded = false;
 
         // Load the feature manager config files.
         bool load_featmgr_configs(io_system *io);
+        bool load_feature_files(io_system *io);
+        void ensure_config_loaded(system *sys);
+        bool lookup_feature(const epoc::uid feature_id) const;
         void feature_supported(service::ipc_context &ctx);
 
         void do_feature_scanning(system *sys);
