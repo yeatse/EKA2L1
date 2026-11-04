@@ -475,6 +475,13 @@ namespace eka2l1::drivers {
             // Read ahead until a video frame is in hand and the audio backlog is
             // comfortable (or the safety caps are hit).
             while (!eof_reached && !should_stop_ && (pending_image_packets.size() < MAX_PENDING_IMAGE_PACKETS)) {
+                // The low-water mark below measures decoded samples, not the
+                // compressed packet queue. Fill it while reading so the first
+                // pass stops at the intended audio backlog instead of reading
+                // to a temporary EOF and caching a short packet from a growing
+                // file. Real decode/read errors still follow the paths below.
+                decode_pending_audio();
+
                 // Hard cap: never hold more compressed audio than this, even while
                 // still hunting for a video packet (the video stream may simply
                 // end before the audio stream does).
