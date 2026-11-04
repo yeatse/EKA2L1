@@ -20,12 +20,15 @@
 #pragma once
 
 #include <services/window/classes/plugins/animdll.h>
+#include <services/window/classes/winuser.h>
 
 namespace eka2l1::epoc {
-    struct messagewin_anim_executor: public anim_executor {
+    struct messagewin_anim_executor: public anim_executor, public canvas_observer {
     public:
         explicit messagewin_anim_executor(canvas_base *canvas);
         std::int32_t handle_request(const std::int32_t opcode, void *args) override;
+        void on_window_size_changed(canvas_interface *) override { }
+        void on_window_destroyed(canvas_interface *) override { canvas_ = nullptr; }
 
         ~messagewin_anim_executor();
     };

@@ -26,6 +26,7 @@
 namespace eka2l1::epoc {
     messagewin_anim_executor::messagewin_anim_executor(canvas_base *canvas)
         : anim_executor(canvas) {
+        canvas->add_canvas_observer(this);
         canvas->set_visible(false);
     }
 
@@ -35,6 +36,11 @@ namespace eka2l1::epoc {
     }
 
     messagewin_anim_executor::~messagewin_anim_executor() {
-        canvas_->set_visible(true);
+        // A client can destroy its canvas before the animation DLL, including
+        // when all of its objects are cleared during emulator shutdown.
+        if (canvas_) {
+            canvas_->remove_canvas_observer(this);
+            canvas_->set_visible(true);
+        }
     }
 }
