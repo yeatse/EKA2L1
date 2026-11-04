@@ -346,6 +346,20 @@ namespace eka2l1 {
             return fmode;
         }
 
+        bool configure_buffering() {
+            // RFile writes must be visible to other handles and RFs::Entry
+            // immediately. A separate host stdio buffer hides the final write
+            // (including SQLite journal checksums) from reads and file sizes.
+            if (setvbuf(file, nullptr, _IONBF, 0) == 0) {
+                return true;
+            }
+
+            LOG_ERROR(VFS, "Can't disable buffering for file {}", common::ucs2_to_utf8(physical_path));
+            fclose(file);
+            file = nullptr;
+            return false;
+        }
+
         void init(const utf16_str &vfs_path, const utf16_str &real_path, const int mode) {
             // Disable directory check here
             closed = false;
@@ -365,6 +379,8 @@ namespace eka2l1 {
                 LOG_ERROR(VFS, "Can't open file: {}", common::ucs2_to_utf8(real_path));
                 return;
             }
+
+            configure_buffering();
         }
 
         void shutdown() {
@@ -491,6 +507,10 @@ namespace eka2l1 {
                 // Stay handle-less: every other operation now fails cleanly
                 // instead of faulting on a null FILE inside the C library.
                 LOG_ERROR(VFS, "Can't reopen file {} after resize", common::ucs2_to_utf8(physical_path));
+                return false;
+            }
+
+            if (!configure_buffering()) {
                 return false;
             }
 
