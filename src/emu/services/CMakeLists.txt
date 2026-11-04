@@ -343,6 +343,8 @@ add_library(epocservs
         src/window/scheduler.cpp
         src/window/screen.cpp
         src/window/surface.cpp
+        src/window/managed_surface.cpp
+        src/window/surface_update.cpp
         src/window/util.cpp
         src/window/window.cpp)
 

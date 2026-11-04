@@ -6045,6 +6045,7 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0x02, chunk_size),
         BRIDGE_REGISTER(0x03, chunk_max_size),
         BRIDGE_REGISTER(0x05, tick_count),
+        BRIDGE_REGISTER(0x0A, logical_channel_request),
         BRIDGE_REGISTER(0x0B, math_rand),
         BRIDGE_REGISTER(0x0C, imb_range),
         BRIDGE_REGISTER(0x0E, library_lookup),

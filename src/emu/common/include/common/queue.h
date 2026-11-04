@@ -188,6 +188,20 @@ namespace eka2l1 {
             queue_empty_cond_.notify_one();
         }
 
+        // Nonblocking admission for callers that must enforce their own finite
+        // deadline. On false the caller retains ownership of item resources.
+        bool try_push(const T &item) {
+            {
+                const std::lock_guard<std::mutex> guard(queue_mut_);
+                if (abort_ || queue_.size() >= max_pending_count_) {
+                    return false;
+                }
+                queue_.push(item);
+            }
+            queue_empty_cond_.notify_one();
+            return true;
+        }
+
         std::optional<T> pop(const int ms = 0) {
             T item{ T() };
 
