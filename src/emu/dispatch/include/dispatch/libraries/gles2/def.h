@@ -119,6 +119,7 @@ namespace eka2l1::dispatch {
 
         std::string link_log_;
         bool linked_;
+        bool validated_ = false;
         bool one_module_changed_;
         bool delete_pending_;
         bool binded_;
@@ -143,6 +144,7 @@ namespace eka2l1::dispatch {
         bool detach(gles_shader_object *obj);
 
         void link(drivers::graphics_driver *drv);
+        void validate(drivers::graphics_driver *drv, egl_controller &controller);
         void on_unbound();
         void delete_object();
 
@@ -159,11 +161,15 @@ namespace eka2l1::dispatch {
         }
 
         const std::int32_t get_link_log_length() const {
-            return static_cast<std::int32_t>(link_log_.length());
+            return link_log_.empty() ? 0 : static_cast<std::int32_t>(link_log_.length() + (link_log_.back() != '\0'));
         }
 
         const bool is_linked() const {
             return linked_;
+        }
+
+        bool is_validated() const {
+            return validated_;
         }
 
         const bool is_delete_pending() const {
@@ -268,6 +274,7 @@ namespace eka2l1::dispatch {
         void force_detach(gles_driver_object *obj);
 
         std::uint32_t set_attachment(gles_driver_object *object, const std::uint32_t attachment_type, const int index);
+        std::uint32_t get_attachment_parameter(std::uint32_t attachment, std::uint32_t pname, std::int32_t &value) const;
         std::uint32_t completed() const;
         std::uint32_t ready_for_draw(egl_controller &controller, drivers::graphics_driver *drv);
         std::uint32_t format_compatible_for_read(const std::uint32_t format, const std::uint32_t dttype) const;
@@ -288,10 +295,15 @@ namespace eka2l1::dispatch {
         bool use_constant_vcomp_;
 
         explicit gles2_vertex_attrib()
-            : client_ask_instanced_(false)
-            , constant_vcomp_count_(0)
+            : constant_data_{0.0f, 0.0f, 0.0f, 1.0f}
+            , constant_vcomp_count_(4)
+            , client_ask_instanced_(false)
             , normalized_(false)
             , use_constant_vcomp_(false) {
+            size_ = 4;
+            data_type_ = GL_FLOAT_EMU;
+            stride_ = 0;
+            offset_ = 0;
         }
     };
 

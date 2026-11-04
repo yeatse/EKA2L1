@@ -106,7 +106,11 @@ namespace eka2l1::drivers {
         graphics_driver_read_framebuffer,
         graphics_driver_backup_state, // Backup all possible state to a struct
         graphics_driver_restore_state, // Restore previously backup data
-        graphics_driver_copy_framebuffer_to_texture
+        graphics_driver_copy_framebuffer_to_texture,
+        graphics_driver_validate_program,
+        graphics_driver_get_shader_precision,
+        graphics_driver_get_integer,
+        graphics_driver_get_float
     };
 
     enum graphics_driver_extension {

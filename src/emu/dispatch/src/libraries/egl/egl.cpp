@@ -337,7 +337,7 @@ namespace eka2l1::dispatch {
         eka2l1::vec2 dim(0, 0);
         while (true) {
             std::int32_t pname = *additional_attribs++;
-            if (pname == 0) {
+            if ((pname == 0) || (pname == EGL_NONE_EMU)) {
                 break;
             }
             std::int32_t param = *additional_attribs++;
@@ -355,7 +355,7 @@ namespace eka2l1::dispatch {
             }
         }
 
-        if ((dim.x == 0) || (dim.y == 0) || (dim.x > 2048) || (dim.y > 2048)) {
+        if ((dim.x <= 0) || (dim.y <= 0) || (dim.x > 2048) || (dim.y > 2048)) {
             egl_push_error(sys, EGL_BAD_ATTRIBUTE_EMU);
             return EGL_NO_SURFACE_EMU;
         }
@@ -507,6 +507,7 @@ namespace eka2l1::dispatch {
         egl_context_instance context_inst = nullptr;
 
         egl_config::target_context_version version = choosen_config.get_target_context_version();
+        std::uint32_t minor_version = 0;
 
         while (additional_attribs_ != nullptr) {
             std::uint32_t pname = *(additional_attribs_++);
@@ -518,10 +519,23 @@ namespace eka2l1::dispatch {
             if (pname == EGL_CONTEXT_MAJOR_VERSION_KHR_EMU) {
                 if (param == 2) {
                     version = egl_config::EGL_TARGET_CONTEXT_ES2;
-                } else {
+                } else if (param == 1) {
                     version = egl_config::EGL_TARGET_CONTEXT_ES11;
+                } else {
+                    egl_push_error(sys, EGL_BAD_MATCH_EMU);
+                    return EGL_NO_CONTEXT_EMU;
                 }
+            } else if (pname == EGL_CONTEXT_MINOR_VERSION_KHR_EMU) {
+                minor_version = param;
+            } else {
+                egl_push_error(sys, EGL_BAD_ATTRIBUTE_EMU);
+                return EGL_NO_CONTEXT_EMU;
             }
+        }
+
+        if (minor_version > (version == egl_config::EGL_TARGET_CONTEXT_ES11 ? 1u : 0u)) {
+            egl_push_error(sys, EGL_BAD_MATCH_EMU);
+            return EGL_NO_CONTEXT_EMU;
         }
 
         switch (version) {

@@ -1743,10 +1743,25 @@ namespace eka2l1::dispatch {
             break;
 
         case GL_MAX_VIEWPORT_DIMS_EMU:
+            params[0] = params[1] = static_cast<T>(GLES_EMU_MAX_TEXTURE_SIZE);
+            break;
+
         case GL_MAX_TEXTURE_SIZE_EMU:
+        case GL_MAX_CUBE_MAP_TEXTURE_SIZE_EMU:
             // We clamp on this
             *params = static_cast<T>(GLES_EMU_MAX_TEXTURE_SIZE);
             break;
+
+        case GL_ALIASED_POINT_SIZE_RANGE_EMU:
+        case GL_ALIASED_LINE_WIDTH_RANGE_EMU: {
+            float range[2] = {};
+            if (!drivers::get_graphics_float(drv, pname, range)) {
+                return false;
+            }
+            params[0] = convert_query_value<T>(range[0]);
+            params[1] = convert_query_value<T>(range[1]);
+            break;
+        }
 
         case GL_SMOOTH_LINE_WIDTH_RANGE_EMU:
             params[0] = static_cast<T>(1);

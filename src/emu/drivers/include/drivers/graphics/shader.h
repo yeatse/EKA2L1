@@ -100,6 +100,7 @@ namespace eka2l1::drivers {
 
         virtual bool create(graphics_driver *driver, shader_module *vertex_module, shader_module *fragment_module, std::string *link_log = nullptr) = 0;
         virtual bool use(graphics_driver *driver) = 0;
+        virtual bool validate(std::string *validation_log) = 0;
 
         virtual std::optional<int> get_uniform_location(const std::string &name) = 0;
         virtual std::optional<int> get_attrib_location(const std::string &name) = 0;

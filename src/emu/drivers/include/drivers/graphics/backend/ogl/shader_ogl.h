@@ -36,6 +36,7 @@ namespace eka2l1::drivers {
 
         bool create(graphics_driver *driver, shader_module *vertex_module, shader_module *fragment_module, std::string *link_log = nullptr) override;
         bool use(graphics_driver *driver) override;
+        bool validate(std::string *validation_log) override;
 
         std::uint32_t program_handle() const {
             return program;

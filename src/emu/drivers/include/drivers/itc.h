@@ -102,6 +102,12 @@ namespace eka2l1::drivers {
     drivers::handle create_shader_program(graphics_driver *driver, drivers::handle vertex_module,
         drivers::handle fragment_module, shader_program_metadata *metadata, std::string *link_log = nullptr);
 
+    bool validate_shader_program(graphics_driver *driver, drivers::handle program, std::string *validation_log);
+    bool get_shader_precision(graphics_driver *driver, std::uint32_t shader_type, std::uint32_t precision_type,
+        std::int32_t *range, std::int32_t *precision);
+    bool get_graphics_integer(graphics_driver *driver, std::uint32_t pname, std::int32_t *value);
+    bool get_graphics_float(graphics_driver *driver, std::uint32_t pname, float *value);
+
     /**
      * \brief Create a new texture.
      *

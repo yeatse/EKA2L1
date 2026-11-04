@@ -305,6 +305,23 @@ namespace eka2l1::drivers {
         return true;
     }
 
+    bool ogl_shader_program::validate(std::string *validation_log) {
+        glValidateProgram(program);
+        GLint success = GL_FALSE;
+        glGetProgramiv(program, GL_VALIDATE_STATUS, &success);
+        if (validation_log) {
+            GLint log_length = 0;
+            glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+            validation_log->resize(log_length);
+            if (log_length) {
+                GLsizei written = 0;
+                glGetProgramInfoLog(program, log_length, &written, validation_log->data());
+                validation_log->resize(written);
+            }
+        }
+        return success == GL_TRUE;
+    }
+
     bool ogl_shader_program::use(graphics_driver *driver) {
         glUseProgram(program);
         return true;

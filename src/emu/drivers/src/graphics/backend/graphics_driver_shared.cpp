@@ -1230,6 +1230,36 @@ namespace eka2l1::drivers {
             break;
         }
 
+        case graphics_driver_validate_program: {
+            auto *program = reinterpret_cast<shader_program *>(get_graphics_object(cmd.data_[0]));
+            auto *log = reinterpret_cast<std::string *>(cmd.data_[1]);
+            finish(cmd.status_, program && program->validate(log) ? 0 : -1);
+            break;
+        }
+
+        case graphics_driver_get_shader_precision: {
+#if !EKA2L1_PLATFORM(IOS)
+            if (!glGetShaderPrecisionFormat) {
+                finish(cmd.status_, -1);
+                break;
+            }
+#endif
+            glGetShaderPrecisionFormat(static_cast<GLenum>(cmd.data_[0]), static_cast<GLenum>(cmd.data_[1]),
+                reinterpret_cast<GLint *>(cmd.data_[2]), reinterpret_cast<GLint *>(cmd.data_[3]));
+            finish(cmd.status_, 0);
+            break;
+        }
+
+        case graphics_driver_get_integer:
+            glGetIntegerv(static_cast<GLenum>(cmd.data_[0]), reinterpret_cast<GLint *>(cmd.data_[1]));
+            finish(cmd.status_, 0);
+            break;
+
+        case graphics_driver_get_float:
+            glGetFloatv(static_cast<GLenum>(cmd.data_[0]), reinterpret_cast<GLfloat *>(cmd.data_[1]));
+            finish(cmd.status_, 0);
+            break;
+
         case graphics_driver_create_texture: {
             create_texture(cmd);
             break;
