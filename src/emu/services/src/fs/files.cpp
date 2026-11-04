@@ -34,7 +34,10 @@
 #include <kernel/chunk.h>
 #include <kernel/thread.h>
 #include <mem/mem.h>
+#include <mem/control.h>
+#include <mem/page.h>
 
+#include <array>
 #include <limits>
 #include <utils/err.h>
 
@@ -506,122 +509,306 @@ namespace eka2l1 {
         ctx->complete(epoc::error_none);
     }
 
+    // The translation of one guest address says nothing about the next page.
+    // Validate the entire range, then copy page by page: adjacent guest pages
+    // need not have adjacent host backing. These IPC handlers run synchronously
+    // on the emulation thread, so the mappings cannot change during the copy.
+    static bool file_guest_range(service::ipc_context *ctx, const address start,
+        const std::uint32_t length, const bool writable, void *buffer = nullptr) {
+        if (!length) {
+            return true;
+        }
+        if (!start || (static_cast<std::uint64_t>(start) + length > (std::uint64_t(1) << 32))) {
+            return false;
+        }
+        auto *model = ctx->msg->own_thr->owning_process()->get_mem_model();
+        if (!model) {
+            return false;
+        }
+        auto *memory = ctx->sys->get_memory_system();
+        auto *control = memory->get_control();
+        const auto page_size = memory->get_page_size();
+        const auto asid = model->address_space_id();
+        const auto required = writable ? prot_write : prot_read;
+        std::uint32_t offset = 0;
+        while (offset < length) {
+            const auto guest = start + offset;
+            const auto *page = control->get_page_info(asid, guest);
+            if (!page || !page->host_addr || !(page->perm & required)) {
+                return false;
+            }
+            void *host = control->get_host_pointer(asid, guest);
+            if (!host) {
+                return false;
+            }
+            const auto count = std::min<std::uint32_t>(length - offset, page_size - (guest % page_size));
+            if (buffer) {
+                auto *bytes = static_cast<std::uint8_t *>(buffer) + offset;
+                if (writable) {
+                    std::memcpy(host, bytes, count);
+                } else {
+                    std::memcpy(bytes, host, count);
+                }
+            }
+            offset += count;
+        }
+        return true;
+    }
+
+    struct file_io_descriptor {
+        address header;
+        address data;
+        address backing_header;
+        std::uint32_t info;
+        std::uint32_t backing_info;
+    };
+
+    static std::optional<file_io_descriptor> file_data_descriptor(service::ipc_context *ctx,
+        const bool writable, const std::uint32_t count, int &error, const int slot = 0) {
+        error = epoc::error_bad_descriptor;
+        const auto arg_type = static_cast<int>(ctx->msg->args.get_arg_type(slot));
+        if (!ctx->sys->get_kernel_system()->is_eka1()
+            && (!(arg_type & static_cast<int>(ipc_arg_type::flag_des))
+                || (arg_type & static_cast<int>(ipc_arg_type::flag_16b))
+                || (writable && (arg_type & static_cast<int>(ipc_arg_type::flag_const))))) {
+            return std::nullopt;
+        }
+        const address header = ctx->msg->args.args[slot];
+        std::array<std::uint32_t, 3> words {};
+        if (!file_guest_range(ctx, header, 4, false, words.data())) {
+            return std::nullopt;
+        }
+        epoc::desc_base descriptor;
+        descriptor.info = words[0];
+        if (!descriptor.is_valid_descriptor()) {
+            return std::nullopt;
+        }
+        const auto type = descriptor.get_descriptor_type();
+        const bool modifiable = (type == epoc::buf) || (type == epoc::ptr) || (type == epoc::ptr_to_buf);
+        if (writable && !modifiable) {
+            return std::nullopt;
+        }
+        const std::uint32_t header_size = type == epoc::buf_const ? 4
+            : ((type == epoc::ptr_const) || (type == epoc::buf)) ? 8 : 12;
+        if (!file_guest_range(ctx, header, header_size, false, words.data())
+            || (writable && !file_guest_range(ctx, header, 4, true))) {
+            return std::nullopt;
+        }
+        const auto capacity = modifiable ? words[1] : descriptor.get_length();
+        if ((capacity > epoc::descriptor_length_mask) || (descriptor.get_length() > capacity)) {
+            return std::nullopt;
+        }
+        if (count > (writable ? capacity : descriptor.get_length())) {
+            error = writable ? epoc::error_overflow : epoc::error_argument;
+            return std::nullopt;
+        }
+        std::uint64_t data_address = 0;
+        address backing_header = 0;
+        std::uint32_t backing_info = 0;
+        switch (type) {
+        case epoc::buf_const:
+            data_address = static_cast<std::uint64_t>(header) + 4;
+            break;
+        case epoc::buf:
+            data_address = static_cast<std::uint64_t>(header) + 8;
+            break;
+        case epoc::ptr_const:
+            data_address = words[1];
+            break;
+        case epoc::ptr:
+            data_address = words[2];
+            break;
+        case epoc::ptr_to_buf:
+            backing_header = words[2];
+            if (!file_guest_range(ctx, backing_header, 4, false, &backing_info)
+                || ((backing_info >> 28) != epoc::buf_const)
+                || (writable && !file_guest_range(ctx, backing_header, 4, true))) {
+                return std::nullopt;
+            }
+            data_address = static_cast<std::uint64_t>(backing_header) + 4;
+            break;
+        default:
+            return std::nullopt;
+        }
+        if ((data_address > std::numeric_limits<address>::max())
+            || !file_guest_range(ctx, static_cast<address>(data_address), count, writable)) {
+            return std::nullopt;
+        }
+        return file_io_descriptor { header, static_cast<address>(data_address), backing_header, descriptor.info, backing_info };
+    }
+
+    static bool file_set_read_length(service::ipc_context *ctx, const file_io_descriptor &descriptor,
+        const std::uint32_t count) {
+        auto info = (descriptor.info & ~epoc::descriptor_length_mask) | count;
+        if (!file_guest_range(ctx, descriptor.header, 4, true, &info)) {
+            return false;
+        }
+        if (descriptor.backing_header) {
+            info = (descriptor.backing_info & ~epoc::descriptor_length_mask) | count;
+            return file_guest_range(ctx, descriptor.backing_header, 4, true, &info);
+        }
+        return true;
+    }
+
+    // The physical-file VFS currently uses fseek(long). Do not narrow a guest
+    // position on hosts where long is smaller than Symbian's 64-bit file offset.
+    static constexpr std::uint64_t file_io_max_position = std::numeric_limits<long>::max();
+
+    static std::optional<std::uint64_t> file_io_position(service::ipc_context *ctx, file *vfs_file) {
+        if (ctx->msg->function & epoc::fs::ipc_arg_slot2_des) {
+            int error;
+            const auto packet = file_data_descriptor(ctx, false, sizeof(std::int64_t), error, 2);
+            std::int64_t position;
+            if (!packet || ((packet->info & epoc::descriptor_length_mask) != sizeof(position))
+                || !file_guest_range(ctx, packet->data, sizeof(position), false, &position) || (position < -1)) {
+                return std::nullopt;
+            }
+            if (position != -1) {
+                return static_cast<std::uint64_t>(position);
+            }
+        } else {
+            const auto position = ctx->get_argument_value<std::int32_t>(2);
+            if (!position) {
+                return std::nullopt;
+            }
+            if ((*position != std::numeric_limits<std::int32_t>::min()) && (*position != -1)) {
+                if (*position < 0) {
+                    return std::nullopt;
+                }
+                return static_cast<std::uint64_t>(*position);
+            }
+        }
+        return vfs_file->tell();
+    }
+
     void fs_server_client::file_write(service::ipc_context *ctx) {
-        std::optional<std::int32_t> handle_res = ctx->get_argument_value<std::int32_t>(3);
-
-        if (!handle_res) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto length = ctx->get_argument_value<std::int32_t>(1);
+        if (!handle || !length || (*length < 0)) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        std::optional<std::string> write_data = ctx->get_argument_value<std::string>(0);
-
-        if (!write_data) {
-            ctx->complete(epoc::error_argument);
-            return;
-        }
-
-        fs_node *node = get_file_node(*handle_res);
-
-        if (node == nullptr || node->vfs_node->type != io_component_type::file) {
+        fs_node *node = get_file_node(*handle);
+        if (!node || node->vfs_node->type != io_component_type::file) {
             ctx->complete(epoc::error_bad_handle);
             return;
         }
-
-        file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
-
         if (!(node->open_mode & WRITE_MODE)) {
             ctx->complete(epoc::error_access_denied);
             return;
         }
-
-        std::int32_t write_len = *ctx->get_argument_value<std::int32_t>(1);
-        std::int32_t write_pos_provided = *ctx->get_argument_value<std::int32_t>(2);
-
-        std::uint64_t write_pos = 0;
-        std::uint64_t size_of_file = vfs_file->size();
-
-        write_pos = vfs_file->tell();
-
-        // Low MaxUint64
-        if ((write_pos_provided != static_cast<int>(0x80000000)) && (write_pos_provided != -1)) {
-            write_pos = write_pos_provided;
+        int descriptor_error;
+        const auto descriptor = file_data_descriptor(ctx, false, static_cast<std::uint32_t>(*length), descriptor_error);
+        if (!descriptor) {
+            ctx->complete(descriptor_error);
+            return;
         }
 
-        if (write_pos > size_of_file) {
-            // Fill the file with temporary 0
-            vfs_file->seek(0, file_seek_mode::end);
-            static char ZERO_BYTE = 0;
+        auto *vfs_file = static_cast<file *>(node->vfs_node.get());
+        const auto position = file_io_position(ctx, vfs_file);
+        if (!position || (*position > file_io_max_position)) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        const auto size = vfs_file->size();
+        if (size > file_io_max_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        // RFile::Write at a position beyond EOF appends at EOF. OpenC is
+        // responsible for extending the file when implementing POSIX holes.
+        const auto write_position = std::min(*position, size);
+        if (static_cast<std::uint64_t>(*length) > file_io_max_position - write_position) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        // A zero-length write must not extend the file or inspect a null payload.
+        if (!*length) {
+            ctx->complete(epoc::error_none);
+            return;
+        }
 
-            if (vfs_file->write_file(&ZERO_BYTE, 1, static_cast<std::uint32_t>(write_pos - size_of_file)) != write_pos - size_of_file) {
-                LOG_WARN(SERVICE_EFSRV, "Unable to supply stubbed bytes for beyond file size write operation!");
+        if (vfs_file->seek(write_position, file_seek_mode::beg) != write_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        std::array<std::uint8_t, 64 * 1024> data;
+        const auto length_bytes = static_cast<std::uint32_t>(*length);
+        std::uint32_t offset = 0;
+        while (offset < length_bytes) {
+            const auto count = std::min<std::uint32_t>(length_bytes - offset, data.size());
+            if (!file_guest_range(ctx, descriptor->data + offset, count, false, data.data())) {
+                ctx->complete(epoc::error_bad_descriptor);
+                return;
             }
+            if (vfs_file->write_file(data.data(), 1, count) != count) {
+                ctx->complete(epoc::error_write);
+                return;
+            }
+            offset += count;
         }
-
-        // If this write pos is beyond the current end of file, use last pos
-        vfs_file->seek(write_pos, file_seek_mode::beg);
-        size_t wrote_size = vfs_file->write_file(write_data.value().data(), 1, write_len);
-
-        //LOG_TRACE(SERVICE_EFSRV, "File {} wroted with size: {}, at {}", common::ucs2_to_utf8(vfs_file->file_name()), wrote_size, write_pos);
-
         ctx->complete(epoc::error_none);
     }
 
     void fs_server_client::file_read(service::ipc_context *ctx) {
-        std::optional<std::int32_t> handle_res = ctx->get_argument_value<std::int32_t>(3);
-
-        if (!handle_res) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto length = ctx->get_argument_value<std::int32_t>(1);
+        if (!handle || !length || (*length < 0)) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        fs_node *node = get_file_node(*handle_res);
-
-        if (node == nullptr || node->vfs_node->type != io_component_type::file) {
+        fs_node *node = get_file_node(*handle);
+        if (!node || node->vfs_node->type != io_component_type::file) {
             ctx->complete(epoc::error_bad_handle);
             return;
         }
-
-        file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
-
-        int read_len = *ctx->get_argument_value<std::int32_t>(1);
-        std::uint64_t read_pos = 0;
-        std::uint64_t last_pos = vfs_file->tell();
-
-        read_pos = last_pos;
-        
-        if (ctx->msg->function & epoc::fs::ipc_arg_slot2_des) {
-            std::optional<std::uint64_t> temp = ctx->get_argument_data_from_descriptor<std::uint64_t>(2);
-            if (!temp.has_value()) {
-                ctx->complete(epoc::error_argument);
+        int descriptor_error;
+        const auto descriptor = file_data_descriptor(ctx, true, static_cast<std::uint32_t>(*length), descriptor_error);
+        if (!descriptor) {
+            ctx->complete(descriptor_error);
+            return;
+        }
+        auto *vfs_file = static_cast<file *>(node->vfs_node.get());
+        const auto position = file_io_position(ctx, vfs_file);
+        if (!position || (*position > file_io_max_position)) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        if (vfs_file->seek(*position, file_seek_mode::beg) != *position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        const auto size = vfs_file->size();
+        if (size > file_io_max_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        // Reading at or beyond EOF succeeds with an empty descriptor. Subtract
+        // only after this comparison: unsigned size-position used to underflow.
+        const auto count = static_cast<std::uint32_t>(*position >= size ? 0
+            : std::min<std::uint64_t>(*length, size - *position));
+        std::array<std::uint8_t, 64 * 1024> data;
+        std::uint32_t offset = 0;
+        while (offset < count) {
+            const auto requested = std::min<std::uint32_t>(count - offset, data.size());
+            const auto read = vfs_file->read_file(data.data(), 1, requested);
+            if ((read > requested) || ((read < requested) && (*position + offset + read < vfs_file->size()))) {
+                ctx->complete(epoc::error_general);
                 return;
             }
-            if (temp.value() != static_cast<std::uint64_t>(-1)) {
-                read_pos = temp.value();
+            if (!file_guest_range(ctx, descriptor->data + offset, static_cast<std::uint32_t>(read), true, data.data())) {
+                ctx->complete(epoc::error_bad_descriptor);
+                return;
             }
-        } else {
-            std::int32_t pos_gotten = *ctx->get_argument_value<std::int32_t>(2);
-
-            if ((pos_gotten != static_cast<std::int32_t>(0x80000000)) && (pos_gotten != -1)) {
-                read_pos = static_cast<std::uint64_t>(pos_gotten);
+            offset += static_cast<std::uint32_t>(read);
+            if (read < requested) {
+                break;
             }
         }
-
-        vfs_file->seek(read_pos, file_seek_mode::beg);
-
-        uint64_t size = vfs_file->size();
-
-        if (size - read_pos < read_len) {
-            read_len = static_cast<int>(size - read_pos);
+        if (!file_set_read_length(ctx, *descriptor, offset)) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
         }
-
-        std::vector<char> read_data;
-        read_data.resize(read_len);
-
-        size_t read_finish_len = vfs_file->read_file(read_data.data(), 1, read_len);
-        ctx->write_data_to_descriptor_argument(0, reinterpret_cast<uint8_t *>(read_data.data()), static_cast<std::uint32_t>(read_finish_len));
-
-        //LOG_TRACE(SERVICE_EFSRV, "Readed {} from {} to address 0x{:x}", read_finish_len, read_pos, ctx->msg->args.args[0]);
         ctx->complete(epoc::error_none);
     }
 

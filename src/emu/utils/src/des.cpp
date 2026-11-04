@@ -49,23 +49,31 @@ namespace eka2l1::epoc {
     void desc_base::set_length(eka2l1::kernel::process *pr, const std::uint32_t new_len) {
         des_type dtype = get_descriptor_type();
 
+        if (new_len > descriptor_length_mask) {
+            LOG_ERROR(UTILS, "Descriptor length exceeds the 28-bit ABI limit: {}", new_len);
+            return;
+        }
+
         if ((dtype == buf) || (dtype == ptr) || (dtype == ptr_to_buf)) {
             const std::uint32_t max_len = get_max_length(pr);
 
             if (new_len > max_len) {
                 LOG_ERROR(UTILS, "Length being set greater than maximum (max {} vs set {})",
                     max_len, new_len);
+                return;
             }
         }
 
-        info = (info & ~(0xFFFFFF)) | new_len;
+        info = (info & ~descriptor_length_mask) | new_len;
 
         if (dtype == ptr_to_buf) {
             // We need to set the length inside.
             ptr_des<std::uint8_t> *pbuf = reinterpret_cast<decltype(pbuf)>(this);
             buf_desc<std::uint8_t> *hbufc = pbuf->data.cast<buf_desc<std::uint8_t>>().get(pr);
 
-            hbufc->set_length(pr, new_len);
+            if (hbufc) {
+                hbufc->set_length(pr, new_len);
+            }
         }
     }
 
@@ -97,7 +105,7 @@ namespace eka2l1::epoc {
             ptr_des<std::uint8_t> *pbuf = reinterpret_cast<decltype(pbuf)>(this);
             buf_desc<std::uint8_t> *hbufc = pbuf->data.cast<buf_desc<std::uint8_t>>().get(pr);
 
-            return &(hbufc->data[0]);
+            return hbufc ? &(hbufc->data[0]) : nullptr;
         }
 
         default:
