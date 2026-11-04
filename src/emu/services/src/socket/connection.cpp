@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <limits>
 
 namespace eka2l1::epoc::socket {
     void connection_events::notify(const connection_state &state, bool previously_active) {
@@ -426,6 +427,27 @@ namespace eka2l1::epoc::socket {
             ctx->complete(epoc::error_not_ready);
         } else if (name == u"IAP\\Id" || name == u"IAP\\IAPNetwork") {
             const auto value = name == u"IAP\\Id" ? state->info.iap_id : state->info.network_id;
+            ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
+        } else if (name == u"IAP\\IAPService") {
+            // Use this active connection's actual IAP record, just as the text
+            // setting reader does. Do not invent a service or pick another IAP.
+            auto *cenrep = reinterpret_cast<central_repo_server *>(ctx->sys->get_kernel_system()
+                ->get_by_name<service::server>(CENTRAL_REPO_SERVER_NAME));
+            auto *repo = cenrep ? cenrep->load_repo_with_lookup(ctx->sys->get_io_system(),
+                ctx->sys->get_device_manager(), 0xCCCCCC00) : nullptr;
+            if (repo) {
+                repo->access_count--;
+            }
+            const auto *entry = repo ? repo->find_entry(0x02840000 | (state->info.iap_id << 8)) : nullptr;
+            if (!entry || entry->data.etype != central_repo_entry_type::integer) {
+                ctx->complete(epoc::error_not_found);
+                return;
+            }
+            if (entry->data.intd > std::numeric_limits<std::uint32_t>::max()) {
+                ctx->complete(epoc::error_overflow);
+                return;
+            }
+            const auto value = static_cast<std::uint32_t>(entry->data.intd);
             ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
         } else {
             ctx->complete(epoc::error_not_found);
