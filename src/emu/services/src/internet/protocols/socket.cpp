@@ -452,7 +452,11 @@ namespace eka2l1::epoc::internet {
     }
 
     bool inet_socket::open(const std::uint32_t family_id, const std::uint32_t protocol_id, const epoc::socket::socket_type sock_type) {
-        const int family_translated = ((family_id == INET6_ADDRESS_FAMILY) ? AF_INET6 : AF_INET);
+        // KAfInet is shared by IPv4 and IPv6. Defer TCP family selection
+        // until its concrete endpoint is known. Keep eager IPv4 UDP until its
+        // broadcast and unbound write-poll contracts become family-aware.
+        const int family_translated = family_id == INET6_ADDRESS_FAMILY ? AF_INET6
+            : (protocol_id == INET_TCP_PROTOCOL_ID ? AF_UNSPEC : AF_INET);
 
         switch (sock_type) {
         case epoc::socket::socket_type_datagram:
@@ -745,11 +749,36 @@ namespace eka2l1::epoc::internet {
         }
 
         if (reuse_addr_changed_) {
-            // Set flags
-            reuse_addr_changed_ = false;
-
+            // A KAfInet handle is initially family-neutral. SO_REUSEADDR
+            // needs a descriptor before bind, so materialize that descriptor
+            // using the actual bind address when an option requires it.
             uv_os_fd_t fd = 0;
-            uv_fileno(reinterpret_cast<uv_handle_t *>(opaque_handle_), &fd);
+            if (uv_fileno(reinterpret_cast<uv_handle_t *>(opaque_handle_), &fd) < 0) {
+                uv_os_sock_t native_socket = ::socket(address.sin6_family,
+                    protocol_ == INET_TCP_PROTOCOL_ID ? SOCK_STREAM : SOCK_DGRAM, 0);
+#if EKA2L1_PLATFORM(WIN32)
+                if (native_socket == INVALID_SOCKET) {
+#else
+                if (native_socket < 0) {
+#endif
+                    return epoc::error_general;
+                }
+                const int opened = protocol_ == INET_TCP_PROTOCOL_ID
+                    ? uv_tcp_open(reinterpret_cast<uv_tcp_t *>(opaque_handle_), native_socket)
+                    : uv_udp_open(reinterpret_cast<uv_udp_t *>(opaque_handle_), native_socket);
+                if (opened < 0) {
+#if EKA2L1_PLATFORM(WIN32)
+                    closesocket(native_socket);
+#else
+                    ::close(native_socket);
+#endif
+                    return epoc::error_general;
+                }
+                if (uv_fileno(reinterpret_cast<uv_handle_t *>(opaque_handle_), &fd) < 0) {
+                    return epoc::error_general;
+                }
+            }
+            reuse_addr_changed_ = false;
 
             int value = reuse_addr_;
 

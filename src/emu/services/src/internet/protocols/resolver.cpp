@@ -157,7 +157,10 @@ namespace eka2l1::epoc::internet {
         addrinfo hint_info;
         std::memset(&hint_info, 0, sizeof(addrinfo));
 
-        hint_info.ai_family = (addr_family_ == INET6_ADDRESS_FAMILY) ? AF_INET6 : AF_INET;
+        // KAfInet is Symbian's shared IPv4/IPv6 protocol family. Open C uses
+        // it even for an AF_INET6 getaddrinfo request, filtering the returned
+        // TInetAddr records afterwards. It must therefore include AAAA here.
+        hint_info.ai_family = (addr_family_ == INET6_ADDRESS_FAMILY) ? AF_INET6 : AF_UNSPEC;
         hint_info.ai_socktype = (protocol_id_ == INET_UDP_PROTOCOL_ID) ? SOCK_DGRAM : SOCK_STREAM; 
         hint_info.ai_protocol = (protocol_id_ == INET_UDP_PROTOCOL_ID) ? IPPROTO_UDP : IPPROTO_TCP;
         hint_info.ai_flags = config::numeric_host_address(name_utf8) ? AI_NUMERICHOST : 0;
