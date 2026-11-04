@@ -280,7 +280,9 @@ namespace eka2l1::common {
         }
 
         case prot_read_write: {
-            open_mode = O_RDWR | O_CREAT;
+            // Existing-file private COW pages are writable copies; the backing
+            // file needs read access only. Do not create a size-zero backing file.
+            open_mode = is_private && size == 0 ? O_RDONLY : O_RDWR | O_CREAT;
             break;
         }
 
