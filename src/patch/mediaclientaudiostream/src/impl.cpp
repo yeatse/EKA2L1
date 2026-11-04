@@ -506,10 +506,11 @@ TInt CMMFMdaAudioOutputStream::Pause() {
         return KErrNotReady;
     }
 
-    iState = EMdaStatePause;
-    Stop();
-
-    return KErrNone;
+    // The DSP dispatch contract has no lossless pause/resume operation.
+    // Stop() aborts queued descriptors and resets the playback position, so it
+    // cannot implement true pause. Leave playback and ownership untouched and
+    // let the client choose an explicit stop/re-prime fallback.
+    return KErrNotSupported;
 }
 
 TInt CMMFMdaAudioOutputStream::Resume() {
@@ -517,10 +518,8 @@ TInt CMMFMdaAudioOutputStream::Resume() {
         return KErrNotReady;
     }
 
-    iState = EMdaStatePlay;
-    Play();
-
-    return KErrNone;
+    // No successful Pause() can establish a resumable DSP stream yet.
+    return KErrNotSupported;
 }
 
 void CMMFMdaAudioOutputStream::DataWaitTimeout() {

@@ -391,6 +391,10 @@ void CMdaAudioInputStream::GetSupportedBitRatesL(RArray<TInt>& aSupportedBitRate
 }
 
 TInt CMdaAudioInputStream::BitRateL() const {
+    // No input bitrate query is implemented. This L API must reject the request
+    // rather than return an indeterminate value or a fabricated bitrate.
+    User::Leave(KErrNotSupported);
+    __builtin_unreachable(); // User::Leave does not return on Symbian.
 }
 
 void CMdaAudioInputStream::SetBitRateL(TInt aBitRate) {
