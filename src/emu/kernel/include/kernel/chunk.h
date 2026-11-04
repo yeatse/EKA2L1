@@ -86,7 +86,7 @@ namespace eka2l1 {
             bool is_heap;
 
             chunk_type type;
-            chunk_access pos_access;
+            chunk_access pos_access = chunk_access::local;
 
         public:
             explicit chunk(kernel_system *kern, memory_system *mem)
@@ -170,6 +170,9 @@ namespace eka2l1 {
 
             const std::size_t max_size() const;
             const std::size_t committed() const;
+
+            // ROM/ROFS mappings use ROM backing, not the emulated writable RAM pool.
+            bool counts_as_guest_ram() const { return pos_access != chunk_access::rom; }
 
             const std::uint32_t bottom_offset() const;
             const std::uint32_t top_offset() const;

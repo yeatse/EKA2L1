@@ -42,6 +42,7 @@
 
 #include <kernel/kernel.h>
 #include <kernel/libmanager.h>
+#include <kernel/memory_pressure.h>
 #include <kernel/guomen_process.h>
 #include <kernel/scheduler.h>
 #include <kernel/thread.h>
@@ -183,6 +184,7 @@ namespace eka2l1 {
 
     void kernel_system::reset() {
         wipeout();
+        guest_ram_sample_valid_ = false;
 
         thr_sch_ = std::make_unique<kernel::thread_scheduler>(this, timing_, cpu_);
 
@@ -497,6 +499,43 @@ namespace eka2l1 {
         mem_ = new_mem;
     }
 
+    std::uint64_t kernel_system::total_guest_ram() const {
+        // Preserve the existing HAL capacities; this is not a new allocation limit.
+        if (kern_ver_ >= epocver::epoc10)
+            return common::MB(256);
+        if (kern_ver_ >= epocver::epoc91)
+            return common::MB(128);
+        if (kern_ver_ >= epocver::epoc80)
+            return common::MB(64);
+        return common::MB(32);
+    }
+
+    std::uint64_t kernel_system::free_guest_ram() const {
+        std::uint64_t free = total_guest_ram();
+        for (const auto &object : chunks_) {
+            const auto *chunk = static_cast<const kernel::chunk *>(object.get());
+            if (chunk->counts_as_guest_ram())
+                free = kernel::remaining_guest_ram(free, chunk->committed());
+        }
+        return free;
+    }
+
+    void kernel_system::guest_memory_changed() {
+        if (wiping_)
+            return;
+        const std::uint64_t free = free_guest_ram();
+        const std::uint32_t changes = guest_ram_sample_valid_
+            ? kernel::memory_threshold_changes(last_free_guest_ram_, free) : 0;
+        last_free_guest_ram_ = free;
+        guest_ram_sample_valid_ = true;
+        if (!changes)
+            return;
+        // Only completes request statuses and wakes guest threads. No guest code,
+        // host client callback, GC or object destruction runs inside this loop.
+        for (const auto &object : change_notifiers_)
+            static_cast<kernel::change_notifier *>(object.get())->notify_change_requester(changes);
+    }
+
     bool kernel_system::is_address_in_rom(const address addr) const {
         const address rom_start = rom_info_->header.rom_base;
         return (addr >= rom_start) && (addr - rom_start < rom_info_->header.rom_size);
@@ -505,6 +544,7 @@ namespace eka2l1 {
     // For user-provided EPOC version
     void kernel_system::set_epoc_version(const epocver ver) {
         kern_ver_ = ver;
+        guest_ram_sample_valid_ = false;
         lib_mngr_ = std::make_unique<hle::lib_manager>(this, io_, mem_);
 
         // Set CPU SVC handler

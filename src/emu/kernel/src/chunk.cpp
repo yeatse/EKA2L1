@@ -173,6 +173,8 @@ namespace eka2l1 {
 
             mmc_impl_ = nullptr;
 
+            kern->guest_memory_changed();
+
             if (own)
                 own->decrease_access_count();
 
@@ -218,6 +220,8 @@ namespace eka2l1 {
             }
 
             std::size_t ret_value = mmc_impl_->commit(offset, size, false);
+            // Count the actual result, including a partial commit on failure.
+            kern->guest_memory_changed();
 
             if (ret_value == 0) {
                 return epoc::error_no_memory;
@@ -233,11 +237,9 @@ namespace eka2l1 {
                 return false;
             }
 
-            if (mmc_impl_->commit(offset, size) == 0) {
-                return false;
-            }
-
-            return true;
+            const bool result = mmc_impl_->commit(offset, size) != 0;
+            kern->guest_memory_changed();
+            return result;
         }
 
         bool chunk::decommit(uint32_t offset, size_t size) {
@@ -246,6 +248,7 @@ namespace eka2l1 {
             }
 
             mmc_impl_->decommit(offset, size);
+            kern->guest_memory_changed();
             return true;
         }
 
@@ -254,7 +257,9 @@ namespace eka2l1 {
                 return false;
             }
 
-            return mmc_impl_->adjust(0xFFFFFFFF, static_cast<address>(adj_size));
+            const bool result = mmc_impl_->adjust(0xFFFFFFFF, static_cast<address>(adj_size));
+            kern->guest_memory_changed();
+            return result;
         }
 
         bool chunk::adjust_de(size_t nbottom, size_t ntop) {
@@ -262,7 +267,9 @@ namespace eka2l1 {
                 return false;
             }
 
-            return mmc_impl_->adjust(static_cast<address>(nbottom), static_cast<address>(ntop));
+            const bool result = mmc_impl_->adjust(static_cast<address>(nbottom), static_cast<address>(ntop));
+            kern->guest_memory_changed();
+            return result;
         }
 
         std::int32_t chunk::allocate(size_t size) {
@@ -270,7 +277,9 @@ namespace eka2l1 {
                 return -1;
             }
 
-            return mmc_impl_->allocate(size);
+            const std::int32_t result = mmc_impl_->allocate(size);
+            kern->guest_memory_changed();
+            return result;
         }
 
         void *chunk::host_base() {
