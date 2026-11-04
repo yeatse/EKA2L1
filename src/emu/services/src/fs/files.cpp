@@ -71,46 +71,9 @@ namespace eka2l1 {
 
     // The sharing state is keyed by path, so the key has to be one single form of it:
     // a file opened as "c:/dir/f" and again as "c:\dir\f" is the same file.
-    static std::u16string canonical_file_attrib_path(std::u16string path) {
-        return eka2l1::transform_separators<char16_t>(
-            std::move(path), true, eka2l1::get_separator_16);
-    }
-
-    bool file_attrib::claim_exclusive(const kernel::uid pr_uid) {
-        if (owner == pr_uid) {
-            flags |= static_cast<std::uint32_t>(fs_file_attrib_flag::exclusive);
-            return true;
-        }
-
-        return false;
-    }
-
-    void file_attrib::increment_use(const kernel::uid pr_uid) {
-        if (use_count == 0) {
-            owner = pr_uid;
-        }
-
-        if (owner == pr_uid) {
-            use_count++;
-        }
-    }
-
-    void file_attrib::decrement_use(const kernel::uid pr_uid) {
-        if (use_count == 0) {
-            return;
-        }
-
-        if (pr_uid == owner) {
-            use_count--;
-        }
-
-        if (use_count == 0) {
-            // Clear all flags
-            flags = 0;
-            owner = 0;
-
-            return;
-        }
+    std::u16string canonical_file_attrib_path(std::u16string path) {
+        return common::lowercase_ucs2_string(eka2l1::transform_separators<char16_t>(
+            std::move(path), true, eka2l1::get_separator_16));
     }
 
     fs_node::~fs_node() {
@@ -124,14 +87,44 @@ namespace eka2l1 {
         }
     }
 
+    int file_attribute_result(abstract_file_system_err_code result) {
+        switch (result) {
+        case abstract_file_system_err_code::ok: return epoc::error_none;
+        case abstract_file_system_err_code::no: return epoc::error_not_found;
+        case abstract_file_system_err_code::unsupported: return epoc::error_not_supported;
+        case abstract_file_system_err_code::failed: return epoc::error_access_denied;
+        }
+        return epoc::error_general;
+    }
+
+    int fs_node::flush_attributes() {
+        if (!vfs_node || vfs_node->type != io_component_type::file)
+            return epoc::error_none;
+        auto *file = static_cast<eka2l1::file *>(vfs_node.get());
+        auto found = serv->attribs.find(canonical_file_attrib_path(file->file_name()));
+        if (found == serv->attribs.end() || !found->second.pending_read_only)
+            return epoc::error_none;
+        const auto error = file_attribute_result(serv->get_system()->get_io_system()->set_entry_read_only(
+            file->file_name(), *found->second.pending_read_only));
+        if (error == epoc::error_none)
+            found->second.pending_read_only.reset();
+        return error;
+    }
+
     void fs_node::deref() {
-        if (vfs_node->type == io_component_type::file) {        
+        // Duplicate handles and file mappings retain this same file object.
+        // Drop its one sharing claim only with the final reference.
+        if (count == 1 && vfs_node && vfs_node->type == io_component_type::file) {
+            const bool flushed = static_cast<file *>(vfs_node.get())->flush();
+            const auto error = flushed ? flush_attributes() : epoc::error_general;
+            if (error != epoc::error_none)
+                LOG_ERROR(SERVICE_EFSRV, "Failed to persist attributes on final close: {}", error);
             file *vfs_file = reinterpret_cast<file *>(vfs_node.get());
             const std::u16string filename = canonical_file_attrib_path(vfs_file->file_name());
 
             auto ite = serv->attribs.find(filename);
             if (ite != serv->attribs.end()) {
-                ite->second.decrement_use(process);
+                ite->second.release(mix_mode & 3, open_mode & WRITE_MODE);
                 if (ite->second.use_count == 0) {
                     serv->attribs.erase(ite);
                 }
@@ -434,7 +427,7 @@ namespace eka2l1 {
             return;
         }
 
-        ctx->complete(epoc::error_none);
+        ctx->complete(node->flush_attributes());
     }
 
     void fs_server_client::file_rename(service::ipc_context *ctx) {
@@ -452,6 +445,12 @@ namespace eka2l1 {
             return;
         }
 
+        // RFile::Rename requires an exclusive writable share. Moving a shared
+        // path's bookkeeping would strand other nodes under their old name.
+        if ((node->mix_mode & 3) != epoc::fs::file_share_exclusive || !(node->open_mode & WRITE_MODE)) {
+            ctx->complete(epoc::error_access_denied);
+            return;
+        }
         file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
         const std::u16string old_path = vfs_file->file_name();
         auto new_path = ctx->get_argument_value<std::u16string>(0);
@@ -467,32 +466,32 @@ namespace eka2l1 {
             return;
         }
 
-        bool res = ctx->sys->get_io_system()->rename(old_path, new_path_abs);
-
-        if (!res) {
+        if (char16_to_drive(old_path[0]) != char16_to_drive(new_path_abs[0])) {
+            ctx->complete(epoc::error_bad_name);
+            return;
+        }
+        if (ctx->sys->get_io_system()->exist(new_path_abs)) {
+            ctx->complete(epoc::error_already_exists);
+            return;
+        }
+        if (!vfs_file->flush()) {
             ctx->complete(epoc::error_general);
             return;
         }
-
-        // Save state of file and reopening it
-        size_t last_pos = vfs_file->tell();
-        int last_mode = vfs_file->file_mode();
-
-        vfs_file->close();
-
-        symfile new_vfs_file = ctx->sys->get_io_system()->open_file(new_path_abs, last_mode);
-
-        if (!new_vfs_file) {
-            // Renamed on disk, but the new path would not open. Say so, rather than
-            // leaving the subsession holding a null file it dereferences next.
-            LOG_ERROR(SERVICE_EFSRV, "Can't reopen {} after rename", common::ucs2_to_utf8(new_path_abs));
+        const int attribute_error = node->flush_attributes();
+        if (attribute_error != epoc::error_none) {
+            ctx->complete(attribute_error);
+            return;
+        }
+        const auto new_host_path = ctx->sys->get_io_system()->get_raw_path(new_path_abs);
+        if (!new_host_path) {
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        if (!vfs_file->rename(new_path_abs, *new_host_path)) {
             ctx->complete(epoc::error_general);
             return;
         }
-
-        new_vfs_file->seek(last_pos, file_seek_mode::beg);
-
-        node->vfs_node = std::move(new_vfs_file);
 
         auto &attribs = server<fs_server>()->attribs;
         auto attrib_node = attribs.extract(canonical_file_attrib_path(old_path));
@@ -818,11 +817,9 @@ namespace eka2l1 {
         void *backing_;
         std::size_t size_;
 
-        fs_file_mapping(fs_node *source, kernel::chunk *chunk, void *backing, const std::size_t size,
-            file_attrib *attrib)
+        fs_file_mapping(fs_node *source, kernel::chunk *chunk, void *backing, const std::size_t size)
             : source_(source), chunk_(chunk), backing_(backing), size_(size) {
             source_->ref();
-            attrib->increment_use(source_->process);
         }
 
         ~fs_file_mapping() override {
@@ -946,8 +943,7 @@ namespace eka2l1 {
             return;
         }
 
-        auto &attrib = server<fs_server>()->attribs[canonical_file_attrib_path(source_file->file_name())];
-        auto *mapping = make_new<fs_file_mapping>(source, chunk, backing, mapped_size, &attrib);
+        auto *mapping = make_new<fs_file_mapping>(source, chunk, backing, mapped_size);
         const auto handle = obj_table_.add(mapping);
         const address base = chunk->base(process).ptr_address();
         int error = epoc::error_none;
@@ -990,11 +986,12 @@ namespace eka2l1 {
         file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
 
         // Reset its status, so seek back, this is just in case it got used again
-        vfs_file->flush();
+        const bool flushed = vfs_file->flush();
+        const int attribute_error = flushed ? node->flush_attributes() : epoc::error_general;
         vfs_file->seek(0, file_seek_mode::beg);
 
         obj_table_.remove(*handle_res);
-        ctx->complete(epoc::error_none);
+        ctx->complete(!flushed ? epoc::error_general : attribute_error);
     }
 
     void fs_server_client::file_open(service::ipc_context *ctx) {
@@ -1040,18 +1037,31 @@ namespace eka2l1 {
             *ctx->get_argument_value<std::int32_t>(1), true, true);
 
         if (handle <= 0) {
+            io->delete_entry(full_path);
             ctx->complete(handle);
             return;
         }
 
         LOG_TRACE(SERVICE_EFSRV, "Handle opened: {}", handle);
 
-        ctx->write_data_to_descriptor_argument<int>(3, handle);
-
-        // Arg2 take the temp path
         const utf16_str guest_path = eka2l1::transform_separators<char16_t>(
             full_path, true, eka2l1::get_separator_16);
-        ctx->write_arg(2, guest_path);
+        int error = epoc::error_none;
+        const std::size_t max_path_chars = ctx->get_argument_max_data_size(2)
+            / (ctx->sys->get_kernel_system()->is_eka1() ? 1 : sizeof(char16_t));
+        const bool enough_space = max_path_chars >= guest_path.size()
+            && ctx->get_argument_max_data_size(3) >= sizeof(handle);
+        if (!enough_space)
+            error = epoc::error_overflow;
+        const bool handle_written = enough_space && ctx->write_data_to_descriptor_argument<int>(3, handle, &error);
+        const bool path_written = handle_written && ctx->write_arg(2, guest_path);
+        if (!handle_written || !path_written) {
+            obj_table_.remove(handle);
+            io->delete_entry(full_path);
+            server<fs_server>()->temporary_file_cleanset_.erase(common::lowercase_ucs2_string(full_path));
+            ctx->complete(error == epoc::error_none ? epoc::error_bad_descriptor : error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1070,13 +1080,12 @@ namespace eka2l1 {
 
         const epoc::handle dup_handle = obj_table_.add(node);
 
-        file *f = reinterpret_cast<file *>(node->vfs_node.get());
-
-        auto &node_attrib = server<fs_server>()->attribs[
-            canonical_file_attrib_path(f->file_name())];
-        node_attrib.increment_use(node->process);
-
-        ctx->write_data_to_descriptor_argument<epoc::handle>(3, dup_handle);
+        int error = epoc::error_none;
+        if (!ctx->write_data_to_descriptor_argument<epoc::handle>(3, dup_handle, &error)) {
+            obj_table_.remove(dup_handle);
+            ctx->complete(error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1108,26 +1117,46 @@ namespace eka2l1 {
         std::optional<entry_info> info = io->get_entry_info(f->file_name());
         assert(info);
 
-        const std::uint32_t attrib = epoc::fs::build_attribute_from_entry_info(info.value());
-        ctx->write_data_to_descriptor_argument(0, attrib);
-        ctx->complete(epoc::error_none);
+        std::uint32_t attrib = epoc::fs::build_attribute_from_entry_info(info.value());
+        const auto found = server<fs_server>()->attribs.find(canonical_file_attrib_path(f->file_name()));
+        if (found != server<fs_server>()->attribs.end() && found->second.pending_read_only) {
+            if (*found->second.pending_read_only)
+                attrib |= epoc::fs::entry_att_read_only;
+            else
+                attrib &= ~epoc::fs::entry_att_read_only;
+        }
+        int error = epoc::error_none;
+        ctx->write_data_to_descriptor_argument(0, attrib, &error);
+        ctx->complete(error);
     }
 
     void fs_server_client::file_set_att(service::ipc_context *ctx) {
-        std::int32_t target_handle = *ctx->get_argument_value<std::int32_t>(3);
-
-        if (!target_handle) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto set = ctx->get_argument_value<std::uint32_t>(0);
+        const auto clear = ctx->get_argument_value<std::uint32_t>(1);
+        if (!handle || !set || !clear) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        fs_node *node = get_file_node(target_handle);
-
-        if (!node) {
-            ctx->complete(epoc::error_not_found);
+        auto *node = get_file_node(*handle);
+        if (!node || !node->vfs_node || node->vfs_node->type != io_component_type::file) {
+            ctx->complete(epoc::error_bad_handle);
             return;
         }
-
+        if (!(node->open_mode & WRITE_MODE)) {
+            ctx->complete(epoc::error_access_denied);
+            return;
+        }
+        const auto change = requested_read_only_change(*set, *clear);
+        if (change == read_only_change::invalid || change == read_only_change::unsupported) {
+            ctx->complete(change == read_only_change::invalid ? epoc::error_argument : epoc::error_not_supported);
+            return;
+        }
+        if (change != read_only_change::unchanged) {
+            auto *file = static_cast<eka2l1::file *>(node->vfs_node.get());
+            auto &attribute = server<fs_server>()->attribs.at(canonical_file_attrib_path(file->file_name()));
+            attribute.pending_read_only = change == read_only_change::set;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1229,6 +1258,11 @@ namespace eka2l1 {
             return;
         }
 
+        if (ctx->get_argument_max_data_size(3) < sizeof(int)) {
+            ctx->complete(epoc::error_overflow);
+            return;
+        }
+
         *name_res = get_full_symbian_path(ss_path, *name_res);
         std::string name_utf8 = common::ucs2_to_utf8(*name_res);
 
@@ -1285,7 +1319,12 @@ namespace eka2l1 {
 
         LOG_TRACE(SERVICE_EFSRV, "Handle opened: {}", handle);
 
-        ctx->write_data_to_descriptor_argument<int>(3, handle);
+        int error = epoc::error_none;
+        if (!ctx->write_data_to_descriptor_argument<int>(3, handle, &error)) {
+            obj_table_.remove(handle);
+            ctx->complete(error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1335,51 +1374,33 @@ namespace eka2l1 {
             }
         }
 
-        // Check the attribute first
-        fs_node *new_node = server<fs_server>()->make_new<fs_node>();
-        auto &node_attrib = server<fs_server>()->attribs[
-            canonical_file_attrib_path(name)];
-
-        if (node_attrib.is_exlusive()) {
-            // Check if we can open it
-            if (node_attrib.owner != own_pr_uid) {
-                // Access denied
-                return epoc::error_in_use;
-            }
-        }
-
-        node_attrib.increment_use(own_pr_uid);
-
-        if (share_mode == epoc::fs::file_share_exclusive) {
-            // Try to claim and return denied if we can't
-            if (!node_attrib.claim_exclusive(own_pr_uid)) {
-                return epoc::error_in_use;
-            }
-        }
-
-        //======================= CHECK COMPARE MODE ===============================
-
-        if (node_attrib.is_readable_and_writeable() && !node_attrib.is_optional()) {
-            if (share_mode == epoc::fs::file_share_readers_only) {
-                // Hell no.
+        if (access_mode & WRITE_MODE) {
+            auto info = io->get_entry_info(name);
+            if (info && (epoc::fs::build_attribute_from_entry_info(*info) & epoc::fs::entry_att_read_only))
                 return epoc::error_access_denied;
-            }
         }
 
-        if (node_attrib.is_readonly() && ((share_mode == epoc::fs::file_share_any) || (share_mode == epoc::fs::file_share_readers_or_writers))) {
-            return epoc::error_access_denied;
+        auto &attributes = server<fs_server>()->attribs;
+        const auto key = canonical_file_attrib_path(name);
+        auto existing = attributes.find(key);
+        if (existing != attributes.end()) {
+            if (!existing->second.compatible(share_mode, access_mode & WRITE_MODE))
+                return epoc::error_in_use;
+            if (!existing->second.can_acquire(share_mode, access_mode & WRITE_MODE))
+                return epoc::error_no_memory;
         }
 
-        //======================= PROMOTE MODE ==============================
-        // TODO
-
-        //======================= DO OPEN AND FILL ==========================
-        new_node->vfs_node = io->open_file(name, access_mode);
-
-        if (!new_node->vfs_node) {
+        // Compatibility and read-only checks precede any truncating open.
+        // Publish a claim only after opening succeeds; a failed open must not
+        // leave exclusive state or a partly initialized server object behind.
+        auto opened = io->open_file(name, access_mode);
+        if (!opened || !opened->valid()) {
             LOG_TRACE(SERVICE_EFSRV, "Can't open file {}", common::ucs2_to_utf8(name));
             return epoc::error_not_found;
         }
+        auto *new_node = server<fs_server>()->make_new<fs_node>();
+        new_node->vfs_node = std::move(opened);
+        attributes[key].acquire(share_mode, access_mode & WRITE_MODE);
 
         new_node->mix_mode = real_mode;
         new_node->open_mode = access_mode;

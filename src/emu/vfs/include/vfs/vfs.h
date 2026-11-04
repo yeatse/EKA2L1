@@ -134,6 +134,9 @@ namespace eka2l1 {
          */
         virtual std::u16string file_name() const = 0;
 
+        // Rename an already open physical file without reopening/truncating it.
+        virtual bool rename(const std::u16string &, const std::u16string &) { return false; }
+
         /*! \brief Size of the file. 
          * \returns The size of the file.
         */
@@ -346,6 +349,9 @@ namespace eka2l1 {
         bool remove_drive_change_notify(const std::size_t handle);
 
         std::optional<std::u16string> get_raw_path(const std::u16string &path);
+
+        // Persist the supported per-entry read-only bit in a writable mapped drive.
+        abstract_file_system_err_code set_entry_read_only(const std::u16string &path, bool read_only);
 
         /*! \brief Add a new file system to the IO system
         *
