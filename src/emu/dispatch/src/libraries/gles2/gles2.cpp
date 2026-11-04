@@ -2078,7 +2078,9 @@ APPLY_PENDING_ROUTES:
 
         for (std::int32_t i = 0; i < count; i++) {
             stub_obj = std::make_unique<gles_renderbuffer_object>(*ctx);
+            auto *object = stub_obj.get();
             rbs[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(rbs[i]);
         }
     }
     
@@ -2208,7 +2210,9 @@ APPLY_PENDING_ROUTES:
 
         for (std::int32_t i = 0; i < count; i++) {
             stub_obj = std::make_unique<gles_framebuffer_object>(*ctx);
+            auto *object = stub_obj.get();
             names[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(names[i]);
         }
     }
 

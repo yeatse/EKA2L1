@@ -959,7 +959,8 @@ namespace eka2l1::dispatch {
 
     gles_driver_object::gles_driver_object(egl_context_es_shared &ctx)
         : context_(ctx)
-        , driver_handle_(0) {
+        , driver_handle_(0)
+        , client_handle_(0) {
     }
 
     gles_driver_texture::~gles_driver_texture() {
@@ -1242,7 +1243,9 @@ namespace eka2l1::dispatch {
         while (buffers_.find(name) != buffers_.end()) {
             ++name;
         }
-        buffers_.emplace(name, std::make_unique<gles_driver_buffer>(*this));
+        auto buffer = std::make_unique<gles_driver_buffer>(*this);
+        buffer->assign_client_handle(name);
+        buffers_.emplace(name, std::move(buffer));
         return name;
     }
 
@@ -1260,6 +1263,7 @@ namespace eka2l1::dispatch {
             auto &buffer = buffers_[name];
             if (!buffer) {
                 buffer = std::make_unique<gles_driver_buffer>(*this);
+                buffer->assign_client_handle(name);
             }
             buffer->was_bound_ = true;
         }
@@ -2050,7 +2054,9 @@ namespace eka2l1::dispatch {
             default:
                 break;
             }
+            auto *object = stub_obj.get();
             texs[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(texs[i]);
         }
     }
 
