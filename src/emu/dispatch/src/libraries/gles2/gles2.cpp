@@ -3064,7 +3064,11 @@ APPLY_PENDING_ROUTES:
 
         dispatcher *dp = sys->get_dispatcher();
         dispatch::egl_controller &controller = dp->get_egl_controller();
-        gles_framebuffer_object *fb_obj = get_binded_framebuffer_object_gles(ctx, controller);
+        // Name zero is the valid EGL read surface, not a user framebuffer.
+        // The object lookup reports INVALID_OPERATION for zero, even though
+        // the default-surface read below succeeds.
+        gles_framebuffer_object *fb_obj = ctx->binded_framebuffer_
+            ? get_binded_framebuffer_object_gles(ctx, controller) : nullptr;
 
         // Framebuffer handle on driver side still 0 = not drawn anything yet. Don't waste time
         // Maybe we should still read though. No one knows
