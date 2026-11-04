@@ -20,6 +20,7 @@
 
 #include <common/cvt.h>
 #include <services/internet/protocols/overall.h>
+#include <services/internet/protocols/common.h>
 #include <services/sms/protocols/overall.h>
 #include <services/socket/agent/genconn.h>
 #include <services/socket/connection.h>
@@ -410,6 +411,19 @@ namespace eka2l1 {
         if (!addr_family || !protocol || !sock_type) {
             ctx->complete(epoc::error_argument);
             return;
+        }
+
+        // Open C maps IPv6 socket(..., protocol=0) to the published
+        // KUndefinedProtocol value. Select defaults by the Internet socket
+        // type, preserving explicit protocols and every other family/type.
+        if (protocol.value() == 0xFFFFFFFEU
+            && (addr_family.value() == epoc::internet::INET_ADDRESS_FAMILY
+                || addr_family.value() == epoc::internet::INET6_ADDRESS_FAMILY)) {
+            if (sock_type.value() == epoc::socket::socket_type_stream) {
+                protocol = epoc::internet::INET_TCP_PROTOCOL_ID;
+            } else if (sock_type.value() == epoc::socket::socket_type_datagram) {
+                protocol = epoc::internet::INET_UDP_PROTOCOL_ID;
+            }
         }
 
         // Find the protocol that satifies our condition first
