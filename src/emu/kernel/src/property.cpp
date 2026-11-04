@@ -127,7 +127,9 @@ namespace eka2l1 {
             // now being torn down via decrease_access_count). notify_info::complete()
             // dereferences the requester thread, so only signal it while it is still alive;
             // otherwise just drop the stale subscription.
-            if (kern->is_thread_alive((*subscription_iterator)->requester)) {
+            // Wipeout destroys request semaphores before property references;
+            // surviving thread objects can no longer receive completions then.
+            if (!kern->wipeout_in_progress() && kern->is_thread_alive((*subscription_iterator)->requester)) {
                 (*subscription_iterator)->complete(epoc::error_cancel);
             }
 
@@ -139,7 +141,7 @@ namespace eka2l1 {
         void property::notify_request(const std::int32_t err) {
             while (auto subscription = subscription_queue.pop()) {
                 // Same rationale as cancel(): never complete to a requester that has died.
-                if (kern->is_thread_alive(subscription.value()->requester)) {
+                if (!kern->wipeout_in_progress() && kern->is_thread_alive(subscription.value()->requester)) {
                     subscription.value()->complete(err);
                 }
             }
