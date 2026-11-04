@@ -1002,9 +1002,12 @@ APPLY_PENDING_ROUTES:
         if (!driver_handle_) {
             if (!es2_context.framebuffer_pool_.empty()) {
                 driver_handle_ = es2_context.framebuffer_pool_.top();
+                es2_context.framebuffer_pool_.pop();
             } else {
-                drivers::handle color_buffer_local = attached_color_->handle_value();
-                driver_handle_ = drivers::create_framebuffer(drv, &color_buffer_local, &attached_color_face_index_, 1,
+                // A complete depth/stencil-only FBO has no color object. ANGLE
+                // uses these while securely initializing renderbuffer contents.
+                drivers::handle color_buffer_local = attached_color_ ? attached_color_->handle_value() : 0;
+                driver_handle_ = drivers::create_framebuffer(drv, &color_buffer_local, &attached_color_face_index_, attached_color_ ? 1 : 0,
                     attached_depth_ ? attached_depth_->handle_value() : 0, attached_depth_face_index_,
                     attached_stencil_ ? attached_stencil_->handle_value() : 0, attached_stencil_face_index_);
 
