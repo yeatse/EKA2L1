@@ -66,11 +66,22 @@ namespace eka2l1::epoc::socket {
         std::uint32_t max_length;
     };
 
+    struct connection_state;
+
+    struct connection_events {
+        using callback = std::function<void(const connection_state &, bool)>;
+        std::map<const void *, callback> observers;
+        void notify(const connection_state &state, bool previously_active);
+    };
+
     struct connection_state {
+        std::uint32_t monitor_id = 0;
         connection_info info;
         bool active = false;
+        bool authoritative_stop = false;
         std::int32_t stage = 0;
         std::map<const void *, std::function<void(std::int32_t)>> observers;
+        std::weak_ptr<connection_events> events;
 
         ~connection_state();
         void advance(std::int32_t new_stage);
@@ -89,11 +100,16 @@ namespace eka2l1::epoc::socket {
         std::vector<std::weak_ptr<connection_state>> states_;
         std::map<std::u16string, std::weak_ptr<connection_reference>> references_;
         std::uint64_t next_reference_ = 0;
+        std::uint32_t next_monitor_id_ = 1;
+        std::shared_ptr<connection_events> events_ = std::make_shared<connection_events>();
 
     public:
         std::shared_ptr<connection_state> create();
         std::shared_ptr<connection_state> find(const connection_info &info);
         std::vector<connection_info> enumerate();
+        std::vector<std::uint32_t> monitor_snapshot() const;
+        std::shared_ptr<connection_state> monitor_find(std::uint32_t id) const;
+        std::shared_ptr<connection_events> events() const { return events_; }
         std::shared_ptr<connection_reference> create_reference();
         std::int32_t clone(const std::u16string &name, const security_info &caller,
             std::shared_ptr<connection_state> &state);
