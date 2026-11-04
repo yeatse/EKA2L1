@@ -1239,14 +1239,21 @@ namespace eka2l1::drivers {
 
         case graphics_driver_get_shader_precision: {
 #if !EKA2L1_PLATFORM(IOS)
-            if (!glGetShaderPrecisionFormat) {
+            // The GLAD debug wrapper is always non-null, even when the actual
+            // API was unavailable. Check and call the underlying function so
+            // the debug callback cannot consume an error before we report it.
+            if (!glad_glGetShaderPrecisionFormat) {
                 finish(cmd.status_, -1);
                 break;
             }
-#endif
+            glad_glGetShaderPrecisionFormat(static_cast<GLenum>(cmd.data_[0]), static_cast<GLenum>(cmd.data_[1]),
+                reinterpret_cast<GLint *>(cmd.data_[2]), reinterpret_cast<GLint *>(cmd.data_[3]));
+            finish(cmd.status_, glad_glGetError() == GL_NO_ERROR ? 0 : -1);
+#else
             glGetShaderPrecisionFormat(static_cast<GLenum>(cmd.data_[0]), static_cast<GLenum>(cmd.data_[1]),
                 reinterpret_cast<GLint *>(cmd.data_[2]), reinterpret_cast<GLint *>(cmd.data_[3]));
-            finish(cmd.status_, 0);
+            finish(cmd.status_, glGetError() == GL_NO_ERROR ? 0 : -1);
+#endif
             break;
         }
 

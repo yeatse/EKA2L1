@@ -2675,6 +2675,10 @@ GLAPI PFNGLGETINTERNALFORMATIVPROC glad_debug_glGetInternalformativ;
 #define GL_COMPRESSED_RGBA_PVRTC_2BPPV1_IMG 0x8C03
 #define GL_COMPRESSED_RGBA_PVRTC_2BPPV2_IMG 0x9137
 #define GL_COMPRESSED_RGBA_PVRTC_4BPPV2_IMG 0x9138
+#ifndef GL_ARB_ES2_compatibility
+#define GL_ARB_ES2_compatibility 1
+GLAPI int GLAD_GL_ARB_ES2_compatibility;
+#endif
 #ifndef GL_ARB_ES3_compatibility
 #define GL_ARB_ES3_compatibility 1
 GLAPI int GLAD_GL_ARB_ES3_compatibility;

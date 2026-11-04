@@ -3483,6 +3483,7 @@ void APIENTRY glad_debug_impl_glWaitSync(GLsync arg0, GLbitfield arg1, GLuint64 
     
 }
 PFNGLWAITSYNCPROC glad_debug_glWaitSync = glad_debug_impl_glWaitSync;
+int GLAD_GL_ARB_ES2_compatibility = 0;
 int GLAD_GL_ARB_ES3_compatibility = 0;
 int GLAD_GL_ARB_draw_elements_base_vertex = 0;
 int GLAD_GL_EXT_texture_compression_s3tc = 0;
@@ -3903,6 +3904,23 @@ static void load_GL_VERSION_3_3(GLADloadproc load) {
 	glad_glSecondaryColorP3ui = (PFNGLSECONDARYCOLORP3UIPROC)load("glSecondaryColorP3ui");
 	glad_glSecondaryColorP3uiv = (PFNGLSECONDARYCOLORP3UIVPROC)load("glSecondaryColorP3uiv");
 }
+/* The generated desktop loader stops at GL 3.3. These GLES entry points are
+ * also native desktop APIs in ARB_ES2_compatibility / GL 4.1. Do not leave their
+ * debug wrappers pointing at NULL when using a supported desktop context. */
+static void load_GL_ARB_ES2_compatibility(GLADloadproc load) {
+	glad_glClearDepthf = NULL;
+	glad_glDepthRangef = NULL;
+	glad_glGetShaderPrecisionFormat = NULL;
+	glad_glReleaseShaderCompiler = NULL;
+	glad_glShaderBinary = NULL;
+	if (!GLAD_GL_ARB_ES2_compatibility && !(GLVersion.major > 4 ||
+		(GLVersion.major == 4 && GLVersion.minor >= 1))) return;
+	glad_glClearDepthf = (PFNGLCLEARDEPTHFPROC)load("glClearDepthf");
+	glad_glDepthRangef = (PFNGLDEPTHRANGEFPROC)load("glDepthRangef");
+	glad_glGetShaderPrecisionFormat = (PFNGLGETSHADERPRECISIONFORMATPROC)load("glGetShaderPrecisionFormat");
+	glad_glReleaseShaderCompiler = (PFNGLRELEASESHADERCOMPILERPROC)load("glReleaseShaderCompiler");
+	glad_glShaderBinary = (PFNGLSHADERBINARYPROC)load("glShaderBinary");
+}
 static void load_GL_ARB_draw_elements_base_vertex(GLADloadproc load) {
 	if(!GLAD_GL_ARB_draw_elements_base_vertex) return;
 	glad_glDrawElementsBaseVertex = (PFNGLDRAWELEMENTSBASEVERTEXPROC)load("glDrawElementsBaseVertex");
@@ -3912,6 +3930,7 @@ static void load_GL_ARB_draw_elements_base_vertex(GLADloadproc load) {
 }
 static int find_extensionsGL(void) {
 	if (!get_exts()) return 0;
+	GLAD_GL_ARB_ES2_compatibility = has_ext("GL_ARB_ES2_compatibility");
 	GLAD_GL_ARB_ES3_compatibility = has_ext("GL_ARB_ES3_compatibility");
 	GLAD_GL_ARB_draw_elements_base_vertex = has_ext("GL_ARB_draw_elements_base_vertex");
 	GLAD_GL_EXT_texture_compression_s3tc = has_ext("GL_EXT_texture_compression_s3tc");
@@ -3994,6 +4013,7 @@ int gladLoadGLLoader(GLADloadproc load) {
 	load_GL_VERSION_3_3(load);
 
 	if (!find_extensionsGL()) return 0;
+	load_GL_ARB_ES2_compatibility(load);
 	load_GL_ARB_draw_elements_base_vertex(load);
 	return GLVersion.major != 0 || GLVersion.minor != 0;
 }
