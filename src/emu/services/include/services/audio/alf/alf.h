@@ -20,13 +20,22 @@
 #pragma once
 
 #include <services/framework.h>
+#include <map>
 
 namespace eka2l1 {
     class alf_streamer_session : public service::typical_session {
-        std::unique_ptr<service::ipc_context> pending_plugin_request_;
+        // A session can be shared by threads/plugins. Cancellation is scoped
+        // to the plugin and the thread that issued the policy subscription.
+        using request_key = std::pair<std::uint32_t, std::uint64_t>;
+        std::map<request_key, std::unique_ptr<service::ipc_context>> pending_policy_requests_;
+
+        void cancel_policy(std::uint32_t plugin, std::uint64_t thread);
+        void cancel_plugin(std::uint32_t plugin);
+        static void complete_cancel(std::unique_ptr<service::ipc_context>, std::uint64_t requester_uid);
 
     public:
         explicit alf_streamer_session(service::typical_server *svr, kernel::uid client_ss_uid, epoc::version client_version);
+        ~alf_streamer_session() override;
         void fetch(service::ipc_context *ctx) override;
     };
 
