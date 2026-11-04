@@ -36,7 +36,7 @@ CMdaAudioPlayerUtility::~CMdaAudioPlayerUtility() {
     delete iProperties;
 }
 
-EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewL(MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewL(MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPatchPriorityPreference aPref) {
     CMdaAudioPlayerUtility *util = new (ELeave) CMdaAudioPlayerUtility();
     CleanupStack::PushL(util);
     util->iProperties = CMMFMdaAudioPlayerUtility::NewL(aCallback, aPriority, aPref);
@@ -46,7 +46,7 @@ EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewL(MMdaAudioPlayerCal
 }
 
 EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewFilePlayerL(const TDesC &aFileName,
-    MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPriorityPreference aPref, CMdaServer *aServer) {
+    MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPatchPriorityPreference aPref, CMdaServer *aServer) {
     CMdaAudioPlayerUtility *player = CMdaAudioPlayerUtility::NewL(aCallback, aPriority, aPref);
     player->OpenFileL(aFileName);
 
@@ -54,7 +54,7 @@ EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewFilePlayerL(const TD
 }
 
 EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewDesPlayerL(const TDesC8 &aData,
-    MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPriorityPreference aPref, CMdaServer *aServer) {
+    MMdaAudioPlayerCallback &aCallback, TInt aPriority, TMdaPatchPriorityPreference aPref, CMdaServer *aServer) {
     CMdaAudioPlayerUtility *player = CMdaAudioPlayerUtility::NewL(aCallback, aPriority, aPref);
     player->OpenDesL(aData);
 
@@ -62,7 +62,7 @@ EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewDesPlayerL(const TDe
 }
 
 EXPORT_C CMdaAudioPlayerUtility *CMdaAudioPlayerUtility::NewDesPlayerReadOnlyL(const TDesC8 &aData, MMdaAudioPlayerCallback &aCallback,
-    TInt aPriority, TMdaPriorityPreference aPref, CMdaServer *aServer) {
+    TInt aPriority, TMdaPatchPriorityPreference aPref, CMdaServer *aServer) {
     CMdaAudioPlayerUtility *player = CMdaAudioPlayerUtility::NewL(aCallback, aPriority, aPref);
     player->OpenDesL(aData);
 
@@ -114,8 +114,7 @@ EXPORT_C void CMdaAudioPlayerUtility::OpenDesL(const TDesC8 &aDescriptor) {
 }
 
 EXPORT_C void CMdaAudioPlayerUtility::OpenUrlL(const TDesC &aUrl, TInt aIapId, const TDesC8 &aMimeType) {
-    // ID and MIME are ignored right now
-    iProperties->SupplyUrlL(aUrl);
+    iProperties->SupplyRemoteUrlL(aUrl, aIapId, aMimeType);
 }
 
 EXPORT_C TInt CMdaAudioPlayerUtility::GetPosition(TTimeIntervalMicroSeconds &aPosition) {
@@ -184,7 +183,7 @@ EXPORT_C TInt CMdaAudioPlayerUtility::GetBitRate(TUint &aBitRate) {
 
 /// UNIMPLEMENT ALL THE WAY
 #if (MCA_NEW >= 2)
-EXPORT_C TInt CMdaAudioPlayerUtility::SetPriority(TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C TInt CMdaAudioPlayerUtility::SetPriority(TInt aPriority, TMdaPatchPriorityPreference aPref) {
     LogOut(KMcaCat, _L("Unimplemented function set priority!"));
     return KErrNotSupported;
 }
@@ -215,7 +214,9 @@ EXPORT_C void CMdaAudioPlayerUtility::RegisterForAudioLoadingNotification(MAudio
 }
 
 EXPORT_C void CMdaAudioPlayerUtility::GetAudioLoadingProgressL(TInt &aPercentageComplete) {
-    aPercentageComplete = 100;
+    const TInt progress = iProperties->LoadingProgress();
+    User::LeaveIfError(progress);
+    aPercentageComplete = progress;
 }
 
 EXPORT_C const CMMFControllerImplementationInformation &CMdaAudioPlayerUtility::ControllerImplementationInformationL() {

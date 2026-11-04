@@ -96,6 +96,9 @@ namespace eka2l1::drivers {
 
         std::uint32_t audio_bitrate() const override;
         std::uint32_t video_bitrate() const override;
+        bool has_audio() const override { return audio_stream_index_ >= 0; }
+        std::string mime_type() const override;
+        std::uint32_t audio_type() const override;
         eka2l1::vec2 get_video_size() const override;
 
         std::size_t video_audio_callback(std::int16_t *output_buffer, std::size_t frames);

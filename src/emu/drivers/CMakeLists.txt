@@ -66,6 +66,8 @@ if (EKA2L1_IOS)
 endif ()
 
 add_library(drivers
+        include/drivers/media_download.h
+        src/media_download.cpp
         include/drivers/network/tls.h
         src/network/tls.cpp
         include/drivers/itc.h
@@ -256,7 +258,10 @@ if (NOT MSVC)
     target_compile_options(miniBAE_EMU PRIVATE -Wno-int-conversion -Wno-implicit-function-declaration)
 endif()
 
-target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls)
+# MMF OpenUrl transfers run asynchronously through the host's HTTP/TLS
+# implementation, then hand a local file to the existing media decoders.
+find_package(CURL 7.85 REQUIRED)
+target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls CURL::libcurl)
 if (APPLE)
     target_sources(drivers PRIVATE src/network/tls_trust_apple.cpp)
     target_link_libraries(drivers PRIVATE "-framework Security" "-framework CoreFoundation")

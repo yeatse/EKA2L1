@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include <drivers/media_download.h>
+
 #include <cstdint>
 
 #include <dispatch/management.h>
@@ -145,6 +147,8 @@ namespace eka2l1::dispatch {
     public:
         std::unique_ptr<epoc::rw_des_stream> custom_stream_;
         std::unique_ptr<drivers::player> impl_;
+        std::shared_ptr<drivers::media_download> download_;
+        bool opening_url_ = false;
 
         std::uint32_t flags_;
 

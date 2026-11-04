@@ -22,6 +22,7 @@
 #include <vfs/vfs.h>
 
 #include <drivers/audio/audio.h>
+#include <drivers/media_download.h>
 #include <system/epoc.h>
 
 #include <kernel/kernel.h>
@@ -120,6 +121,9 @@ namespace eka2l1::dispatch {
         // a null impl_. Stop the hardware stream (waits out any callback in
         // flight) and destroy the player while the rest of us is still alive.
         stop_recording();
+        if (download_) {
+            download_->cancel();
+        }
 
         if (impl_) {
             impl_->stop();
@@ -289,26 +293,7 @@ namespace eka2l1::dispatch {
         return url_str;
     }
 
-    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_supply_url, eka2l1::ptr<void> handle,
-        const std::uint16_t *url, const std::uint32_t url_length, std::uint64_t *duration_us) {
-        const std::u16string guest_url(reinterpret_cast<const char16_t *>(url), url_length);
-        if (is_local_audio_url(guest_url) && !sys->get_io_system()->exist(guest_url)) {
-            return epoc::error_not_found;
-        }
-
-        std::u16string url_str = resolve_audio_url(sys, url, url_length);
-
-        // Proceed with the current URL
-        dispatch::dispatcher *dispatcher = sys->get_dispatcher();
-        dispatch::dsp_manager &manager = dispatcher->get_dsp_manager();
-        dsp_epoc_player *eplayer = manager.get_object<dsp_epoc_player>(handle.ptr_address());
-
-        if (!eplayer) {
-            return epoc::error_bad_handle;
-        }
-
-        const std::string url_u8 = common::ucs2_to_utf8(url_str);
-
+    static std::int32_t open_audio_source(system *sys, dsp_epoc_player *eplayer, const std::string &url_u8, std::uint64_t *duration_us) {
         bool supplied = eplayer->impl_ && eplayer->impl_->open_url(url_u8);
         if (!supplied) {
             drivers::audio_driver *driver = sys->get_audio_driver();
@@ -341,6 +326,100 @@ namespace eka2l1::dispatch {
             LOG_WARN(HLE_DISPATCHER, "Audio duration pointer is supposed to not be null!");
         }
 
+        return epoc::error_none;
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_supply_url, eka2l1::ptr<void> handle,
+        const std::uint16_t *url, const std::uint32_t url_length, std::uint64_t *duration_us) {
+        auto &manager = sys->get_dispatcher()->get_dsp_manager();
+        auto *eplayer = manager.get_object<dsp_epoc_player>(handle.ptr_address());
+        if (!eplayer) {
+            return epoc::error_bad_handle;
+        }
+        if (!url || !url_length || url_length > 8192) {
+            return epoc::error_argument;
+        }
+        if (eplayer->download_) {
+            eplayer->download_->cancel();
+            // Release the decoder before deleting the transfer-owned file.
+            if (eplayer->impl_) {
+                eplayer->impl_->stop();
+                eplayer->impl_.reset();
+            }
+            eplayer->download_.reset();
+        }
+        eplayer->opening_url_ = false;
+        const std::u16string guest_url(reinterpret_cast<const char16_t *>(url), url_length);
+        if (!is_local_audio_url(guest_url) && guest_url.find(u"://") != std::u16string::npos) {
+            eplayer->download_ = drivers::media_download::start(common::ucs2_to_utf8(guest_url));
+            eplayer->opening_url_ = true;
+            return epoc::request_status::pending_status;
+        }
+        if (is_local_audio_url(guest_url) && !sys->get_io_system()->exist(guest_url)) {
+            return epoc::error_not_found;
+        }
+        return open_audio_source(sys, eplayer, common::ucs2_to_utf8(resolve_audio_url(sys, url, url_length)), duration_us);
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_poll_open_url, eka2l1::ptr<void> handle, std::uint64_t *duration_us) {
+        auto &manager = sys->get_dispatcher()->get_dsp_manager();
+        auto *eplayer = manager.get_object<dsp_epoc_player>(handle.ptr_address());
+        if (!eplayer) {
+            return epoc::error_bad_handle;
+        }
+        if (!eplayer->opening_url_ || !eplayer->download_) {
+            return epoc::error_not_ready;
+        }
+        using result = drivers::media_download::result;
+        const auto status = eplayer->download_->status();
+        if (status == result::pending) {
+            return epoc::request_status::pending_status;
+        }
+        eplayer->opening_url_ = false;
+        if (status == result::complete) {
+            const auto error = open_audio_source(sys, eplayer, eplayer->download_->path(), duration_us);
+            if (error != epoc::error_none) {
+                if (eplayer->impl_) {
+                    eplayer->impl_->stop();
+                    eplayer->impl_.reset();
+                }
+                eplayer->download_.reset();
+            }
+            return error;
+        }
+        LOG_ERROR(HLE_DISPATCHER, "Native audio URL failed (HTTP {}): {}", eplayer->download_->http_status(), eplayer->download_->error());
+        const auto http_status = eplayer->download_->http_status();
+        eplayer->download_.reset();
+        switch (status) {
+        case result::cancelled: return epoc::error_cancel;
+        case result::invalid_url: return epoc::error_argument;
+        case result::timeout: return epoc::error_timed_out;
+        case result::tls_error: return epoc::error_access_denied;
+        case result::file_error: return epoc::error_write;
+        case result::resource_error: return epoc::error_no_memory;
+        case result::http_error:
+            if (http_status == 404 || http_status == 410) return epoc::error_not_found;
+            if (http_status == 401 || http_status == 403) return epoc::error_access_denied;
+            return epoc::error_general;
+        default: return epoc::error_could_not_connect;
+        }
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_close_source, eka2l1::ptr<void> handle) {
+        auto &manager = sys->get_dispatcher()->get_dsp_manager();
+        auto *eplayer = manager.get_object<dsp_epoc_player>(handle.ptr_address());
+        if (!eplayer) {
+            return epoc::error_bad_handle;
+        }
+        eplayer->opening_url_ = false;
+        if (eplayer->download_) {
+            eplayer->download_->cancel();
+        }
+        if (eplayer->impl_) {
+            eplayer->impl_->stop();
+            eplayer->impl_.reset();
+        }
+        eplayer->download_.reset();
         return epoc::error_none;
     }
 

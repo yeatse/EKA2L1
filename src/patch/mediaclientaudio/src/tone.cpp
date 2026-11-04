@@ -40,7 +40,7 @@ EXPORT_C CMdaAudioToneUtility* CMdaAudioToneUtility::NewL(MMdaAudioToneObserver&
     return util;    
 }
 
-EXPORT_C CMdaAudioToneUtility* CMdaAudioToneUtility::NewL(MMdaAudioToneObserver& aObserver, CMdaServer* aServer, TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C CMdaAudioToneUtility* CMdaAudioToneUtility::NewL(MMdaAudioToneObserver& aObserver, CMdaServer* aServer, TInt aPriority, TMdaPatchPriorityPreference aPref) {
     CMdaAudioToneUtility *util = new (ELeave) CMdaAudioToneUtility();
     CleanupStack::PushL(util);
     util->iProperties = CMMFMdaAudioToneUtility::NewL(aObserver, aPriority, aPref);
@@ -72,7 +72,7 @@ void CMdaAudioToneUtility::SetVolume(TInt aVolume) {
     }
 }
 
-void CMdaAudioToneUtility::SetPriority(TInt aPriority, TMdaPriorityPreference aPref) {
+void CMdaAudioToneUtility::SetPriority(TInt aPriority, TMdaPatchPriorityPreference aPref) {
     LogOut(KMcaCat, _L("CMdaAudioToneUtility::SetPriority unimplemented!"));
 }
 

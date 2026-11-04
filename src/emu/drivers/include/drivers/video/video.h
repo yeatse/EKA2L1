@@ -101,6 +101,9 @@ namespace eka2l1::drivers {
 
         virtual std::uint32_t audio_bitrate() const = 0;
         virtual std::uint32_t video_bitrate() const = 0;
+        virtual bool has_audio() const = 0;
+        virtual std::string mime_type() const = 0;
+        virtual std::uint32_t audio_type() const = 0;
 
         void set_image_frame_available_callback(image_frame_available_callback callback, void *userdata) {
             image_frame_available_callback_ = callback;

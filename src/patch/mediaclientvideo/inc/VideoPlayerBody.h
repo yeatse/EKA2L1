@@ -4,7 +4,9 @@
 #ifdef MCV_EKA1
 #include <videoplayer.h>
 #else
-#include "VideoPlayer1P2.h"
+#include <videoplayer2.h>
+#include <surfaceeventhandler.h>
+#include <graphics/surface.h>
 #endif
 #include "dispatch.h"
 
@@ -74,7 +76,26 @@ private:
     TVideoRotation iCurrentRotation;
     
     CIdle *iCompleteIdle;
+    CPeriodic *iOpenPoll;
+    TInt iOpenResult;
+    TInt iPrepareResult;
+    TUint iSourceGeneration;
+    TBuf8<64> iMimeType;
     TInt iVersion;
+    static TInt PollOpen(TAny *aSelf);
+    static TInt OpenComplete(TAny *aSelf);
+    static TInt PrepareComplete(TAny *aSelf);
+    void CompleteOpen(TInt aResult);
+
+    // Observers may delete the utility from inside a surface callback. Stack
+    // guards are invalidated before CBody's members are destroyed.
+    struct TCallbackGuard {
+        CBody *iOwner;
+        TCallbackGuard *iPrevious;
+        explicit TCallbackGuard(CBody *aOwner);
+        ~TCallbackGuard();
+    };
+    TCallbackGuard *iCallbackGuards;
 
     CBody(MVideoPlayerUtilityObserver &aObserver, TInt aVersion);
 
@@ -106,7 +127,12 @@ public:
     void RemoveDisplayWindow(const RWindow &aWindow);
 
     void OpenFileL(const TDesC &aPath);
+    void OpenUrlL(const TDesC &aUrl, TInt aIapId, const TDesC8 &aMimeType);
     void OpenDesL(const TDesC8 &aContent);
+    TBool HasAudioL() const;
+    TBool HasVideoL() const;
+    TFourCC AudioTypeL() const;
+    const TDesC8 &MimeType();
     void Close();
 
     void Prepare();
@@ -139,6 +165,13 @@ public:
 
     void GetCropRegion(TRect &aCrop) const {
         aCrop = iCropRegion;
+        // Internally an empty crop selects the whole decoded frame. The
+        // public GetCropRegionL API must expose that real rectangle.
+        if (aCrop.IsEmpty()) {
+            TSize size;
+            FrameSizeL(size);
+            aCrop = TRect(TPoint(0, 0), size);
+        }
     }
 };
 

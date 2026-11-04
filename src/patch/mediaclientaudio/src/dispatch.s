@@ -22,6 +22,8 @@
 .global EAudioPlayerNewInstance
 .global EAudioPlayerNotifyAnyDone
 .global EAudioPlayerSupplyUrl
+.global EAudioPlayerPollOpenUrl
+.global EAudioPlayerCloseSource
 .global EAudioPlayerSupplyData
 .global EAudioPlayerSetVolume
 .global EAudioPlayerGetVolume
@@ -79,6 +81,12 @@ EAudioPlayerNotifyAnyDone:
 
 EAudioPlayerSupplyUrl:
     CallHleDispatch 0x22
+
+EAudioPlayerPollOpenUrl:
+    CallHleDispatch 0x3E
+
+EAudioPlayerCloseSource:
+    CallHleDispatch 0x3F
 
 EAudioPlayerSupplyData:
     CallHleDispatch 0x23

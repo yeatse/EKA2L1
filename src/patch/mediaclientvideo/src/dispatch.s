@@ -135,3 +135,11 @@ EVideoPlayerSetWindowRotation:
 .global EVideoPlayerGetSurfaceId
 EVideoPlayerGetSurfaceId:
     CallHleDispatch 0x9C
+
+.global EVideoPlayerPollOpenUrl
+EVideoPlayerPollOpenUrl:
+    CallHleDispatch 0x9D
+
+.global EVideoPlayerMediaInfo
+EVideoPlayerMediaInfo:
+    CallHleDispatch 0x9E

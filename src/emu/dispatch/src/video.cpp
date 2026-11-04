@@ -239,7 +239,11 @@ namespace eka2l1::dispatch {
     }
 
     void epoc_video_player::close() {
+        if (download_)
+            download_->cancel();
+        opening_url_ = false;
         video_player_->close();
+        download_.reset();
         for (auto &posting : postings_) {
             detach_target(posting);
         }
@@ -258,6 +262,66 @@ namespace eka2l1::dispatch {
 
     bool epoc_video_player::open_file(const std::u16string &real_path) {
         return video_player_->open_file(common::ucs2_to_utf8(real_path));
+    }
+
+    std::int32_t epoc_video_player::open_network_url(std::string url) {
+        if (download_)
+            download_->cancel();
+        download_ = drivers::media_download::start(std::move(url));
+        opening_url_ = true;
+        return epoc::request_status::pending_status;
+    }
+
+    std::int32_t epoc_video_player::poll_open_url() {
+        if (!opening_url_ || !download_)
+            return epoc::error_not_ready;
+        using result = drivers::media_download::result;
+        auto status = download_->status();
+        if (status == result::pending)
+            return epoc::request_status::pending_status;
+        opening_url_ = false;
+        if (status == result::complete) {
+            // Only file decoding runs on the emulation thread. The transfer
+            // keeps its private temporary file alive until the player closes.
+            if (video_player_->open_file(download_->path()))
+                return epoc::error_none;
+            // A failed codec setup may still own decoder state even after
+            // FFmpeg closes the input. Clear it before dropping the file job.
+            video_player_->close();
+            download_.reset();
+            return epoc::error_not_supported;
+        }
+        LOG_ERROR(HLE_DISPATCHER, "Native media URL failed (HTTP {}): {}", download_->http_status(), download_->error());
+        auto http_status = download_->http_status();
+        download_.reset();
+        switch (status) {
+        case result::cancelled: return epoc::error_cancel;
+        case result::invalid_url: return epoc::error_argument;
+        case result::timeout: return epoc::error_timed_out;
+        case result::tls_error: return epoc::error_access_denied;
+        case result::file_error: return epoc::error_write;
+        case result::resource_error: return epoc::error_no_memory;
+        case result::http_error:
+            if (http_status == 404 || http_status == 410) return epoc::error_not_found;
+            if (http_status == 401 || http_status == 403) return epoc::error_access_denied;
+            return epoc::error_general;
+        default: return epoc::error_could_not_connect;
+        }
+    }
+
+    std::int32_t epoc_video_player::media_info(video_media_info &info) const {
+        if (opening_url_ || !video_player_)
+            return epoc::error_not_ready;
+        auto size = video_player_->get_video_size();
+        if ((size.x <= 0 || size.y <= 0) && !video_player_->has_audio())
+            return epoc::error_not_ready;
+        info = {};
+        info.has_video = size.x > 0 && size.y > 0;
+        info.has_audio = video_player_->has_audio();
+        info.audio_type = video_player_->audio_type();
+        auto mime = video_player_->mime_type();
+        std::copy_n(mime.c_str(), std::min(mime.size(), sizeof(info.mime) - 1), info.mime);
+        return epoc::error_none;
     }
 
     bool epoc_video_player::open_with_custom_stream(std::unique_ptr<common::ro_stream> &stream) {
@@ -567,6 +631,12 @@ namespace eka2l1::dispatch {
         const std::u16string virtual_filename = filename->to_std_string(crr_pr);
         LOG_TRACE(HLE_DISPATCHER, "Open a new video to play with path: {}", common::ucs2_to_utf8(virtual_filename));
 
+        auto source = common::ucs2_to_utf8(virtual_filename);
+        auto scheme_end = source.find("://");
+        if (scheme_end != std::string::npos) {
+            return player->open_network_url(std::move(source));
+        }
+
         io_system *ios = sys->get_io_system();
 
         if (!ios->exist(virtual_filename)) {
@@ -594,6 +664,18 @@ namespace eka2l1::dispatch {
         }
 
         return epoc::error_none;
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_poll_open_url, const std::uint32_t handle) {
+        auto *player = sys->get_dispatcher()->video_player_container_.get_object(handle);
+        return player ? player->poll_open_url() : epoc::error_bad_handle;
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_media_info, const std::uint32_t handle, video_media_info *info) {
+        auto *player = sys->get_dispatcher()->video_player_container_.get_object(handle);
+        if (!player)
+            return epoc::error_bad_handle;
+        return info ? player->media_info(*info) : epoc::error_argument;
     }
 
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_play, const std::uint32_t handle, const std::uint64_t *range) {
