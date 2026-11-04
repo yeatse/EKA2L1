@@ -1689,6 +1689,18 @@ namespace eka2l1::dispatch {
                 ? GL_CLOCKWISE_EMU : GL_COUNTER_CLOCKWISE_EMU);
             break;
 
+        case GL_VIEWPORT_EMU: {
+            // API state is in guest coordinates. The driver applies its own
+            // scale and Y inversion when submitting this rectangle.
+            const eka2l1::vec2 size = (ctx->viewport_bl_.size == eka2l1::vec2(-1, -1) && ctx->draw_surface_)
+                ? ctx->draw_surface_->dimension_ : ctx->viewport_bl_.size;
+            params[0] = convert_query_value<T>(ctx->viewport_bl_.top.x);
+            params[1] = convert_query_value<T>(ctx->viewport_bl_.top.y);
+            params[2] = convert_query_value<T>(size.x);
+            params[3] = convert_query_value<T>(size.y);
+            break;
+        }
+
         case GL_SCISSOR_BOX_EMU: {
             const eka2l1::vec2 size = (ctx->scissor_bl_.size == eka2l1::vec2(-1, -1) && ctx->draw_surface_)
                 ? ctx->draw_surface_->dimension_ : ctx->scissor_bl_.size;
