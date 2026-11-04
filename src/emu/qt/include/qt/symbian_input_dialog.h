@@ -21,6 +21,8 @@
 
 #include <QDialog>
 
+class QLineEdit;
+
 namespace Ui {
 class SymbianInputDialog;
 }
@@ -31,6 +33,8 @@ class symbian_input_dialog : public QDialog
 
 private:
     int max_length_;
+    bool secret_ = false;
+    QLineEdit *secret_editor_;
 
 private slots:
     void event_content_changed();
@@ -44,7 +48,7 @@ public:
     explicit symbian_input_dialog(QWidget *parent = nullptr);
     ~symbian_input_dialog();
 
-    void open_for_input(const QString &initial_text, const int max_length);
+    void open_for_input(const QString &initial_text, const int max_length, const bool secret = false);
     QString get_current_text() const;
 
 private:

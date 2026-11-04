@@ -1,6 +1,7 @@
 .include "../../../priv/inc/sv.S"
 
 .global EHUIOpenGlobalTextView
+.global EHUIOpenGlobalTextViewWithSecret
 .global EHUIGetStoredText
 .global EHUICancelGlobalTextView
 .global EHUIIsKeypadBased
@@ -24,3 +25,7 @@ EHUIIsManualInput:
 
 EHUISetInputAvailable:
     CallHleDispatch 0xA5
+
+// Explicit secret-text request; A0 remains the original four-argument ABI.
+EHUIOpenGlobalTextViewWithSecret:
+    CallHleDispatch 0xA6

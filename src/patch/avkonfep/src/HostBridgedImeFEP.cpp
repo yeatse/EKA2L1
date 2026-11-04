@@ -54,9 +54,9 @@ CHostDialogIme::~CHostDialogIme() {
     Deque();
 }
 
-TInt CHostDialogIme::Open(const TDesC *aInitialText, const TInt aMaxLength) {
+TInt CHostDialogIme::Open(const TDesC *aInitialText, const TInt aMaxLength, const TBool aSecret) {
     iStatus = KRequestPending;
-    TInt result = ::EHUIOpenGlobalTextView(0, aInitialText, aMaxLength, &iStatus);
+    TInt result = ::EHUIOpenGlobalTextViewWithSecret(0, aInitialText, aMaxLength, aSecret, &iStatus);
     if (result != KErrNone) {
         return result;
     }
@@ -140,7 +140,10 @@ void CHostBridgedImeFEP::OpenDialogInputL(const TBool aTranstractRestart) {
     // the field's selection or start a composition in the native editor.
     // Begin the whole-document replacement only after an accepted completion.
     iInFEPWork = ETrue;
-    TInt error = iImeDialog.Open(&initialTextPtr, editor->DocumentMaximumLengthForFep());
+    // SupportsSecretText returns a TBool bit mask (0x100), not necessarily 1.
+    // Capture and normalize the current editor's mode for this request only.
+    const TBool secret = iInputCapabilities.SupportsSecretText() != EFalse;
+    TInt error = iImeDialog.Open(&initialTextPtr, editor->DocumentMaximumLengthForFep(), secret);
     iInFEPWork = EFalse;
 
     if (initialText) {

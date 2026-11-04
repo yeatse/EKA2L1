@@ -110,6 +110,7 @@ private:
     eka2l1::drivers::ui::input_dialog_complete_callback input_complete_callback_;
     std::u16string input_initial_text_;
     int input_text_max_len_;
+    bool input_text_secret_ = false;
     quint64 input_dialog_request_id_ = 0;
 
     QString ngage_game_installing_name_;
@@ -246,7 +247,7 @@ public:
 
     bool controller_event_handler(eka2l1::drivers::input_event &event);
 
-    bool input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback);
+    bool input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback, const bool secret = false);
     eka2l1::drivers::ui::dialog_cancel_callback question_dialog_open(const std::u16string &text, const std::u16string &button1_text, const std::u16string &button2_text,
         eka2l1::drivers::ui::yes_no_dialog_complete_callback complete_callback);
 

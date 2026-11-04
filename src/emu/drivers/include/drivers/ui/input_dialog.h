@@ -28,7 +28,7 @@ namespace eka2l1::drivers::ui {
     using yes_no_dialog_complete_callback = std::function<void(int)>;
     using dialog_cancel_callback = std::function<void()>;
 
-    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback);
+    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback, const bool secret = false);
     void close_input_view();
 
     // Returns a cancellation function; completions use button indices, or -1 for dismissal.

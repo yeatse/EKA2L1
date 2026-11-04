@@ -25,13 +25,13 @@
 namespace eka2l1::drivers::ui {
     main_window *main_window_instance;
 
-    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback) {
+    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback, const bool secret) {
         if (!main_window_instance) {
             LOG_TRACE(FRONTEND_UI, "Main window has not been initialized!");
             return true;
         }
 
-        return main_window_instance->input_dialog_open(initial_text, max_len, complete_callback);
+        return main_window_instance->input_dialog_open(initial_text, max_len, complete_callback, secret);
     }
 
     void close_input_view()  {

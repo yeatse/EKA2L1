@@ -60,7 +60,10 @@ namespace eka2l1::dispatch {
         }
     }
 
-    BRIDGE_FUNC_DISPATCHER(std::int32_t, ehui_open_input_view, epoc::desc16 *initial_text, const std::int32_t max_length, eka2l1::ptr<epoc::request_status> status) {
+    static std::int32_t open_input_view(system *sys, epoc::desc16 *initial_text, const std::int32_t max_length, const bool secret, eka2l1::ptr<epoc::request_status> status) {
+        if (!initial_text || max_length < 0) {
+            return epoc::error_argument;
+        }
         dispatch::dispatcher *dispatcher = sys->get_dispatcher();
         kernel_system *kern = sys->get_kernel_system();
 
@@ -76,12 +79,20 @@ namespace eka2l1::dispatch {
             kern->lock();
             controller.on_input_view_complete(kern, request_id, result, accepted);
             kern->unlock();
-        })) {
+        }, secret)) {
             controller.cancel(kern);
             return epoc::error_in_use;
         }
 
         return epoc::error_none;
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, ehui_open_input_view, epoc::desc16 *initial_text, const std::int32_t max_length, eka2l1::ptr<epoc::request_status> status) {
+        return open_input_view(sys, initial_text, max_length, false, status);
+    }
+
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, ehui_open_input_view_with_secret, epoc::desc16 *initial_text, const std::int32_t max_length, const std::int32_t secret, eka2l1::ptr<epoc::request_status> status) {
+        return open_input_view(sys, initial_text, max_length, secret != 0, status);
     }
 
     BRIDGE_FUNC_DISPATCHER(void, ehui_get_stored_input_text, std::int32_t *text_length, char16_t *text_ptr) {

@@ -135,7 +135,10 @@ namespace eka2l1::drivers::ui {
     }
 
     bool open_input_view(const std::u16string &initial_text, const int max_len,
-        input_dialog_complete_callback complete_callback) {
+        input_dialog_complete_callback complete_callback, const bool secret) {
+        if (secret) {
+            return false;
+        }
         const std::u16string initial_text_copy = initial_text;
         const auto generation = ++g_input_generation;
         dispatch_async(dispatch_get_main_queue(), ^{

@@ -1606,7 +1606,7 @@ void main_window::restore_ui_layouts() {
         editor_widget_->setVisible(false);
 }
 
-bool main_window::input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback) {
+bool main_window::input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback, const bool secret) {
     if (input_complete_callback_) {
         return false;
     }
@@ -1614,6 +1614,7 @@ bool main_window::input_dialog_open(const std::u16string &inital_text, const int
     input_complete_callback_ = std::move(complete_callback);
     input_initial_text_ = inital_text;
     input_text_max_len_ = max_length;
+    input_text_secret_ = secret;
 
     emit input_dialog_delay_launch_asked(++input_dialog_request_id_);
     return true;
@@ -1634,6 +1635,8 @@ void main_window::on_input_dialog_delay_launch_asked(quint64 request_id) {
 void main_window::on_finished_text_input(const QString &text, const bool force_close) {
     auto callback = std::move(input_complete_callback_);
     input_complete_callback_ = nullptr;
+    input_initial_text_.clear();
+    input_text_secret_ = false;
     auto *dialog = input_dialog_;
     input_dialog_ = nullptr;
     ++input_dialog_request_id_;
@@ -1664,7 +1667,8 @@ void main_window::on_input_dialog_open_request(quint64 request_id) {
                 on_finished_text_input(text, force_close);
             }
         });
-    dialog->open_for_input(QString::fromStdU16String(input_initial_text_), input_text_max_len_);
+    dialog->open_for_input(QString::fromStdU16String(input_initial_text_), input_text_max_len_, input_text_secret_);
+    input_initial_text_.clear();
 }
 
 void main_window::on_input_dialog_close_request(quint64 request_id) {
@@ -1673,6 +1677,8 @@ void main_window::on_input_dialog_close_request(quint64 request_id) {
     }
     auto callback = std::move(input_complete_callback_);
     input_complete_callback_ = nullptr;
+    input_initial_text_.clear();
+    input_text_secret_ = false;
     auto *dialog = input_dialog_;
     input_dialog_ = nullptr;
     ++input_dialog_request_id_;

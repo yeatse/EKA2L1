@@ -138,6 +138,7 @@ namespace eka2l1::dispatch {
         BRIDGE_REGISTER_DISPATCHER(0xA3, ehui_is_keypad_based),
         BRIDGE_REGISTER_DISPATCHER(0xA4, ehui_is_manual_input),
         BRIDGE_REGISTER_DISPATCHER(0xA5, ehui_set_input_available),
+        BRIDGE_REGISTER_DISPATCHER(0xA6, ehui_open_input_view_with_secret),
         BRIDGE_REGISTER_DISPATCHER(0xB0, eimage_decode_info),
         BRIDGE_REGISTER_DISPATCHER(0xB1, eimage_decode),
         BRIDGE_REGISTER_DISPATCHER(0xC0, etls_create),

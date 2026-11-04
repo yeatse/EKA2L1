@@ -24,7 +24,10 @@
 namespace eka2l1::drivers::ui {
     android::launcher *launcher_instance;
 
-    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback) {
+    bool open_input_view(const std::u16string &initial_text, const int max_len, input_dialog_complete_callback complete_callback, const bool secret) {
+        if (secret) {
+            return false;
+        }
         if (!launcher_instance) {
             LOG_TRACE(FRONTEND_UI, "Main window has not been initialized!");
             return true;
