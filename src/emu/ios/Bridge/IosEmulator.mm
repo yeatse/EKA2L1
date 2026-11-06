@@ -624,8 +624,10 @@ namespace eka2l1::ios {
 
             std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
             CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+            const CGBitmapInfo bitmap_info = static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)
+                | kCGBitmapByteOrder32Big;
             CGContextRef context = CGBitmapContextCreate(pixels.data(), width, height, 8, width * 4,
-                color_space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+                color_space, bitmap_info);
             CGColorSpaceRelease(color_space);
             if (!context) {
                 return {};
@@ -929,13 +931,6 @@ namespace eka2l1::ios {
         submit_screen_frame(state, scr);
     }
 
-    // Qt applications decode their images through image format plugins, and the
-    // ROM's JPEG plugin runs libjpeg under emulation - by far the largest guest
-    // CPU consumer in a title that animates from a JPEG sequence. A replacement
-    // that hands the data to the host decoder is installed on the C drive rather
-    // than over the ROM copy: Qt scans the writable drives first but falls back
-    // to the ROM plugin if it rejects ours (a build key or Qt version this ROM
-    // will not load), so a device we cannot serve keeps working untouched.
     static void install_required_rom_patches(emulator *state) {
         if (!state || !state->symsys) {
             return;
@@ -973,7 +968,6 @@ namespace eka2l1::ios {
             }
             common::copy_file(source, dest, true);
         }
-
     }
 }
 
