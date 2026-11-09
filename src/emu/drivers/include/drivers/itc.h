@@ -246,7 +246,7 @@ namespace eka2l1::drivers {
         }
 
         void reset_list() {
-            delete list_.base_;
+            delete[] list_.base_;
 
             list_.size_ = 0;
             list_.base_ = nullptr;

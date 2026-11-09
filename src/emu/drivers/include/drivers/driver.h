@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <condition_variable>
 #include <mutex>
@@ -76,6 +77,8 @@ namespace eka2l1::drivers {
 
             if (!base_) {
                 renew();
+            } else if (size_ == max_cap_) {
+                grow();
             }
 
             command *res = base_ + size_;
@@ -94,6 +97,16 @@ namespace eka2l1::drivers {
             // No memory leak!
             base_ = new command[max_cap_];
             size_ = 0;
+        }
+
+        // Commands handed out earlier are only filled in before the next call, so moving them is safe.
+        void grow() {
+            command *bigger = new command[max_cap_ * 2];
+            std::copy(base_, base_ + size_, bigger);
+
+            delete[] base_;
+            base_ = bigger;
+            max_cap_ *= 2;
         }
     };
 
