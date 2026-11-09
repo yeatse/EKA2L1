@@ -82,6 +82,29 @@ For behavior the simulator cannot validate, use iPhone Air, UDID
 connection-reset `devicectl device copy from` results. If screen or sound cannot
 be checked through available tools, ask the user to confirm them.
 
+## Android emulator workflow
+
+For the API 36 Android AVD, set `EKA2L1_FORCE_BGRA_CONVERSION=1` in the app
+process before native initialization. Its GLES implementation advertises BGRA
+extensions but native BGRA render targets produce a black guest picture. Inject
+the variable through Android's package wrapper with a debuggable APK. On a fully
+booted, rootable AVD (Google APIs image), cold-start the app:
+
+```sh
+adb root
+adb wait-for-device
+adb shell 'setprop wrap.com.github.eka2l1 "/system/bin/env EKA2L1_FORCE_BGRA_CONVERSION=1"'
+adb shell am force-stop com.github.eka2l1
+adb shell am start -n com.github.eka2l1/.MainActivity --ei debug_control_port 8767
+adb forward tcp:8767 tcp:8767
+```
+
+The graphics driver reads the variable once at construction. Setting it in the
+host shell does not pass it to an app started by Activity Manager. The old
+`force_bgra_conversion` Intent extra has been removed. Clear the wrapper after
+validation with `adb shell 'setprop wrap.com.github.eka2l1 ""'`, then force-stop
+the app; the next launch uses normal BGRA behavior.
+
 ## Verification
 
 Size verification to the change. Documentation-only changes need a diff review,
