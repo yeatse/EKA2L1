@@ -97,6 +97,11 @@ namespace eka2l1::epoc {
         if (client) {
             client->remove_modifier_changed_events(this);
         }
+
+        detach_children();
+    }
+
+    void window::detach_children() {
         while (child != nullptr) {
             child->parent = nullptr;
             child = child->sibling;

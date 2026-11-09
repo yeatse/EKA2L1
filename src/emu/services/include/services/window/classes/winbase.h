@@ -174,6 +174,7 @@ namespace eka2l1::epoc {
          * \brief Remove the window from the sibling list.
          */
         void remove_from_sibling_list();
+        void detach_children();
 
         void set_parent(window *parent);
 

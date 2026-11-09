@@ -119,6 +119,9 @@ namespace eka2l1::epoc {
         
         remove_from_sibling_list();
 
+        // The top canvas child is a member, so it dies before the base destructor would unlink it.
+        detach_children();
+
         if (!client) {
             return;
         }
