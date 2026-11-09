@@ -25,6 +25,10 @@ namespace eka2l1::control {
         return value.empty() || value == "1" || value == "true" || value == "yes";
     }
     using clock = std::chrono::steady_clock;
+    static bool is_launch(const request &req) {
+        const auto &p = req.path;
+        return req.method == "POST" && ((p.size() == 4 && p[1] == "apps" && p[3] == "launch") || (p.size() == 5 && p[1] == "ngage" && p[2] == "games" && p[4] == "launch"));
+    }
     static std::string timestamp() {
         auto time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
         std::tm utc{};
@@ -314,7 +318,7 @@ namespace eka2l1::control {
                 throw api_error(404, "not_found", "unknown API version");
             const auto &p = req.path;
             if (p.size() == 1 && req.method == "GET")
-                return response::from_json({ { "api", 1 }, { "endpoints", json::array{ "GET /v1/status", "GET /v1/capabilities", "GET /v1/devices", "POST /v1/devices", "POST /v1/devices/rescan", "POST /v1/devices/{index|code}/boot", "PATCH /v1/devices/{index|code}", "DELETE /v1/devices/{index|code}", "GET /v1/apps?system=1", "POST /v1/apps", "DELETE /v1/apps/{uid}", "GET /v1/apps/{uid}/icon", "POST /v1/apps/{uid}/launch", "GET /v1/session", "DELETE /v1/session", "GET|PUT /v1/session/screen-mode", "GET|PUT /v1/session/frame-limit", "GET|PUT|DELETE /v1/card", "GET /v1/keys", "POST /v1/input/key", "POST /v1/input/touch", "POST /v1/input/text", "POST /v1/input/sequence", "POST /v1/input/release", "GET|PUT|DELETE /v1/input/accelerometer", "GET /v1/screenshot", "GET /v1/log", "POST /v1/wait", "GET|PATCH /v1/config", "GET|PUT /v1/language", "GET|PUT|DELETE /v1/files?path=", "POST /v1/emulator/pause", "POST /v1/emulator/resume", "GET /v1/jobs", "GET /v1/jobs/{id}" } } });
+                return response::from_json({ { "api", 1 }, { "endpoints", json::array{ "GET /v1/status", "GET /v1/capabilities", "GET /v1/devices", "POST /v1/devices", "POST /v1/devices/rescan", "POST /v1/devices/{index|code}/boot", "PATCH /v1/devices/{index|code}", "DELETE /v1/devices/{index|code}", "GET /v1/apps?system=1", "POST /v1/apps", "DELETE /v1/apps/{uid}", "GET /v1/apps/{uid}/icon", "POST /v1/apps/{uid}/launch", "GET /v1/ngage/games", "POST /v1/ngage/games/{sid}/launch", "GET /v1/session", "DELETE /v1/session", "GET|PUT /v1/session/screen-mode", "GET|PUT /v1/session/frame-limit", "GET|PUT|DELETE /v1/card", "GET /v1/keys", "POST /v1/input/key", "POST /v1/input/touch", "POST /v1/input/text", "POST /v1/input/sequence", "POST /v1/input/release", "GET|PUT|DELETE /v1/input/accelerometer", "GET /v1/screenshot", "GET /v1/log", "POST /v1/wait", "GET|PATCH /v1/config", "GET|PUT /v1/language", "GET|PUT|DELETE /v1/files?path=", "POST /v1/emulator/pause", "POST /v1/emulator/resume", "GET /v1/jobs", "GET /v1/jobs/{id}" } } });
             if (p.size() >= 2 && p[1] == "jobs" && req.method == "GET") {
                 std::lock_guard<std::mutex> guard(jobs_mutex);
                 if (p.size() == 2) {
@@ -447,8 +451,36 @@ namespace eka2l1::control {
             if ((p == std::vector<std::string>{ "v1", "files" } && (req.method == "GET" || req.method == "PUT" || req.method == "DELETE"))
                 || (p == std::vector<std::string>{ "v1", "log" } && req.method == "GET"))
                 return storage(req);
+            if (is_launch(req) && p[1] == "ngage") {
+                // Games are started from the Games app's Home view, as on the device. The client's
+                // start-up animation waits for a key press.
+                const request list{ "GET", { "v1", "ngage", "games" }, {}, {}, {} };
+                auto state = json::parse(checked(list).body);
+                const auto sid = parse_uid(p[3]);
+                const auto &games = state["games"].items();
+                const bool installed = std::any_of(games.begin(), games.end(), [sid](const json &g) { return parse_uid(g["sid"].string()) == sid; });
+                if (installed && !state["clientReady"].boolean()) {
+                    if (!state["clientRunning"].boolean())
+                        checked({ "POST", { "v1", "apps", "0x20007B39", "launch" }, {}, {}, {} });
+                    const auto started = clock::now();
+                    auto running_since = clock::time_point::max();
+                    bool dismissed = false;
+                    while (!(state = json::parse(checked(list).body))["clientReady"].boolean()) {
+                        const auto now = clock::now();
+                        if (std::chrono::duration<double>(now - started).count() > 180)
+                            throw api_error(504, "timeout", "the Games app did not reach its Home view");
+                        if (state["clientRunning"].boolean() && running_since == clock::time_point::max())
+                            running_since = now;
+                        if (!dismissed && std::chrono::duration<double>(now - running_since).count() > 10) {
+                            input_step({ { "key", "right" } }, "key", input_epoch.load());
+                            dismissed = true;
+                        }
+                        sleep(500);
+                    }
+                }
+            }
             std::unique_lock<std::mutex> lifecycle_input;
-            const bool changes_session = (p.size() == 4 && p[1] == "apps" && p[3] == "launch" && req.method == "POST")
+            const bool changes_session = is_launch(req)
                 || (p == std::vector<std::string>{ "v1", "session" } && req.method == "DELETE")
                 || (p == std::vector<std::string>{ "v1", "input", "release" } && req.method == "POST");
             if (changes_session) {
@@ -456,7 +488,7 @@ namespace eka2l1::control {
                 wake.notify_all();
                 lifecycle_input = std::unique_lock<std::mutex>(input_mutex);
             }
-            const bool launch = p.size() == 4 && p[1] == "apps" && p[3] == "launch" && req.method == "POST";
+            const bool launch = is_launch(req);
             const bool wait_launch = launch && query_bool(req, "wait", true) && req.data()["wait"].boolean(true);
             const auto timeout = wait_launch ? req.data()["timeoutMs"].number(30000) : 0;
             if (!std::isfinite(timeout) || timeout < 0 || timeout > 3600000)
@@ -510,7 +542,7 @@ namespace eka2l1::control {
         const auto &p = req.path;
         const bool timed = (req.method == "POST" && p.size() == 2 && p[1] == "wait")
             || (req.method == "POST" && p.size() == 3 && p[1] == "input" && p[2] != "release")
-            || (req.method == "POST" && p.size() == 4 && p[1] == "apps" && p[3] == "launch");
+            || is_launch(req);
         auto &pending = timed ? self->timed_pending : self->pending;
         if (++pending > (timed ? 4 : 16)) {
             --pending;

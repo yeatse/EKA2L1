@@ -159,6 +159,26 @@ namespace eka2l1 {
             return send(msg);
         }
 
+        int session::send_blind(const int function, const ipc_arg &args, kernel::thread *sender) {
+            ipc_msg_ptr msg = get_free_msg();
+
+            if (!msg) {
+                return epoc::error_server_busy;
+            }
+
+            msg->function = function;
+            msg->args = args;
+            msg->request_sts = 0;
+            msg->own_thr = sender;
+            msg->ref();
+            msg->msg_session = headless_ ? nullptr : this;
+            msg->session_ptr_lle = cookie_address;
+
+            in_progress_msgs_.push(&msg->session_msg_link);
+
+            return svr->deliver(msg);
+        }
+
         int session::send(ipc_msg_ptr msg) {
             msg->ref();
 

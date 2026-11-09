@@ -84,6 +84,9 @@ namespace eka2l1 {
             int send_receive_sync(const int function, const ipc_arg &args, eka2l1::ptr<epoc::request_status> request_sts);
             int send_receive(const int function, const ipc_arg &args, eka2l1::ptr<epoc::request_status> request_sts);
 
+            // Sends a message on behalf of a client thread without a request status to complete.
+            int send_blind(const int function, const ipc_arg &args, kernel::thread *sender);
+
             void set_cookie_address(const uint32_t addr) {
                 cookie_address = addr;
             }

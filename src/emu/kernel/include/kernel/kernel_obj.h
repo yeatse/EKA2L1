@@ -125,6 +125,10 @@ namespace eka2l1 {
                 return raw_name();
             }
 
+            kernel_obj *get_owner() const {
+                return owner;
+            }
+
             kernel_system *get_kernel_object_owner() const {
                 return kern;
             }

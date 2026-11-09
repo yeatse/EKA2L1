@@ -75,6 +75,8 @@ extension Notification.Name {
 /// | `DELETE /v1/apps/{uid}` | | Uninstall |
 /// | `GET /v1/apps/{uid}/icon` | `?size=96` | PNG |
 /// | `POST /v1/apps/{uid}/launch` | `{"timeoutMs"?}`, `?wait=0` | Closes the current app, pushes the emulator screen and waits for the launch result |
+/// | `GET /v1/ngage/games` | | N-Gage 2.0 games in the Games app catalogue (`sid`, `title`, `exe`), with `clientRunning` and `clientReady` (Home view loaded) |
+/// | `POST /v1/ngage/games/{sid}/launch` | `{"timeoutMs"?}`, `?wait=0` | Starts the Games app if needed, dismisses its start-up animation, then asks PlayServer to start the game as the Home view does |
 /// | `GET /v1/session` | | `state`: `none`, `launching`, `running`, `launch_failed`, `exited`, `crashed` or `closed`; plus `lastExit` (`fatal` holds the panic text) |
 /// | `DELETE /v1/session` | | Close the running app (the in-game "Exit" menu item) |
 /// | `GET/PUT /v1/session/screen-mode` | `{"mode"}` | |

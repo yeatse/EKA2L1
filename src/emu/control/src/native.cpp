@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <common/algorithm.h>
 #include <common/cvt.h>
 #include <common/fileutils.h>
@@ -17,7 +18,10 @@
 #include <filesystem>
 #include <kernel/kernel.h>
 #include <kernel/process.h>
+#include <kernel/server.h>
+#include <kernel/session.h>
 #include <kernel/thread.h>
+#include <map>
 #include <mutex>
 #include <package/manager.h>
 #include <services/applist/applist.h>
@@ -29,6 +33,7 @@
 #include <system/installation/archive.h>
 #include <system/installation/rpkg.h>
 #include <utils/apacmd.h>
+#include <utils/des.h>
 #include <vfs/vfs.h>
 #include <zlib.h>
 
@@ -74,6 +79,41 @@ namespace eka2l1::control {
         chunk("IEND", {});
         return { 200, "image/png", std::move(out), {} };
     }
+    // Best effort over the client's DBMS catalogue rows: the SID, a 0xFF marker, the title and description
+    // as Text8 (length * 2, Latin-1), then the small icon path. 0xFB marks an out-of-row description.
+    static std::string ngage_title(const std::string &db, std::uint32_t sid) {
+        const std::string icon = "\\images\\game\\" + hex(sid).substr(2) + "_small.mbm";
+        const std::string row_sid(reinterpret_cast<const char *>(&sid), 4);
+        for (auto at = db.rfind(icon); at != std::string::npos && at > 0; at = db.rfind(icon, at - 1)) {
+            const auto path = db.rfind("c:\\", at);
+            if (path == std::string::npos || path < 3 || at - path > 64)
+                continue;
+            const std::size_t lowest = path > 512 ? path - 512 : 5;
+            for (std::size_t i = path - 2; i >= lowest; --i) {
+                const auto marker = std::uint8_t(db[i - 1]), length = std::uint8_t(db[i]);
+                const std::size_t desc_at = i + 1 + length / 2;
+                if ((marker != 0xFF && marker != 0xFB) || (length & 1) || length == 0 || desc_at >= path
+                    || db.compare(i - 5, 4, row_sid) != 0)
+                    continue;
+                const bool fits = marker == 0xFB ? desc_at + 4 == path - 1
+                                                 : desc_at + 1 + std::uint8_t(db[desc_at]) / 2 == path - 1;
+                auto text = db.substr(i + 1, length / 2);
+                if (!fits || std::any_of(text.begin(), text.end(), [](unsigned char c) { return c < 0x20 || c == 0x7F; }))
+                    continue;
+                std::string utf8;
+                for (unsigned char c : text) {
+                    if (c < 0x80) {
+                        utf8 += char(c);
+                    } else {
+                        utf8 += char(0xC0 | (c >> 6));
+                        utf8 += char(0x80 | (c & 0x3F));
+                    }
+                }
+                return utf8;
+            }
+        }
+        return {};
+    }
     struct native_backend::impl : std::enable_shared_from_this<impl> {
         native_frontend frontend;
         std::atomic_flag handling = ATOMIC_FLAG_INIT;
@@ -86,8 +126,93 @@ namespace eka2l1::control {
         json acceleration;
         std::string card_path;
 
+        struct ngage_game {
+            std::uint32_t sid;
+            std::u16string exe;
+            std::string title;
+        };
+        std::uint32_t pending_game = 0;
+        // PlayServer requests on a subsession carry its type in bits 20-27 and its handle in slot 3.
+        // The Games UI starts a game with 0x50000E (TPckgC<TUint32> SID) on its type 5 subsession;
+        // it first sends a type 4 request when the Home view loads.
+        static constexpr int PLAY_START_GAME = 0x50000E;
+        static constexpr std::uint32_t NGAGE_UI_SID = 0x20003B78;
+        kernel_system *hooked_kernel = nullptr;
+        std::size_t ipc_send_hook = 0;
+        std::size_t ipc_complete_hook = 0;
+        std::mutex ngage_mutex;
+        std::map<service::session *, std::int32_t> play_start_subsessions;
+        std::set<kernel::uid> ngage_ui_home_loaded;
+        kernel::chunk *launch_chunk = nullptr;
         explicit impl(native_frontend frontend)
             : frontend(std::move(frontend)) {}
+        ~impl() {
+            if (hooked_kernel) {
+                hooked_kernel->unregister_ipc_send_callback(ipc_send_hook);
+                hooked_kernel->unregister_ipc_complete_callback(ipc_complete_hook);
+            }
+        }
+        void hook_kernel() {
+            auto *s = frontend.get_system();
+            auto *kern = s ? s->get_kernel_system() : nullptr;
+            if (!kern || kern == hooked_kernel)
+                return;
+            hooked_kernel = kern;
+            std::weak_ptr<impl> weak = shared_from_this();
+            ipc_send_hook = kern->register_ipc_send_callback([weak](const std::string &server, int function, const ipc_arg &, address, kernel::thread *sender) {
+                auto self = weak.lock();
+                auto *client = sender ? sender->owning_process() : nullptr;
+                if (self && server == "PlayServer" && ((function >> 20) & 0xFF) == 4 && client && client->get_sec_info().secure_id == NGAGE_UI_SID) {
+                    std::lock_guard<std::mutex> guard(self->ngage_mutex);
+                    self->ngage_ui_home_loaded.insert(client->unique_id());
+                }
+            });
+            ipc_complete_hook = kern->register_ipc_complete_callback([weak](ipc_msg *msg, std::int32_t code) {
+                if (auto self = weak.lock())
+                    self->track_play_message(msg, code);
+            });
+        }
+        void track_play_message(ipc_msg *msg, std::int32_t code) {
+            if (!msg->msg_session || !msg->own_thr || msg->msg_session->get_server()->name() != "PlayServer")
+                return;
+            auto *client = msg->own_thr->owning_process();
+            if (client->get_sec_info().secure_id != NGAGE_UI_SID)
+                return;
+            std::lock_guard<std::mutex> guard(ngage_mutex);
+            if (launch_chunk && msg->function == PLAY_START_GAME && msg->args.args[0] == launch_chunk->base(client).ptr_address()) {
+                hooked_kernel->destroy(launch_chunk);
+                launch_chunk = nullptr;
+                return;
+            }
+            if (code == 0 && ((msg->function >> 20) & 0xFF) == 5)
+                play_start_subsessions[msg->msg_session] = static_cast<std::int32_t>(msg->args.args[3]);
+        }
+        // The UI's PlayServer session once its Home view has loaded, with the sending thread.
+        service::session *ngage_ui_session(kernel::thread *&sender) {
+            auto *kern = sys().get_kernel_system();
+            for (auto &object : kern->get_session_list()) {
+                auto *ss = reinterpret_cast<service::session *>(object.get());
+                if (!play_start_subsessions.count(ss) || ss->is_server_terminated())
+                    continue;
+                auto *owner = ss->get_owner();
+                sender = nullptr;
+                if (owner && owner->get_object_type() == kernel::object_type::process)
+                    sender = reinterpret_cast<kernel::process *>(owner)->get_primary_thread();
+                else if (owner && owner->get_object_type() == kernel::object_type::thread)
+                    sender = reinterpret_cast<kernel::thread *>(owner);
+                auto *ui = sender ? sender->owning_process() : nullptr;
+                if (ui && ui->get_exit_type() == kernel::entity_exit_type::pending && ui->get_sec_info().secure_id == NGAGE_UI_SID
+                    && ngage_ui_home_loaded.count(ui->unique_id()))
+                    return ss;
+            }
+            return nullptr;
+        }
+        bool ngage_client_ready() {
+            kernel_lock guard(sys().get_kernel_system());
+            std::lock_guard<std::mutex> ngage_guard(ngage_mutex);
+            kernel::thread *sender = nullptr;
+            return ngage_ui_session(sender) != nullptr;
+        }
         system &sys() {
             auto *s = frontend.get_system();
             require(s != nullptr, "not_ready", "emulator has not started", 503);
@@ -141,9 +266,135 @@ namespace eka2l1::control {
             }
             return list;
         }
+        // The Games app's playserver (SID 0x20007B39) starts the client UI (0x20003B78) and
+        // brings it to the foreground when a game starts without it.
+        bool ngage_client_running() {
+            auto *kern = sys().get_kernel_system();
+            kernel_lock guard(kern);
+            bool server = false, ui = false;
+            for (auto &object : kern->get_process_list()) {
+                auto *process = reinterpret_cast<kernel::process *>(object.get());
+                if (process->get_exit_type() != kernel::entity_exit_type::pending)
+                    continue;
+                server |= process->get_sec_info().secure_id == 0x20007B39;
+                ui |= process->get_sec_info().secure_id == NGAGE_UI_SID;
+            }
+            return server && ui;
+        }
+        // Installed N-Gage games: executables whose SID has artwork in the client's catalogue.
+        std::vector<ngage_game> ngage_games() {
+            auto *io = sys().get_io_system();
+            kernel_lock guard(sys().get_kernel_system());
+            std::set<std::uint32_t> catalogue;
+            if (auto dir = io->open_dir(u"C:\\private\\20007b39\\images\\game\\*_large.mbm", {}, io_attrib_include_file))
+                while (auto entry = dir->get_next_entry())
+                    if (entry->name.size() > 8 && std::all_of(entry->name.begin(), entry->name.begin() + 8, ::isxdigit))
+                        catalogue.insert(static_cast<std::uint32_t>(std::stoul(entry->name.substr(0, 8), nullptr, 16)));
+            std::string db;
+            if (auto file = io->open_file(u"C:\\private\\20003b85\\gamepurchase.db", READ_MODE | BIN_MODE)) {
+                db.resize(file->size());
+                db.resize(file->read_file(db.data(), 1, static_cast<std::uint32_t>(db.size())));
+            }
+            std::vector<ngage_game> games;
+            for (int drv = drive_c; drv < drive_z; ++drv) {
+                const std::u16string bin = std::u16string(1, drive_to_char16(static_cast<drive_number>(drv))) + u":\\sys\\bin\\";
+                auto dir = io->open_dir(bin + u"*.exe", {}, io_attrib_include_file);
+                while (dir) {
+                    auto entry = dir->get_next_entry();
+                    if (!entry)
+                        break;
+                    const auto exe = bin + common::utf8_to_ucs2(entry->name);
+                    auto file = io->open_file(exe, READ_MODE | BIN_MODE);
+                    std::uint32_t header[0x21] = {};
+                    if (!file || file->read_file(header, 1, sizeof(header)) != sizeof(header))
+                        continue;
+                    const std::uint32_t sid = header[0x20];
+                    if (!catalogue.count(sid) || std::any_of(games.begin(), games.end(), [sid](const auto &g) { return g.sid == sid; }))
+                        continue;
+                    auto title = ngage_title(db, sid);
+                    games.push_back({ sid, exe, title.empty() ? eka2l1::replace_extension(entry->name, "") : title });
+                }
+            }
+            std::sort(games.begin(), games.end(), [](const auto &a, const auto &b) { return a.title < b.title; });
+            return games;
+        }
         json session_snapshot() {
+            attach_pending_game();
             std::lock_guard<std::mutex> guard(session_mutex);
             return session;
+        }
+        // PlayServer creates the game process asynchronously; track it once it exists.
+        void attach_pending_game() {
+            std::uint32_t sid;
+            std::uint64_t current;
+            {
+                std::lock_guard<std::mutex> guard(session_mutex);
+                sid = pending_game;
+                current = generation;
+            }
+            auto *s = frontend.get_system();
+            auto *kern = s ? s->get_kernel_system() : nullptr;
+            if (!sid || !kern)
+                return;
+            kernel_lock guard(kern);
+            for (auto &object : kern->get_process_list()) {
+                auto *process = reinterpret_cast<kernel::process *>(object.get());
+                if (process->get_exit_type() != kernel::entity_exit_type::pending || process->get_sec_info().secure_id != sid)
+                    continue;
+                std::weak_ptr<impl> weak = shared_from_this();
+                process->logon([weak, current](kernel::process *process) {
+                    auto self = weak.lock();
+                    if (!self)
+                        return;
+                    std::lock_guard<std::mutex> lock(self->session_mutex);
+                    if (current != self->generation)
+                        return;
+                    const bool panic = process->get_exit_type() == kernel::entity_exit_type::panic;
+                    self->session["state"] = panic ? "crashed" : "exited";
+                    self->session["lastExit"] = { { "uid", hex(process->get_sec_info().secure_id) }, { "fatal", panic ? json(common::ucs2_to_utf8(process->get_exit_category()) + "/" + std::to_string(process->get_exit_reason())) : json(nullptr) } };
+                });
+                std::lock_guard<std::mutex> lock(session_mutex);
+                if (current == generation) {
+                    pending_game = 0;
+                    thread_id = process->get_primary_thread()->unique_id();
+                    session["state"] = "running";
+                }
+                return;
+            }
+        }
+        // Sends the Games UI's start-game request on its own PlayServer session.
+        bool ngage_request_launch(std::uint32_t sid) {
+            auto *kern = sys().get_kernel_system();
+            kernel_lock guard(kern);
+            std::lock_guard<std::mutex> ngage_guard(ngage_mutex);
+            kernel::thread *sender = nullptr;
+            auto *ss = ngage_ui_session(sender);
+            if (!ss)
+                return false;
+            if (launch_chunk) {
+                if (launch_chunk->get_own_process()->get_exit_type() == kernel::entity_exit_type::pending)
+                    return false;
+                kern->destroy(launch_chunk);
+            }
+            auto *ui = sender->owning_process();
+            launch_chunk = kern->create<kernel::chunk>(kern->get_memory_system(), ui, "NgageLaunch", 0, 0x1000, 0x1000,
+                prot_read_write, kernel::chunk_type::normal, kernel::chunk_access::local, kernel::chunk_attrib::anonymous);
+            if (!launch_chunk)
+                return false;
+            auto *pckg = reinterpret_cast<std::uint32_t *>(launch_chunk->host_base());
+            pckg[0] = sizeof(std::uint32_t) | (epoc::buf_const << 28);
+            pckg[1] = sid;
+            ipc_arg args;
+            args.flag = 6;
+            args.args[0] = launch_chunk->base(ui).ptr_address();
+            args.args[1] = 0;
+            args.args[2] = 0;
+            args.args[3] = play_start_subsessions[ss];
+            if (ss->send_blind(PLAY_START_GAME, args, sender) == 0)
+                return true;
+            kern->destroy(launch_chunk);
+            launch_chunk = nullptr;
+            return false;
         }
         json card() { return { { "mounted", !card_path.empty() }, { "name", card_path.empty() ? json(nullptr) : json(fs::path(card_path).filename().string()) } }; }
         json screen() {
@@ -290,6 +541,7 @@ namespace eka2l1::control {
                 { "hideSystemApps", c.hide_system_apps }, { "logFilter", c.log_filter }, { "screenBufferSync", c.screen_buffer_sync_string } };
         }
         response route(const request &req) {
+            hook_kernel();
             auto p = req.path;
             require(!p.empty() && p[0] == "v1", "not_found", "unknown API version", 404);
             if (p == std::vector<std::string>{ "v1", "capabilities" } && req.method == "GET")
@@ -347,6 +599,36 @@ namespace eka2l1::control {
                         frontend.changed(native_change::devices);
                         return response::from_json({ { "devices", devices() }, { "current", current_device() } });
                     }
+                }
+            }
+            if (p.size() >= 3 && p[1] == "ngage" && p[2] == "games") {
+                auto games = ngage_games();
+                if (p.size() == 3 && req.method == "GET") {
+                    json::array list;
+                    for (const auto &g : games)
+                        list.push_back({ { "sid", hex(g.sid) }, { "title", g.title }, { "exe", common::ucs2_to_utf8(g.exe) } });
+                    return response::from_json({ { "games", list }, { "clientRunning", ngage_client_running() }, { "clientReady", ngage_client_ready() } });
+                }
+                if (p.size() == 5 && p[4] == "launch" && req.method == "POST") {
+                    const auto sid = parse_uid(p[3]);
+                    auto game = std::find_if(games.begin(), games.end(), [sid](const auto &g) { return g.sid == sid; });
+                    require(game != games.end(), "not_found", "game is not installed", 404);
+                    require(ngage_client_ready(), "client_not_ready", "the Games app has not reached its Home view", 409);
+                    release();
+                    {
+                        std::lock_guard<std::mutex> guard(session_mutex);
+                        ++generation;
+                        thread_id = 0;
+                        pending_game = sid;
+                        session = { { "state", "launching" }, { "uid", hex(sid) }, { "name", game->title }, { "screenVisible", true } };
+                    }
+                    if (!ngage_request_launch(sid)) {
+                        std::lock_guard<std::mutex> guard(session_mutex);
+                        pending_game = 0;
+                        session["state"] = "launch_failed";
+                        throw api_error(422, "launch_failed", "PlayServer did not accept the launch request");
+                    }
+                    return response::from_json(session_snapshot());
                 }
             }
             if (p == std::vector<std::string>{ "v1", "apps" } && req.method == "GET")
