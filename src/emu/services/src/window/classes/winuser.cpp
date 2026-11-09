@@ -122,6 +122,13 @@ namespace eka2l1::epoc {
             ob->on_window_destroyed(this);
         }
 
+        // Active DSAs keep a raw pointer to this canvas and may outlive it on client teardown.
+        while (!directs_.empty()) {
+            dsa *direct = directs_.back();
+            direct->abort(dsa_terminate_cancel);
+            remove_dsa_active(direct);
+        }
+
         if (in_visibility_delay_report_) {
             ntimer *timer = client->get_ws().get_ntimer();
             timer->unschedule_event(client->get_ws().get_deliver_delay_report_visiblity_event(),
