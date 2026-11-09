@@ -82,6 +82,13 @@ namespace eka2l1 {
 
             void define(service::property_type pt, uint32_t pre_allocated);
 
+            /**
+             * \brief Undefine the property and complete pending subscriptions with KErrNotFound.
+             *
+             * Attached references stay valid and see the property again once it is redefined.
+             */
+            void undefine();
+
             bool is_defined();
 
             /**

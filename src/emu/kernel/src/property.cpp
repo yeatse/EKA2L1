@@ -66,6 +66,15 @@ namespace eka2l1 {
             bindata.assign(data_len, 0);
         }
 
+        void property::undefine() {
+            data_type = service::property_type::unk;
+            ndata = 0;
+            data_len = 0;
+            bindata.clear();
+
+            notify_request(epoc::error_not_found);
+        }
+
         bool property::set_int(int val) {
             if (data_type == service::property_type::int_data) {
                 ndata = val;

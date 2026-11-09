@@ -2735,13 +2735,7 @@ namespace eka2l1::epoc {
             cage = static_cast<std::int32_t>(kern->crr_process()->get_sec_info().secure_id);
         }
 
-        property_ptr prop = kern->delete_prop(cage, key);
-
-        if (!prop || !prop->is_defined()) {
-            return epoc::error_not_found;
-        }
-
-        return epoc::error_none;
+        return kern->delete_prop(cage, key) ? epoc::error_none : epoc::error_not_found;
     }
 
     BRIDGE_FUNC(void, property_subscribe, kernel::handle h, eka2l1::ptr<epoc::request_status> sts) {
