@@ -825,10 +825,8 @@ namespace eka2l1::dispatch {
         cmd_builder_.clip_rect(clip_rect_transformed);
         cmd_builder_.set_viewport(viewport_transformed);
         
-        // Some games have 0 alphas in some situation!
-        // TODO: This is hack definitely. So removal is ideal.
-        // Translucent window surfaces keep their drawn alpha during composition.
-        const bool keeps_alpha = draw_surface_->backed_window_ && draw_surface_->backed_window_->is_translucent();
+        // EGL color buffers retain alpha according to their selected configuration.
+        const bool keeps_alpha = draw_surface_->config_.alpha_bits() != 0;
         switch (draw_surface_->backed_screen_->disp_mode) {
         case epoc::display_mode::color16m:
         case epoc::display_mode::color16mu:

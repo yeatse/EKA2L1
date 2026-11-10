@@ -623,8 +623,8 @@ namespace eka2l1::epoc {
 
             fps_count_++;
 
-            // Only occlusion by another window needs recomposition; screen-edge
-            // clipping leaves no foreground window to repaint.
+            // Translucent foreground windows do not shrink a streaming surface's
+            // visible region, but must be replayed over every new frame.
             common::region onscreen_region;
             if (flags & flag_shape_region) {
                 onscreen_region = shape_region;
@@ -633,7 +633,8 @@ namespace eka2l1::epoc {
             }
             onscreen_region.clip(eka2l1::rect({ 0, 0 }, scr->current_mode().size));
 
-            if (recomposite_if_occluded && !visible_region.empty() && !visible_region.identical(onscreen_region)) {
+            if (recomposite_if_occluded && !visible_region.empty()
+                && (!visible_region.identical(onscreen_region) || surface_streaming())) {
                 scr->flags_ |= screen::FLAG_SERVER_REDRAW_PENDING;
             }
 
