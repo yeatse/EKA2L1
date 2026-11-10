@@ -27,6 +27,10 @@
 #include <services/window/screen.h>
 #include <kernel/kernel.h>
 
+#include <cmath>
+#include <limits>
+#include <type_traits>
+
 namespace eka2l1::dispatch {
     std::string get_es2_extensions(drivers::graphics_driver *driver) {
         std::string original_list = GLES2_STATIC_STRING_EXTENSIONS;
@@ -292,6 +296,7 @@ namespace eka2l1::dispatch {
     }
 
     void gles_program_object::link(drivers::graphics_driver *drv) {
+        validated_ = false;
         if (!one_module_changed_) {
             if (linked_) {
                 goto APPLY_PENDING_ROUTES;
@@ -328,6 +333,22 @@ APPLY_PENDING_ROUTES:
         pending_attrib_binds_.clear();
     }
     
+    void gles_program_object::validate(drivers::graphics_driver *drv, egl_controller &controller) {
+        validated_ = false;
+        link_log_.clear();
+        if (!linked_) {
+            link_log_ = "Program has not been linked successfully.";
+            return;
+        }
+
+        // Uniform values are deferred until drawing. Submit them before validating
+        // sampler conflicts on the graphics thread, including an unused program.
+        context().cmd_builder_.use_program(driver_handle_);
+        prepare_for_draw();
+        context().flush_to_driver(controller, drv);
+        validated_ = drivers::validate_shader_program(drv, driver_handle_, &link_log_);
+    }
+
     void gles_program_object::bind_attribute_to_index(const std::string &attrib_name, const int new_index) {
         pending_attrib_binds_[attrib_name] = new_index;
     }
@@ -460,6 +481,7 @@ APPLY_PENDING_ROUTES:
     gles_renderbuffer_object::gles_renderbuffer_object(egl_context_es_shared &ctx)
         : gles_driver_object(ctx)
         , format_(0)
+        , size_(0, 0)
         , current_scale_(0.0f) {
     }
 
@@ -680,6 +702,52 @@ APPLY_PENDING_ROUTES:
             egl_context_es2 &es2_ctx = static_cast<egl_context_es2&>(context());
             es2_ctx.framebuffer_pool_.push(driver_handle_);
         }
+    }
+
+    std::uint32_t gles_framebuffer_object::get_attachment_parameter(std::uint32_t attachment, std::uint32_t pname, std::int32_t &value) const {
+        gles_driver_object *object = nullptr;
+        int face = 0;
+        switch (attachment) {
+        case GL_COLOR_ATTACHMENT0_EMU:
+            object = attached_color_;
+            face = attached_color_face_index_;
+            break;
+        case GL_DEPTH_ATTACHMENT_EMU:
+            object = attached_depth_;
+            face = attached_depth_face_index_;
+            break;
+        case GL_STENCIL_ATTACHMENT_EMU:
+            object = attached_stencil_;
+            face = attached_stencil_face_index_;
+            break;
+        default:
+            return GL_INVALID_ENUM;
+        }
+        if (pname == GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE_EMU) {
+            value = !object ? 0 : object->object_type() == GLES_OBJECT_TEXTURE ? GL_TEXTURE_EMU : GL_RENDERBUFFER_EMU;
+            return GL_NO_ERROR;
+        }
+        if (!object) {
+            return GL_INVALID_ENUM;
+        }
+        if (pname == GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME_EMU) {
+            value = object->client_handle();
+            return GL_NO_ERROR;
+        }
+        if (object->object_type() != GLES_OBJECT_TEXTURE) {
+            return GL_INVALID_ENUM;
+        }
+        if (pname == GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL_EMU) {
+            // GLES2 framebuffer attachments accept level zero only.
+            value = 0;
+            return GL_NO_ERROR;
+        }
+        if (pname == GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE_EMU) {
+            value = static_cast<gles_driver_texture *>(object)->texture_type() == GLES_DRIVER_TEXTURE_TYPE_CUBE
+                ? GL_TEXTURE_CUBE_MAP_POSITIVE_X_EMU + face : 0;
+            return GL_NO_ERROR;
+        }
+        return GL_INVALID_ENUM;
     }
 
     std::uint32_t gles_framebuffer_object::set_attachment(gles_driver_object *object, const std::uint32_t attachment_type, const int face_index) {
@@ -937,9 +1005,12 @@ APPLY_PENDING_ROUTES:
         if (!driver_handle_) {
             if (!es2_context.framebuffer_pool_.empty()) {
                 driver_handle_ = es2_context.framebuffer_pool_.top();
+                es2_context.framebuffer_pool_.pop();
             } else {
-                drivers::handle color_buffer_local = attached_color_->handle_value();
-                driver_handle_ = drivers::create_framebuffer(drv, &color_buffer_local, &attached_color_face_index_, 1,
+                // A complete depth/stencil-only FBO has no color object. ANGLE
+                // uses these while securely initializing renderbuffer contents.
+                drivers::handle color_buffer_local = attached_color_ ? attached_color_->handle_value() : 0;
+                driver_handle_ = drivers::create_framebuffer(drv, &color_buffer_local, &attached_color_face_index_, attached_color_ ? 1 : 0,
                     attached_depth_ ? attached_depth_->handle_value() : 0, attached_depth_face_index_,
                     attached_stencil_ ? attached_stencil_->handle_value() : 0, attached_stencil_face_index_);
 
@@ -1393,6 +1464,33 @@ APPLY_PENDING_ROUTES:
             *params = static_cast<T>(ctx->binded_framebuffer_);
             break;
 
+        case GL_RENDERBUFFER_BINDING_EMU:
+            *params = static_cast<T>(ctx->binded_renderbuffer_);
+            break;
+
+        case GL_CURRENT_PROGRAM_EMU:
+            *params = static_cast<T>(ctx->using_program_ ? ctx->using_program_->client_handle() : 0);
+            break;
+
+        case GL_SHADER_COMPILER_EMU:
+            *params = static_cast<T>(1);
+            break;
+
+        case GL_MAX_VERTEX_UNIFORM_VECTORS_EMU:
+        case GL_MAX_FRAGMENT_UNIFORM_VECTORS_EMU:
+        case GL_MAX_VARYING_VECTORS_EMU:
+        case GL_MAX_RENDERBUFFER_SIZE_EMU: {
+            std::int32_t value = 0;
+            if (!drivers::get_graphics_integer(drv, pname, &value)) {
+                return false;
+            }
+            if (pname == GL_MAX_RENDERBUFFER_SIZE_EMU) {
+                value = std::min<std::int32_t>(value, GLES_EMU_MAX_TEXTURE_SIZE);
+            }
+            *params = static_cast<T>(value);
+            break;
+        }
+
         case GL_STENCIL_BITS_EMU:
             *params = static_cast<T>(8);
             break;
@@ -1618,6 +1716,27 @@ APPLY_PENDING_ROUTES:
         }
     }
 
+    BRIDGE_FUNC_LIBRARY(void, gl_get_shader_precision_format_emu, std::uint32_t shader_type, std::uint32_t precision_type,
+        std::int32_t *range, std::int32_t *precision) {
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        if ((shader_type != GL_VERTEX_SHADER_EMU && shader_type != GL_FRAGMENT_SHADER_EMU)
+            || precision_type < GL_LOW_FLOAT_EMU || precision_type > GL_HIGH_INT_EMU) {
+            controller.push_error(ctx, GL_INVALID_ENUM);
+            return;
+        }
+        if (!range || !precision) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        if (!drivers::get_shader_precision(sys->get_graphics_driver(), shader_type, precision_type, range, precision)) {
+            controller.push_error(ctx, GL_INVALID_OPERATION);
+        }
+    }
+
     BRIDGE_FUNC_LIBRARY(void, gl_compile_shader_emu, std::uint32_t shader) {
         egl_context_es2 *ctx = get_es2_active_context(sys);
         if (!ctx) {
@@ -1837,7 +1956,15 @@ APPLY_PENDING_ROUTES:
     }
     
     BRIDGE_FUNC_LIBRARY(void, gl_validate_program_emu, std::uint32_t program) {
-        // Left empty
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        auto *program_obj = get_program_object_gles(ctx, controller, program);
+        if (program_obj) {
+            program_obj->validate(sys->get_graphics_driver(), controller);
+        }
     }
 
     BRIDGE_FUNC_LIBRARY(void, gl_get_program_iv_emu, std::uint32_t program, std::uint32_t pname, std::int32_t *params) {
@@ -1856,7 +1983,7 @@ APPLY_PENDING_ROUTES:
 
         switch (pname) {
         case GL_VALIDATE_STATUS_EMU:
-            *params = 1;
+            *params = static_cast<std::int32_t>(program_obj->is_validated());
             break;
 
         case GL_LINK_STATUS_EMU:
@@ -1922,15 +2049,19 @@ APPLY_PENDING_ROUTES:
 
         gles_program_object *program_obj = reinterpret_cast<gles_program_object*>(object_ptr->get());
 
-        if (!info_log) {
+        if (max_length < 0 || (max_length > 0 && !info_log)) {
             controller.push_error(ctx, GL_INVALID_VALUE);
             return;
         }
 
-        std::int32_t length_to_copy = common::min<std::int32_t>(max_length, static_cast<std::int32_t>(program_obj->get_link_log_length()));
         const std::string &info_std = program_obj->get_link_log();
-
-        std::memcpy(info_log, info_std.data(), length_to_copy);
+        const std::size_t log_size = info_std.size() - (!info_std.empty() && info_std.back() == '\0');
+        const std::int32_t length_to_copy = max_length > 0
+            ? std::min<std::size_t>(max_length - 1, log_size) : 0;
+        if (max_length > 0) {
+            std::memcpy(info_log, info_std.data(), length_to_copy);
+            info_log[length_to_copy] = '\0';
+        }
         if (actual_length) {
             *actual_length = length_to_copy;
         }
@@ -1958,7 +2089,9 @@ APPLY_PENDING_ROUTES:
 
         for (std::int32_t i = 0; i < count; i++) {
             stub_obj = std::make_unique<gles_renderbuffer_object>(*ctx);
+            auto *object = stub_obj.get();
             rbs[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(rbs[i]);
         }
     }
     
@@ -1989,6 +2122,50 @@ APPLY_PENDING_ROUTES:
         return obj && ((*obj)->object_type() == GLES_OBJECT_RENDERBUFFER);
     }
     
+    BRIDGE_FUNC_LIBRARY(void, gl_get_renderbuffer_parameteriv_emu, std::uint32_t target, std::uint32_t pname, std::int32_t *params) {
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        if (target != GL_RENDERBUFFER_EMU) {
+            controller.push_error(ctx, GL_INVALID_ENUM);
+            return;
+        }
+        auto *entry = ctx->objects_.get(ctx->binded_renderbuffer_);
+        if (!entry || (*entry)->object_type() != GLES_OBJECT_RENDERBUFFER) {
+            controller.push_error(ctx, GL_INVALID_OPERATION);
+            return;
+        }
+        if (!params) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        auto *object = static_cast<gles_renderbuffer_object *>(entry->get());
+        const auto format = object->get_format();
+        std::int32_t red = 0, green = 0, blue = 0, alpha = 0, depth = 0, stencil = 0;
+        switch (format) {
+        case GL_RGBA4_EMU: red = green = blue = alpha = 4; break;
+        case GL_RGB5_A1_EMU: red = green = blue = 5; alpha = 1; break;
+        case GL_RGB565_EMU: red = blue = 5; green = 6; break;
+        case GL_DEPTH_COMPONENT16_EMU: depth = 16; break;
+        case GL_STENCIL_INDEX8_EMU: stencil = 8; break;
+        case GL_DEPTH24_STENCIL8_OES: depth = 24; stencil = 8; break;
+        }
+        switch (pname) {
+        case GL_RENDERBUFFER_WIDTH_EMU: *params = object->get_size().x; break;
+        case GL_RENDERBUFFER_HEIGHT_EMU: *params = object->get_size().y; break;
+        case GL_RENDERBUFFER_INTERNAL_FORMAT_EMU: *params = format ? format : GL_RGBA4_EMU; break;
+        case GL_RENDERBUFFER_RED_SIZE_EMU: *params = red; break;
+        case GL_RENDERBUFFER_GREEN_SIZE_EMU: *params = green; break;
+        case GL_RENDERBUFFER_BLUE_SIZE_EMU: *params = blue; break;
+        case GL_RENDERBUFFER_ALPHA_SIZE_EMU: *params = alpha; break;
+        case GL_RENDERBUFFER_DEPTH_SIZE_EMU: *params = depth; break;
+        case GL_RENDERBUFFER_STENCIL_SIZE_EMU: *params = stencil; break;
+        default: controller.push_error(ctx, GL_INVALID_ENUM); break;
+        }
+    }
+
     BRIDGE_FUNC_LIBRARY(void, gl_renderbuffer_storage_emu, std::uint32_t target, std::uint32_t internal_format, std::int32_t width, std::int32_t height) {
         egl_context_es2 *ctx = get_es2_active_context(sys);
         if (!ctx) {
@@ -2044,7 +2221,9 @@ APPLY_PENDING_ROUTES:
 
         for (std::int32_t i = 0; i < count; i++) {
             stub_obj = std::make_unique<gles_framebuffer_object>(*ctx);
+            auto *object = stub_obj.get();
             names[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(names[i]);
         }
     }
 
@@ -2088,6 +2267,11 @@ APPLY_PENDING_ROUTES:
         dispatcher *dp = sys->get_dispatcher();
         dispatch::egl_controller &controller = dp->get_egl_controller();
 
+        if (target != GL_FRAMEBUFFER_EMU) {
+            controller.push_error(ctx, GL_INVALID_ENUM);
+            return;
+        }
+
         gles_framebuffer_object *fb_obj = get_binded_framebuffer_object_gles(ctx, controller);
         if (!fb_obj) {
             return;
@@ -2127,7 +2311,13 @@ APPLY_PENDING_ROUTES:
     }
 
     BRIDGE_FUNC_LIBRARY(void, gl_framebuffer_texture2d_emu, std::uint32_t target, std::uint32_t attachment_type,
-        std::uint32_t attachment_target, std::uint32_t attachment) {
+        std::uint32_t attachment_target, std::uint32_t attachment, std::int32_t level) {
+        if (level != 0) {
+            if (auto *ctx = get_es2_active_context(sys)) {
+                sys->get_dispatcher()->get_egl_controller().push_error(ctx, GL_INVALID_VALUE);
+            }
+            return;
+        }
         submit_framebuffer_attachment_gles(sys, target, attachment_type, attachment_target, attachment, GL_TEXTURE_2D_EMU);
     }
 
@@ -2136,6 +2326,31 @@ APPLY_PENDING_ROUTES:
         submit_framebuffer_attachment_gles(sys, target, attachment_type, attachment_target, attachment, GL_RENDERBUFFER_EMU);
     }
     
+    BRIDGE_FUNC_LIBRARY(void, gl_get_framebuffer_attachment_parameteriv_emu, std::uint32_t target, std::uint32_t attachment,
+        std::uint32_t pname, std::int32_t *params) {
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        if (target != GL_FRAMEBUFFER_EMU) {
+            controller.push_error(ctx, GL_INVALID_ENUM);
+            return;
+        }
+        auto *object = get_binded_framebuffer_object_gles(ctx, controller);
+        if (!object) {
+            return;
+        }
+        if (!params) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        const auto error = object->get_attachment_parameter(attachment, pname, *params);
+        if (error) {
+            controller.push_error(ctx, error);
+        }
+    }
+
     BRIDGE_FUNC_LIBRARY(std::uint32_t, gl_check_framebuffer_status_emu, std::uint32_t target) {
         egl_context_es2 *ctx = get_es2_active_context(sys);
         if (!ctx) {
@@ -2535,6 +2750,66 @@ APPLY_PENDING_ROUTES:
         set_uniform_value_gles2(sys, location, value, 64 * count, count, drivers::shader_var_type::mat4, transpose ? gles_uniform_variable_data_info::EXTRA_FLAG_MATRIX_NEED_TRANSPOSE : 0);
     }
     
+    template <typename T>
+    static void get_vertex_attrib_gles(system *sys, std::uint32_t index, std::uint32_t pname, T *params) {
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        if (index >= GLES2_EMU_MAX_VERTEX_ATTRIBS_COUNT || !params) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        const auto &attribute = ctx->attributes_[index];
+        switch (pname) {
+        case GL_VERTEX_ATTRIB_ARRAY_ENABLED_EMU: *params = (ctx->attributes_enabled_ >> index) & 1; break;
+        case GL_VERTEX_ATTRIB_ARRAY_SIZE_EMU: *params = attribute.size_; break;
+        case GL_VERTEX_ATTRIB_ARRAY_STRIDE_EMU: *params = attribute.stride_; break;
+        case GL_VERTEX_ATTRIB_ARRAY_TYPE_EMU: *params = attribute.data_type_; break;
+        case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED_EMU: *params = attribute.normalized_; break;
+        case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING_EMU: *params = attribute.buffer_obj_; break;
+        case GL_CURRENT_VERTEX_ATTRIB_EMU:
+            for (std::size_t component = 0; component < 4; ++component) {
+                if constexpr (std::is_same_v<T, std::int32_t>) {
+                    const double rounded = std::round(static_cast<double>(attribute.constant_data_[component]));
+                    params[component] = std::isnan(rounded) ? 0 : static_cast<T>(std::clamp(rounded,
+                        static_cast<double>(std::numeric_limits<T>::min()), static_cast<double>(std::numeric_limits<T>::max())));
+                } else {
+                    params[component] = attribute.constant_data_[component];
+                }
+            }
+            break;
+        default: controller.push_error(ctx, GL_INVALID_ENUM); break;
+        }
+    }
+
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_fv_emu, std::uint32_t index, std::uint32_t pname, float *params) {
+        get_vertex_attrib_gles(sys, index, pname, params);
+    }
+
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_iv_emu, std::uint32_t index, std::uint32_t pname, std::int32_t *params) {
+        get_vertex_attrib_gles(sys, index, pname, params);
+    }
+
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_pointerv_emu, std::uint32_t index, std::uint32_t pname, eka2l1::ptr<void> *pointer) {
+        auto *ctx = get_es2_active_context(sys);
+        if (!ctx) {
+            return;
+        }
+        auto &controller = sys->get_dispatcher()->get_egl_controller();
+        if (index >= GLES2_EMU_MAX_VERTEX_ATTRIBS_COUNT || !pointer) {
+            controller.push_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        if (pname != GL_VERTEX_ATTRIB_ARRAY_POINTER_EMU) {
+            controller.push_error(ctx, GL_INVALID_ENUM);
+            return;
+        }
+        // Return the original guest address or buffer offset.
+        *pointer = eka2l1::ptr<void>(ctx->attributes_[index].offset_);
+    }
+
     BRIDGE_FUNC_LIBRARY(void, gl_enable_vertex_attrib_array_emu, int index) {
         egl_context_es2 *ctx = get_es2_active_context(sys);
         if (!ctx) {
@@ -2590,6 +2865,9 @@ APPLY_PENDING_ROUTES:
         }
 
         ctx->attributes_[index].constant_data_[0] = v0;
+        ctx->attributes_[index].constant_data_[1] = 0.0f;
+        ctx->attributes_[index].constant_data_[2] = 0.0f;
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 1;
         ctx->attrib_changed_ = true;
     }
@@ -2610,6 +2888,8 @@ APPLY_PENDING_ROUTES:
 
         ctx->attributes_[index].constant_data_[0] = v0;
         ctx->attributes_[index].constant_data_[1] = v1;
+        ctx->attributes_[index].constant_data_[2] = 0.0f;
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 2;
         ctx->attrib_changed_ = true;
     }
@@ -2631,6 +2911,7 @@ APPLY_PENDING_ROUTES:
         ctx->attributes_[index].constant_data_[0] = v0;
         ctx->attributes_[index].constant_data_[1] = v1;
         ctx->attributes_[index].constant_data_[2] = v2;
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 3;
         ctx->attrib_changed_ = true;
     }
@@ -2672,6 +2953,9 @@ APPLY_PENDING_ROUTES:
         }
 
         ctx->attributes_[index].constant_data_[0] = *v;
+        ctx->attributes_[index].constant_data_[1] = 0.0f;
+        ctx->attributes_[index].constant_data_[2] = 0.0f;
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 1;
         ctx->attrib_changed_ = true;
     }
@@ -2691,6 +2975,8 @@ APPLY_PENDING_ROUTES:
         }
 
         std::memcpy(ctx->attributes_[index].constant_data_, v, 8);
+        ctx->attributes_[index].constant_data_[2] = 0.0f;
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 2;
         ctx->attrib_changed_ = true;
     }
@@ -2710,6 +2996,7 @@ APPLY_PENDING_ROUTES:
         }
 
         std::memcpy(ctx->attributes_[index].constant_data_, v, 12);
+        ctx->attributes_[index].constant_data_[3] = 1.0f;
         ctx->attributes_[index].constant_vcomp_count_ = 3;
         ctx->attrib_changed_ = true;
     }
@@ -2788,7 +3075,9 @@ APPLY_PENDING_ROUTES:
 
         dispatcher *dp = sys->get_dispatcher();
         dispatch::egl_controller &controller = dp->get_egl_controller();
-        gles_framebuffer_object *fb_obj = get_binded_framebuffer_object_gles(ctx, controller);
+        // Name zero selects the EGL read surface.
+        gles_framebuffer_object *fb_obj = ctx->binded_framebuffer_
+            ? get_binded_framebuffer_object_gles(ctx, controller) : nullptr;
 
         // Framebuffer handle on driver side still 0 = not drawn anything yet. Don't waste time
         // Maybe we should still read though. No one knows

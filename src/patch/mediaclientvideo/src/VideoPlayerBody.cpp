@@ -63,15 +63,25 @@ CVideoPlayerUtility::CBody::CBody(MVideoPlayerUtilityObserver &aObserver, TInt a
         , iCurrentVolume(-1)
         , iCurrentRotation(EVideoRotationNone)
         , iCompleteIdle(NULL)
-        , iVersion(aVersion) {
+        , iOpenPoll(NULL)
+        , iOpenResult(KErrNone)
+        , iPrepareResult(KErrNone)
+        , iSourceGeneration(0)
+        , iVersion(aVersion)
+        , iCallbackGuards(NULL) {
 #ifndef MCV_EKA1
     iSurfaceId = TSurfaceId::CreateNullId();
 #endif
 }
 
 CVideoPlayerUtility::CBody::~CBody() {
+    for (TCallbackGuard *guard = iCallbackGuards; guard; guard = guard->iPrevious)
+        guard->iOwner = NULL;
+    iCallbackGuards = NULL;
+    Close();
     Cancel();
     delete iCompleteIdle;
+    delete iOpenPoll;
     iWindowInfos.Close();
 #ifndef MCV_EKA1
     iDisplayObservers.Close();
@@ -79,6 +89,16 @@ CVideoPlayerUtility::CBody::~CBody() {
     if (iDispatchInstance) {
         EVideoPlayerDestroy(0, iDispatchInstance);
     }
+}
+
+CVideoPlayerUtility::CBody::TCallbackGuard::TCallbackGuard(CBody *aOwner)
+    : iOwner(aOwner), iPrevious(aOwner->iCallbackGuards) {
+    aOwner->iCallbackGuards = this;
+}
+
+CVideoPlayerUtility::CBody::TCallbackGuard::~TCallbackGuard() {
+    if (iOwner)
+        iOwner->iCallbackGuards = iPrevious;
 }
 
 void CVideoPlayerUtility::CBody::ConstructL(RWsSession &aWsSession, RWindowBase &aWindow, const TRect &aWindowRect, const TRect &aClipRect) {
@@ -90,6 +110,7 @@ void CVideoPlayerUtility::CBody::ConstructL(RWsSession &aWsSession, RWindowBase 
     SetDisplayRectL(aWindowRect, aClipRect);
     
     iCompleteIdle = CIdle::NewL(CActive::EPriorityHigh);
+    iOpenPoll = CPeriodic::NewL(CActive::EPriorityStandard);
     CActiveScheduler::Add(this);
 }
 
@@ -98,6 +119,7 @@ void CVideoPlayerUtility::CBody::Construct2L() {
     User::LeaveIfNull(iDispatchInstance);
 
     iCompleteIdle = CIdle::NewL(CActive::EPriorityHigh);
+    iOpenPoll = CPeriodic::NewL(CActive::EPriorityStandard);
     CActiveScheduler::Add(this);
 }
 
@@ -290,26 +312,91 @@ void CVideoPlayerUtility::CBody::OpenFileL(const TDesC &aPath) {
         return;
     }
 
-    if (iFeedbackHandler.CurrentState() != EVideoPlayerStateIdle) {
-        Close();
-    }
+    // This also cancels an earlier asynchronous open while state is still idle.
+    TCallbackGuard guard(this);
+    const TUint generation = iSourceGeneration + 1;
+    Close();
+    if (!guard.iOwner || generation != iSourceGeneration)
+        return;
 
     TInt result = EVideoPlayerOpenUrl(0, iDispatchInstance, &aPath);
-    if ((result == KErrNotSupported) || (result == KErrNotFound)) {
-        iFeedbackHandler.OpenComplete(result);
+    if (result == KRequestPending) {
+        iOpenPoll->Start(1000, 50000, TCallBack(PollOpen, this));
         return;
     }
-    
-    if (result == KErrNone) {
+    CompleteOpen(result);
+}
+
+void CVideoPlayerUtility::CBody::CompleteOpen(TInt aResult) {
+    iOpenResult = aResult;
+    if (aResult == KErrNone) {
         iVideoBitRate = -1;
         iAudioBitRate = -1;
         iVideoFps = -1.0f;
-
-        iCompleteIdle->Start(TCallBack(McvPlayerOpenCompleteIdleCallback, &iFeedbackHandler));
-        return;
     }
-    
-    User::Leave(result);
+    iCompleteIdle->Start(TCallBack(OpenComplete, this));
+}
+
+TInt CVideoPlayerUtility::CBody::OpenComplete(TAny *aSelf) {
+    CBody *self = static_cast<CBody*>(aSelf);
+    self->iFeedbackHandler.OpenComplete(self->iOpenResult);
+    return 0;
+}
+
+TInt CVideoPlayerUtility::CBody::PollOpen(TAny *aSelf) {
+    CBody *self = static_cast<CBody*>(aSelf);
+    TInt result = EVideoPlayerPollOpenUrl(0, self->iDispatchInstance);
+    if (result == KRequestPending)
+        return 1;
+    self->iOpenPoll->Cancel();
+    // Deliver from a separate idle object; Close cancels this delivery too.
+    self->CompleteOpen(result);
+    return 0;
+}
+
+void CVideoPlayerUtility::CBody::OpenUrlL(const TDesC &aUrl, TInt aIapId, const TDesC8 &aMimeType) {
+    // URL playback uses the host connection with IAP values -1 or 0.
+    if (aIapId != -1 && aIapId != 0)
+        User::Leave(KErrNotSupported);
+    if (aMimeType.Length() > 255 || aMimeType.Locate('\r') != KErrNotFound || aMimeType.Locate('\n') != KErrNotFound)
+        User::Leave(KErrArgument);
+    if (!((aUrl.Length() >= 7 && aUrl.Left(7).CompareF(_L("http://")) == 0)
+        || (aUrl.Length() >= 8 && aUrl.Left(8).CompareF(_L("https://")) == 0)))
+        User::Leave(KErrNotSupported);
+    // MIME is a decoder hint. The actual downloaded container determines the
+    // result, and is exposed through MimeType() only after a successful open.
+    OpenFileL(aUrl);
+}
+
+TBool CVideoPlayerUtility::CBody::HasAudioL() const {
+    TVideoMediaInfo info;
+    User::LeaveIfError(EVideoPlayerMediaInfo(0, iDispatchInstance, &info));
+    return info.iHasAudio;
+}
+
+TBool CVideoPlayerUtility::CBody::HasVideoL() const {
+    TVideoMediaInfo info;
+    User::LeaveIfError(EVideoPlayerMediaInfo(0, iDispatchInstance, &info));
+    return info.iHasVideo;
+}
+
+TFourCC CVideoPlayerUtility::CBody::AudioTypeL() const {
+    TVideoMediaInfo info;
+    User::LeaveIfError(EVideoPlayerMediaInfo(0, iDispatchInstance, &info));
+    if (!info.iAudioType)
+        User::Leave(KErrNotSupported);
+    return TFourCC(info.iAudioType);
+}
+
+const TDesC8 &CVideoPlayerUtility::CBody::MimeType() {
+    TVideoMediaInfo info;
+    iMimeType.Zero();
+    if (EVideoPlayerMediaInfo(0, iDispatchInstance, &info) == KErrNone) {
+        TInt length = 0;
+        while (length < 64 && info.iMime[length]) ++length;
+        iMimeType.Copy(TPtrC8(info.iMime, length));
+    }
+    return iMimeType;
 }
 
 void CVideoPlayerUtility::CBody::OpenDesL(const TDesC8 &aContent) {
@@ -320,30 +407,23 @@ void CVideoPlayerUtility::CBody::OpenDesL(const TDesC8 &aContent) {
         return;
     }
 
-    TInt result = EVideoPlayerOpenDes(0, iDispatchInstance, &aContent);
-    if ((result == KErrNotSupported) || (result == KErrNotFound)) {
-        iFeedbackHandler.OpenComplete(result);
+    TCallbackGuard guard(this);
+    const TUint generation = iSourceGeneration + 1;
+    Close();
+    if (!guard.iOwner || generation != iSourceGeneration)
         return;
-    }
-    
-    if (result == KErrNone) {
-        iCompleteIdle->Start(TCallBack(McvPlayerOpenCompleteIdleCallback, &iFeedbackHandler));
-        return;
-    }
-    
-    User::Leave(result);
+    CompleteOpen(EVideoPlayerOpenDes(0, iDispatchInstance, &aContent));
 }
 
 void CVideoPlayerUtility::CBody::Prepare() {
-    if (iFeedbackHandler.CurrentState() >= EVideoPlayerStatePrepared) {
-        return;
-    }
+    iPrepareResult = iFeedbackHandler.CurrentState() == EVideoPlayerStateIdle ? KErrNotReady : KErrNone;
+    iCompleteIdle->Start(TCallBack(PrepareComplete, this));
+}
 
-    if (iFeedbackHandler.CurrentState() == EVideoPlayerStateIdle) {
-        LogOut(KMcvCat, _L("Prepare a new video player with no content opening (warning)!"));
-    }
-
-    iCompleteIdle->Start(TCallBack(McvPlayerPrepareCompleteIdleCallback, &iFeedbackHandler));
+TInt CVideoPlayerUtility::CBody::PrepareComplete(TAny *aSelf) {
+    CBody *self = static_cast<CBody*>(aSelf);
+    self->iFeedbackHandler.PrepareComplete(self->iPrepareResult);
+    return 0;
 }
 
 void CVideoPlayerUtility::CBody::Play(const TTimeIntervalMicroSeconds *aInterval) {
@@ -375,7 +455,7 @@ void CVideoPlayerUtility::CBody::Pause() {
     }
 
     Cancel();
-    EVideoPlayerPause(0, iDispatchInstance);
+    User::LeaveIfError(EVideoPlayerPause(0, iDispatchInstance));
     iFeedbackHandler.Pause();
 }
 
@@ -390,21 +470,34 @@ void CVideoPlayerUtility::CBody::Stop() {
 }
 
 void CVideoPlayerUtility::CBody::Close() {
-    if (iFeedbackHandler.CurrentState() == EVideoPlayerStateIdle) {
-        return;
-    }
-    
+    const TUint generation = ++iSourceGeneration;
+    TCallbackGuard guard(this);
+    if (iOpenPoll) iOpenPoll->Cancel();
+    if (iCompleteIdle) iCompleteIdle->Cancel();
     Cancel();
 #ifndef MCV_EKA1
-    iDisplayObservers.Reset();
+    const TSurfaceId surfaceId = iSurfaceId;
     iSurfaceId = TSurfaceId::CreateNullId();
 #endif
     for (TInt i = 0; i < iWindowInfos.Count(); i++) {
         EVideoPlayerUnregisterWindow(0, iDispatchInstance, iWindowInfos[i].iManagedHandle);
     }
     iWindowInfos.Reset();
-    EVideoPlayerClose(0, iDispatchInstance);
+    if (iDispatchInstance) EVideoPlayerClose(0, iDispatchInstance);
+    iMimeType.Zero();
     iFeedbackHandler.Close();
+#ifndef MCV_EKA1
+    // Remove registrations before notifying. Reentrant Close/RemoveDisplay
+    // cannot deliver twice, and a new Open owns a different generation.
+    while (iDisplayObservers.Count()) {
+        MMMFSurfaceEventHandler *handler = iDisplayObservers[0].iHandler;
+        iDisplayObservers.Remove(0);
+        if (!surfaceId.IsNull())
+            handler->MmsehRemoveSurface(surfaceId);
+        if (!guard.iOwner || generation != iSourceGeneration)
+            return;
+    }
+#endif
 }
 
 void CVideoPlayerUtility::CBody::SetPositionL(const TTimeIntervalMicroSeconds &aWhere) {
@@ -526,7 +619,11 @@ CVideoPlayerUtility::CBody *CVideoPlayerUtility::CBody::New2L(MVideoPlayerUtilit
 
 EXPORT_C CVideoPlayerUtility* CVideoPlayerUtility::NewL(MVideoPlayerUtilityObserver& aObserver,
                                           TInt aPriority,
+#ifdef MCV_EKA1
                                           TMdaPriorityPreference aPref,
+#else
+                                          TInt aPref,
+#endif
                                           RWsSession& aWs,
                                           CWsScreenDevice& aScreenDevice,
                                           RWindowBase& aWindow,
@@ -555,10 +652,12 @@ EXPORT_C CVideoPlayerUtility2* CVideoPlayerUtility2::NewL(MVideoPlayerUtilityObs
 #endif
 
 EXPORT_C void CVideoPlayerUtility::OpenFileL(const TDesC& aFileName,TUid aControllerUid) {
+    if (aControllerUid != KNullUid) User::Leave(KErrNotSupported);
     iBody->OpenFileL(aFileName);
 }
 
 EXPORT_C void CVideoPlayerUtility::OpenFileL(const RFile& aFileName, TUid aControllerUid) {
+    if (aControllerUid != KNullUid) User::Leave(KErrNotSupported);
 #ifdef MCV_EKA1
     // EKA1 RFile cannot report its full path.
     LogOut(KMcvCat, _L("Video Player's open file through RFile is not supported on EKA1!"));
@@ -573,17 +672,19 @@ EXPORT_C void CVideoPlayerUtility::OpenFileL(const RFile& aFileName, TUid aContr
 
 #ifndef MCV_EKA1
 EXPORT_C void CVideoPlayerUtility::OpenFileL(const TMMSource& aSource, TUid aControllerUid) {
-    LogOut(KMcvCat, _L("Video Player's open file through MMSource is not yet implemented!"));
+    User::Leave(KErrNotSupported);
 }
 
 #endif
 
 EXPORT_C void CVideoPlayerUtility::OpenDesL(const TDesC8& aDescriptor,TUid aControllerUid) {
+    if (aControllerUid != KNullUid) User::Leave(KErrNotSupported);
     iBody->OpenDesL(aDescriptor);
 }
 
 EXPORT_C void CVideoPlayerUtility::OpenUrlL(const TDesC& aUrl, TInt aIapId, const TDesC8& aMimeType, TUid aControllerUid) {
-    LogOut(KMcvCat, _L("Video Player's open URL is not yet implemented!"));
+    if (aControllerUid != KNullUid) User::Leave(KErrNotSupported);
+    iBody->OpenUrlL(aUrl, aIapId, aMimeType);
 }
 
 EXPORT_C void CVideoPlayerUtility::Prepare() {
@@ -615,7 +716,13 @@ EXPORT_C void CVideoPlayerUtility::PauseL() {
     iBody->Pause();
 }
 
-EXPORT_C void CVideoPlayerUtility::SetPriorityL(TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C void CVideoPlayerUtility::SetPriorityL(TInt aPriority,
+#ifdef MCV_EKA1
+    TMdaPriorityPreference aPref
+#else
+    TInt aPref
+#endif
+) {
     LogOut(KMcvCat, _L("Video Player's set priority is not yet implemented!"));
 }
 
@@ -661,7 +768,7 @@ EXPORT_C void CVideoPlayerUtility::VideoFrameSizeL(TSize& aSize) const {
 }
 
 EXPORT_C const TDesC8& CVideoPlayerUtility::VideoFormatMimeType() const {
-    return _L8("video/mp4");
+    return iBody->MimeType();
 }
 
 EXPORT_C TInt CVideoPlayerUtility::VideoBitRateL() const {
@@ -673,12 +780,11 @@ EXPORT_C TInt CVideoPlayerUtility::AudioBitRateL() const {
 }
 
 EXPORT_C TFourCC CVideoPlayerUtility::AudioTypeL() const {
-    LogOut(KMcvCat, _L("Video Player's auto type is not yet implemented!"));
+    return iBody->AudioTypeL();
 }
 
 EXPORT_C TBool CVideoPlayerUtility::AudioEnabledL() const {
-    LogOut(KMcvCat, _L("Video Player's audio enabled is stubbed!"));
-    return ETrue;
+    return iBody->HasAudioL();
 }
 
 EXPORT_C void CVideoPlayerUtility::SetPositionL(const TTimeIntervalMicroSeconds& aPosition) {
@@ -706,11 +812,12 @@ EXPORT_C TInt CVideoPlayerUtility::MaxVolume() const {
 }
 
 EXPORT_C void CVideoPlayerUtility::SetBalanceL(TInt aBalance) {
-    LogOut(KMcvCat, _L("Video Player's set balance is not yet implemented!"));
+    if (aBalance)
+        User::Leave(KErrNotSupported);
 }
 
 EXPORT_C TInt CVideoPlayerUtility::Balance()const {
-    LogOut(KMcvCat, _L("Video Player's get balance is not yet implemented!"));
+    return 0; // The current decoder mixes at the centre balance only.
 }
 
 EXPORT_C void CVideoPlayerUtility::SetRotationL(TVideoRotation aRotation) {
@@ -745,6 +852,27 @@ void CVideoPlayerUtility::CBody::SetCropRegionL(const TRect &aCrop) {
             UpdateDisplayWindowL(iWindowInfos[i]);
         }
     }
+#ifndef MCV_EKA1
+    if (iSurfaceId.IsNull())
+        return;
+    TSize size;
+    FrameSizeL(size);
+    TRect crop(TPoint(0, 0), size);
+    if (!iCropRegion.IsEmpty()) crop.Intersection(iCropRegion);
+    const TSurfaceId surfaceId = iSurfaceId;
+    const TUint generation = iSourceGeneration;
+    TCallbackGuard guard(this);
+    TInt remaining = iDisplayObservers.Count();
+    for (TInt index = 0; index < iDisplayObservers.Count() && remaining--; ) {
+        const TDisplayObserver observer = iDisplayObservers[index];
+        observer.iHandler->MmsehSurfaceParametersChanged(surfaceId, crop, TVideoAspectRatio(1, 1));
+        if (!guard.iOwner || generation != iSourceGeneration)
+            return;
+        if (index < iDisplayObservers.Count() && iDisplayObservers[index].iHandler == observer.iHandler
+            && iDisplayObservers[index].iDisplay == observer.iDisplay)
+            ++index;
+    }
+#endif
 }
 
 EXPORT_C TInt CVideoPlayerUtility::NumberOfMetaDataEntriesL() const {
@@ -758,7 +886,8 @@ EXPORT_C CMMFMetaDataEntry* CVideoPlayerUtility::MetaDataEntryL(TInt aIndex) con
 }
 
 EXPORT_C const CMMFControllerImplementationInformation& CVideoPlayerUtility::ControllerImplementationInformationL() {
-    LogOut(KMcvCat, _L("Video Player's controller implementation information is not yet implemented!"));
+    User::Leave(KErrNotSupported);
+    __builtin_unreachable();
 }
 
 EXPORT_C TInt CVideoPlayerUtility::CustomCommandSync(const TMMFMessageDestinationPckg& aDestination, TInt aFunction, const TDesC8& aDataTo1, const TDesC8& aDataTo2, TDes8& aDataFrom) {
@@ -800,16 +929,15 @@ EXPORT_C void CVideoPlayerUtility::StartDirectScreenAccessL() {
 }
 
 EXPORT_C TInt CVideoPlayerUtility::RegisterAudioResourceNotification(MMMFAudioResourceNotificationCallback& aCallback, TUid aNotificationEventUid, const TDesC8& aNotificationRegistrationData) {
-    LogOut(KMcvCat, _L("Video Player's register audio resource notification is not yet implemented!"));
+    return KErrNotSupported; // No host audio-resource arbitration events yet.
 }
 
 EXPORT_C TInt CVideoPlayerUtility::CancelRegisterAudioResourceNotification(TUid aNotificationEventId) {
-    LogOut(KMcvCat, _L("Video Player's cancel register audio resource notification is not yet implemented!"));
+    return KErrNotSupported;
 }
 
 EXPORT_C TInt CVideoPlayerUtility::WillResumePlay() {
-    LogOut(KMcvCat, _L("Video Player's will resume play is not yet implemented!"));
-    return ETrue;
+    return KErrNotSupported;
 }
 
 EXPORT_C TInt CVideoPlayerUtility::SetInitScreenNumber(TInt aScreenNumber) {
@@ -839,8 +967,7 @@ EXPORT_C void CVideoPlayerUtility::SetVideoEnabledL(TBool aVideoEnabled) {
 }
 
 EXPORT_C TBool CVideoPlayerUtility::VideoEnabledL() const {
-    LogOut(KMcvCat, _L("Video Player's get video enabled is not yet implemented!"));
-    return ETrue;
+    return iBody->HasVideoL();
 }
 
 EXPORT_C void CVideoPlayerUtility::SetAudioEnabledL(TBool aAudioEnabled) {
@@ -936,13 +1063,20 @@ void CVideoPlayerUtility::CBody::AddDisplayL(TInt aDisplay, MMMFSurfaceEventHand
     observer.iDisplay = aDisplay;
     observer.iHandler = &aHandler;
     User::LeaveIfError(iDisplayObservers.Append(observer));
-    aHandler.MmsehSurfaceCreated(aDisplay, iSurfaceId, TRect(TPoint(0, 0), size), TVideoAspectRatio(1, 1));
+    TRect crop(TPoint(0, 0), size);
+    if (!iCropRegion.IsEmpty()) crop.Intersection(iCropRegion);
+    const TSurfaceId surfaceId = iSurfaceId;
+    aHandler.MmsehSurfaceCreated(aDisplay, surfaceId, crop, TVideoAspectRatio(1, 1));
 }
 
 void CVideoPlayerUtility::CBody::RemoveDisplay(TInt aDisplay) {
     for (TInt i = 0; i < iDisplayObservers.Count(); i++) {
         if (iDisplayObservers[i].iDisplay == aDisplay) {
+            MMMFSurfaceEventHandler *handler = iDisplayObservers[i].iHandler;
+            const TSurfaceId surfaceId = iSurfaceId;
             iDisplayObservers.Remove(i);
+            if (!surfaceId.IsNull())
+                handler->MmsehRemoveSurface(surfaceId);
             return;
         }
     }

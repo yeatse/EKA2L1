@@ -20,6 +20,10 @@
 
 #pragma once
 
+#include <services/fs/file_share.h>
+#include <services/fs/file_attributes.h>
+#include <optional>
+
 #include <kernel/server.h>
 #include <services/context.h>
 #include <services/framework.h>
@@ -52,6 +56,9 @@ namespace eka2l1 {
     }
 
     struct entry_info;
+    enum class abstract_file_system_err_code;
+    int file_attribute_result(abstract_file_system_err_code);
+    std::u16string canonical_file_attrib_path(std::u16string);
 
     static constexpr std::uint32_t FS_UID = 0x100039E3;
     static constexpr std::uint32_t SYSTEM_DRIVE_KEY = 0x10283049;
@@ -67,14 +74,9 @@ namespace eka2l1 {
     struct io_component;
     using io_component_ptr = std::unique_ptr<io_component>;
 
-    enum class fs_file_attrib_flag {
-        exclusive = 1 << 0,
-        share_read = 1 << 1,
-        share_write = 1 << 2,
-        share_optional = 1 << 3
+    struct file_attrib : file_share_state {
+        std::optional<bool> pending_read_only;
     };
-
-    struct file_attrib;
 
     struct fs_node : public epoc::ref_count_object {
         io_component_ptr vfs_node;
@@ -87,6 +89,7 @@ namespace eka2l1 {
 
         kernel::uid process{ 0 };
 
+        int flush_attributes();
         void deref() override;
         ~fs_node() override;
     };
@@ -200,6 +203,7 @@ namespace eka2l1 {
         void replace(service::ipc_context *ctx);
         void parse(service::ipc_context *ctx);
 
+        int check_closed_entry(io_system *, const std::u16string &, bool deny_read_only);
         void delete_entry(service::ipc_context *ctx);
         void set_entry(service::ipc_context *ctx);
         void set_should_notify_failure(service::ipc_context *ctx);
@@ -261,69 +265,6 @@ namespace eka2l1 {
         file_sfield fields[LEX_COMPONENTS];
         eka2l1::ptr<void> vtable;
         epoc::filename name_buf;
-    };
-
-    struct file_attrib {
-        std::uint32_t flags{ 0 };
-        kernel::uid owner{ 0 };
-        std::uint32_t use_count{ 0 };
-
-        bool is_exlusive() const {
-            return flags & static_cast<std::uint32_t>(fs_file_attrib_flag::exclusive);
-        }
-
-        bool is_readable() const {
-            return flags & static_cast<std::uint32_t>(fs_file_attrib_flag::share_read);
-        }
-
-        bool is_writeable() const {
-            return flags & static_cast<std::uint32_t>(fs_file_attrib_flag::share_write);
-        }
-
-        bool is_readonly() const {
-            return is_readable() && !is_writeable();
-        }
-
-        bool is_readable_and_writeable() const {
-            return is_readable() && is_writeable();
-        }
-
-        bool is_optional() const {
-            return flags & static_cast<std::uint32_t>(fs_file_attrib_flag::share_optional);
-        }
-
-        /**
-         * \brief    Claim the exclusive for this file, to given process.
-         * 
-         * If the file attrib is not currently being claimed, the given process will claim it. If the file
-         * is claimed by other process, this failed. Else, if the given process already claimed the file,
-         * nothing happens. You can only unclaimed when use of this file for the process claimed it reached 0.
-         * 
-         * \returns  False, if a process already claimed this file.
-         */
-        bool claim_exclusive(const kernel::uid pr_uid);
-
-        /**
-         * \brief Increment usage of the attrib.
-         * 
-         * This only work with process UID that has already claimed this file attribute, or if this file attribute
-         * has not been claimed.
-         * 
-         * \param pr_uid        UID of the process to increment use. 
-         */
-        void increment_use(const kernel::uid pr_uid);
-
-        /**
-         * \brief    Decrement use count of the given process.
-         * 
-         * If the given process UID currently exclusively decrement use of this attrib, when it reachs zero,
-         * the claim will be freed. Any flags will also be cleared along.
-         * 
-         * This is used for situation where multiple file handles in a process all claimed for exclusive.
-         * 
-         * \param pr_uid The UID of target process.
-         */
-        void decrement_use(const kernel::uid pr_uid);
     };
 
     class fs_server : public service::typical_server {

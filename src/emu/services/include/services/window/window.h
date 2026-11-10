@@ -49,6 +49,7 @@
 #include <services/window/scheduler.h>
 #include <services/window/screen.h>
 #include <services/window/surface.h>
+#include <services/window/managed_surface.h>
 
 #include <kernel/server.h>
 #include <mem/ptr.h>
@@ -175,6 +176,7 @@ namespace eka2l1::epoc {
         using nof_container = std::unordered_set<T, event_nof_hasher<T>, event_nof_comparer<T>>;
 
     private:
+        friend class eka2l1::window_server;
         friend struct window_client_obj;
         friend struct window;
         friend struct window_group;
@@ -394,7 +396,8 @@ namespace eka2l1 {
         epoc::pointer_cursor_mode cursor_mode_{ epoc::pointer_cursor_mode::fixed };
 
         epoc::bitmap_cache bmp_cache;
-        epoc::surface_registry surface_registry_;
+        std::shared_ptr<epoc::surface_registry> surface_registry_;
+        std::shared_ptr<epoc::managed_surface_registry> managed_surface_registry_;
         epoc::animation_scheduler anim_sched;
 
         fbs_server *fbss{ nullptr };
@@ -463,8 +466,12 @@ namespace eka2l1 {
         }
 
         epoc::surface_registry &surfaces() {
-            return surface_registry_;
+            return *surface_registry_;
         }
+
+        std::shared_ptr<epoc::managed_surface_registry> managed_surfaces() { return managed_surface_registry_; }
+        void surface_updated(const std::shared_ptr<epoc::window_surface> &surface);
+        void finish_rendering(service::ipc_context &context);
 
         epoc::bitmap_cache *get_bitmap_cache() {
             return &bmp_cache;

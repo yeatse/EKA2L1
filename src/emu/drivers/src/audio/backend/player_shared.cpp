@@ -128,8 +128,8 @@ namespace eka2l1::drivers {
         });
 
         if (!output_stream_) {
-            // Null stream
-            return true;
+            playback_complete_ = true;
+            return false;
         }
 
         output_stream_->set_drained_callback([this]() { on_stream_drained(); });

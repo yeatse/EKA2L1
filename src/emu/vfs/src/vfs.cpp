@@ -31,6 +31,10 @@
 #include <mem/mem.h>
 #include <mem/ptr.h>
 #include <vfs/vfs.h>
+#include <vfs/host_file_attributes.h>
+#if EKA2L1_PLATFORM(ANDROID)
+#include <common/android/contenturi.h>
+#endif
 
 #include <array>
 #include <cwctype>
@@ -346,6 +350,18 @@ namespace eka2l1 {
             return fmode;
         }
 
+        bool configure_buffering() {
+            // RFile writes and SQLite journal updates must be visible across handles.
+            if (setvbuf(file, nullptr, _IONBF, 0) == 0) {
+                return true;
+            }
+
+            LOG_ERROR(VFS, "Can't disable buffering for file {}", common::ucs2_to_utf8(physical_path));
+            fclose(file);
+            file = nullptr;
+            return false;
+        }
+
         void init(const utf16_str &vfs_path, const utf16_str &real_path, const int mode) {
             // Disable directory check here
             closed = false;
@@ -365,6 +381,8 @@ namespace eka2l1 {
                 LOG_ERROR(VFS, "Can't open file: {}", common::ucs2_to_utf8(real_path));
                 return;
             }
+
+            configure_buffering();
         }
 
         void shutdown() {
@@ -450,6 +468,22 @@ namespace eka2l1 {
             return input_name;
         }
 
+        bool rename(const std::u16string &new_name, const std::u16string &new_path) override {
+            if (closed || !file)
+                return false;
+            std::error_code error;
+            // A copy/delete fallback would leave this FILE on the old inode.
+            // Symbian's RFile::Rename is a same-volume operation.
+            std::filesystem::rename(std::filesystem::path(physical_path),
+                std::filesystem::path(new_path), error);
+            if (error)
+                return false;
+            input_name = new_name;
+            physical_path = new_path;
+            common::invalidate_folded_directory_indexes();
+            return true;
+        }
+
         bool flush() override {
             WARN_CLOSE
             NO_HANDLE_RETURN(false)
@@ -491,6 +525,10 @@ namespace eka2l1 {
                 // Stay handle-less: every other operation now fails cleanly
                 // instead of faulting on a null FILE inside the C library.
                 LOG_ERROR(VFS, "Can't reopen file {} after resize", common::ucs2_to_utf8(physical_path));
+                return false;
+            }
+
+            if (!configure_buffering()) {
                 return false;
             }
 
@@ -957,6 +995,16 @@ namespace eka2l1 {
             drive &drv = mappings[ascii_to_drive_number(static_cast<char>(std::towlower(root[0])))].first;
 
             info.attribute = drv.attribute;
+#if EKA2L1_PLATFORM(ANDROID)
+            if (!is_content_uri(real_path_utf8))
+#endif
+            {
+                const auto read_only = host_file_is_read_only(std::filesystem::u8path(real_path_utf8));
+                if (!read_only)
+                    return std::nullopt;
+                if (*read_only)
+                    info.attribute |= io_attrib_write_protected;
+            }
 
             return info;
         }
@@ -991,6 +1039,15 @@ namespace eka2l1 {
                 return nullptr;
             }
 
+            if ((mode & (WRITE_MODE | APPEND_MODE)) && common::exists(real_path_utf8)
+#if EKA2L1_PLATFORM(ANDROID)
+                && !is_content_uri(real_path_utf8)
+#endif
+            ) {
+                const auto read_only = host_file_is_read_only(std::filesystem::u8path(real_path_utf8));
+                if (!read_only || *read_only)
+                    return nullptr;
+            }
             auto opened = std::make_unique<physical_file>(path, *real_path, mode);
 
             if (!opened->is_open()) {
@@ -1322,6 +1379,32 @@ namespace eka2l1 {
         }
 
         return false;
+    }
+
+    abstract_file_system_err_code io_system::set_entry_read_only(const std::u16string &path, bool read_only) {
+        const std::lock_guard<std::mutex> guard(access_lock);
+        if (path.empty())
+            return abstract_file_system_err_code::no;
+        for (auto &[id, fs] : filesystems) {
+            const auto info = fs->get_entry_info(path);
+            if (!info)
+                continue;
+            const auto drive = fs->get_drive_entry(char16_to_drive(path[0]));
+            if (!drive || (drive->attribute & io_attrib_write_protected) || drive->media_type == drive_media::rom)
+                return abstract_file_system_err_code::failed;
+            const auto raw = fs->get_raw_path(path);
+            if (!raw)
+                return abstract_file_system_err_code::unsupported;
+            const auto host_name = common::ucs2_to_utf8(*raw);
+#if EKA2L1_PLATFORM(ANDROID)
+            if (is_content_uri(host_name))
+                return abstract_file_system_err_code::unsupported;
+#endif
+            const auto host_path = std::filesystem::u8path(host_name);
+            return set_host_file_read_only(host_path, read_only)
+                ? abstract_file_system_err_code::ok : abstract_file_system_err_code::failed;
+        }
+        return abstract_file_system_err_code::no;
     }
 
     bool io_system::delete_entry(const std::u16string &path) {

@@ -34,7 +34,10 @@
 #include <kernel/chunk.h>
 #include <kernel/thread.h>
 #include <mem/mem.h>
+#include <mem/control.h>
+#include <mem/page.h>
 
+#include <array>
 #include <limits>
 #include <utils/err.h>
 
@@ -68,46 +71,9 @@ namespace eka2l1 {
 
     // The sharing state is keyed by path, so the key has to be one single form of it:
     // a file opened as "c:/dir/f" and again as "c:\dir\f" is the same file.
-    static std::u16string canonical_file_attrib_path(std::u16string path) {
-        return eka2l1::transform_separators<char16_t>(
-            std::move(path), true, eka2l1::get_separator_16);
-    }
-
-    bool file_attrib::claim_exclusive(const kernel::uid pr_uid) {
-        if (owner == pr_uid) {
-            flags |= static_cast<std::uint32_t>(fs_file_attrib_flag::exclusive);
-            return true;
-        }
-
-        return false;
-    }
-
-    void file_attrib::increment_use(const kernel::uid pr_uid) {
-        if (use_count == 0) {
-            owner = pr_uid;
-        }
-
-        if (owner == pr_uid) {
-            use_count++;
-        }
-    }
-
-    void file_attrib::decrement_use(const kernel::uid pr_uid) {
-        if (use_count == 0) {
-            return;
-        }
-
-        if (pr_uid == owner) {
-            use_count--;
-        }
-
-        if (use_count == 0) {
-            // Clear all flags
-            flags = 0;
-            owner = 0;
-
-            return;
-        }
+    std::u16string canonical_file_attrib_path(std::u16string path) {
+        return common::lowercase_ucs2_string(eka2l1::transform_separators<char16_t>(
+            std::move(path), true, eka2l1::get_separator_16));
     }
 
     fs_node::~fs_node() {
@@ -121,14 +87,44 @@ namespace eka2l1 {
         }
     }
 
+    int file_attribute_result(abstract_file_system_err_code result) {
+        switch (result) {
+        case abstract_file_system_err_code::ok: return epoc::error_none;
+        case abstract_file_system_err_code::no: return epoc::error_not_found;
+        case abstract_file_system_err_code::unsupported: return epoc::error_not_supported;
+        case abstract_file_system_err_code::failed: return epoc::error_access_denied;
+        }
+        return epoc::error_general;
+    }
+
+    int fs_node::flush_attributes() {
+        if (!vfs_node || vfs_node->type != io_component_type::file)
+            return epoc::error_none;
+        auto *file = static_cast<eka2l1::file *>(vfs_node.get());
+        auto found = serv->attribs.find(canonical_file_attrib_path(file->file_name()));
+        if (found == serv->attribs.end() || !found->second.pending_read_only)
+            return epoc::error_none;
+        const auto error = file_attribute_result(serv->get_system()->get_io_system()->set_entry_read_only(
+            file->file_name(), *found->second.pending_read_only));
+        if (error == epoc::error_none)
+            found->second.pending_read_only.reset();
+        return error;
+    }
+
     void fs_node::deref() {
-        if (vfs_node->type == io_component_type::file) {        
+        // Duplicate handles and file mappings retain this same file object.
+        // Drop its one sharing claim only with the final reference.
+        if (count == 1 && vfs_node && vfs_node->type == io_component_type::file) {
+            const bool flushed = static_cast<file *>(vfs_node.get())->flush();
+            const auto error = flushed ? flush_attributes() : epoc::error_general;
+            if (error != epoc::error_none)
+                LOG_ERROR(SERVICE_EFSRV, "Failed to persist attributes on final close: {}", error);
             file *vfs_file = reinterpret_cast<file *>(vfs_node.get());
             const std::u16string filename = canonical_file_attrib_path(vfs_file->file_name());
 
             auto ite = serv->attribs.find(filename);
             if (ite != serv->attribs.end()) {
-                ite->second.decrement_use(process);
+                ite->second.release(mix_mode & 3, open_mode & WRITE_MODE);
                 if (ite->second.use_count == 0) {
                     serv->attribs.erase(ite);
                 }
@@ -431,7 +427,7 @@ namespace eka2l1 {
             return;
         }
 
-        ctx->complete(epoc::error_none);
+        ctx->complete(node->flush_attributes());
     }
 
     void fs_server_client::file_rename(service::ipc_context *ctx) {
@@ -449,6 +445,12 @@ namespace eka2l1 {
             return;
         }
 
+        // RFile::Rename requires an exclusive writable share. Moving a shared
+        // path's bookkeeping would strand other nodes under their old name.
+        if ((node->mix_mode & 3) != epoc::fs::file_share_exclusive || !(node->open_mode & WRITE_MODE)) {
+            ctx->complete(epoc::error_access_denied);
+            return;
+        }
         file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
         const std::u16string old_path = vfs_file->file_name();
         auto new_path = ctx->get_argument_value<std::u16string>(0);
@@ -464,32 +466,32 @@ namespace eka2l1 {
             return;
         }
 
-        bool res = ctx->sys->get_io_system()->rename(old_path, new_path_abs);
-
-        if (!res) {
+        if (char16_to_drive(old_path[0]) != char16_to_drive(new_path_abs[0])) {
+            ctx->complete(epoc::error_bad_name);
+            return;
+        }
+        if (ctx->sys->get_io_system()->exist(new_path_abs)) {
+            ctx->complete(epoc::error_already_exists);
+            return;
+        }
+        if (!vfs_file->flush()) {
             ctx->complete(epoc::error_general);
             return;
         }
-
-        // Save state of file and reopening it
-        size_t last_pos = vfs_file->tell();
-        int last_mode = vfs_file->file_mode();
-
-        vfs_file->close();
-
-        symfile new_vfs_file = ctx->sys->get_io_system()->open_file(new_path_abs, last_mode);
-
-        if (!new_vfs_file) {
-            // Renamed on disk, but the new path would not open. Say so, rather than
-            // leaving the subsession holding a null file it dereferences next.
-            LOG_ERROR(SERVICE_EFSRV, "Can't reopen {} after rename", common::ucs2_to_utf8(new_path_abs));
+        const int attribute_error = node->flush_attributes();
+        if (attribute_error != epoc::error_none) {
+            ctx->complete(attribute_error);
+            return;
+        }
+        const auto new_host_path = ctx->sys->get_io_system()->get_raw_path(new_path_abs);
+        if (!new_host_path) {
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        if (!vfs_file->rename(new_path_abs, *new_host_path)) {
             ctx->complete(epoc::error_general);
             return;
         }
-
-        new_vfs_file->seek(last_pos, file_seek_mode::beg);
-
-        node->vfs_node = std::move(new_vfs_file);
 
         auto &attribs = server<fs_server>()->attribs;
         auto attrib_node = attribs.extract(canonical_file_attrib_path(old_path));
@@ -506,122 +508,303 @@ namespace eka2l1 {
         ctx->complete(epoc::error_none);
     }
 
+    // The translation of one guest address applies only to its virtual page.
+    // Synchronous IPC keeps these mappings stable during the page-wise copy.
+    static bool file_guest_range(service::ipc_context *ctx, const address start,
+        const std::uint32_t length, const bool writable, void *buffer = nullptr) {
+        if (!length) {
+            return true;
+        }
+        if (!start || (static_cast<std::uint64_t>(start) + length > (std::uint64_t(1) << 32))) {
+            return false;
+        }
+        auto *model = ctx->msg->own_thr->owning_process()->get_mem_model();
+        if (!model) {
+            return false;
+        }
+        auto *memory = ctx->sys->get_memory_system();
+        auto *control = memory->get_control();
+        const auto page_size = memory->get_page_size();
+        const auto asid = model->address_space_id();
+        const auto required = writable ? prot_write : prot_read;
+        std::uint32_t offset = 0;
+        while (offset < length) {
+            const auto guest = start + offset;
+            const auto *page = control->get_page_info(asid, guest);
+            if (!page || !page->host_addr || !(page->perm & required)) {
+                return false;
+            }
+            void *host = control->get_host_pointer(asid, guest);
+            if (!host) {
+                return false;
+            }
+            const auto count = std::min<std::uint32_t>(length - offset, page_size - (guest % page_size));
+            if (buffer) {
+                auto *bytes = static_cast<std::uint8_t *>(buffer) + offset;
+                if (writable) {
+                    std::memcpy(host, bytes, count);
+                } else {
+                    std::memcpy(bytes, host, count);
+                }
+            }
+            offset += count;
+        }
+        return true;
+    }
+
+    struct file_io_descriptor {
+        address header;
+        address data;
+        address backing_header;
+        std::uint32_t info;
+        std::uint32_t backing_info;
+    };
+
+    static std::optional<file_io_descriptor> file_data_descriptor(service::ipc_context *ctx,
+        const bool writable, const std::uint32_t count, int &error, const int slot = 0) {
+        error = epoc::error_bad_descriptor;
+        const auto arg_type = static_cast<int>(ctx->msg->args.get_arg_type(slot));
+        if (!ctx->sys->get_kernel_system()->is_eka1()
+            && (!(arg_type & static_cast<int>(ipc_arg_type::flag_des))
+                || (arg_type & static_cast<int>(ipc_arg_type::flag_16b))
+                || (writable && (arg_type & static_cast<int>(ipc_arg_type::flag_const))))) {
+            return std::nullopt;
+        }
+        const address header = ctx->msg->args.args[slot];
+        std::array<std::uint32_t, 3> words {};
+        if (!file_guest_range(ctx, header, 4, false, words.data())) {
+            return std::nullopt;
+        }
+        epoc::desc_base descriptor;
+        descriptor.info = words[0];
+        if (!descriptor.is_valid_descriptor()) {
+            return std::nullopt;
+        }
+        const auto type = descriptor.get_descriptor_type();
+        const bool modifiable = (type == epoc::buf) || (type == epoc::ptr) || (type == epoc::ptr_to_buf);
+        if (writable && !modifiable) {
+            return std::nullopt;
+        }
+        const std::uint32_t header_size = type == epoc::buf_const ? 4
+            : ((type == epoc::ptr_const) || (type == epoc::buf)) ? 8 : 12;
+        if (!file_guest_range(ctx, header, header_size, false, words.data())
+            || (writable && !file_guest_range(ctx, header, 4, true))) {
+            return std::nullopt;
+        }
+        const auto capacity = modifiable ? words[1] : descriptor.get_length();
+        if ((capacity > epoc::descriptor_length_mask) || (descriptor.get_length() > capacity)) {
+            return std::nullopt;
+        }
+        if (count > (writable ? capacity : descriptor.get_length())) {
+            error = writable ? epoc::error_overflow : epoc::error_argument;
+            return std::nullopt;
+        }
+        std::uint64_t data_address = 0;
+        address backing_header = 0;
+        std::uint32_t backing_info = 0;
+        switch (type) {
+        case epoc::buf_const:
+            data_address = static_cast<std::uint64_t>(header) + 4;
+            break;
+        case epoc::buf:
+            data_address = static_cast<std::uint64_t>(header) + 8;
+            break;
+        case epoc::ptr_const:
+            data_address = words[1];
+            break;
+        case epoc::ptr:
+            data_address = words[2];
+            break;
+        case epoc::ptr_to_buf:
+            backing_header = words[2];
+            if (!file_guest_range(ctx, backing_header, 4, false, &backing_info)
+                || ((backing_info >> 28) != epoc::buf_const)
+                || (writable && !file_guest_range(ctx, backing_header, 4, true))) {
+                return std::nullopt;
+            }
+            data_address = static_cast<std::uint64_t>(backing_header) + 4;
+            break;
+        default:
+            return std::nullopt;
+        }
+        if ((data_address > std::numeric_limits<address>::max())
+            || !file_guest_range(ctx, static_cast<address>(data_address), count, writable)) {
+            return std::nullopt;
+        }
+        return file_io_descriptor { header, static_cast<address>(data_address), backing_header, descriptor.info, backing_info };
+    }
+
+    static bool file_set_read_length(service::ipc_context *ctx, const file_io_descriptor &descriptor,
+        const std::uint32_t count) {
+        auto info = (descriptor.info & ~epoc::descriptor_length_mask) | count;
+        if (!file_guest_range(ctx, descriptor.header, 4, true, &info)) {
+            return false;
+        }
+        if (descriptor.backing_header) {
+            info = (descriptor.backing_info & ~epoc::descriptor_length_mask) | count;
+            return file_guest_range(ctx, descriptor.backing_header, 4, true, &info);
+        }
+        return true;
+    }
+
+    // The physical-file VFS currently uses fseek(long). Do not narrow a guest
+    // position on hosts where long is smaller than Symbian's 64-bit file offset.
+    static constexpr std::uint64_t file_io_max_position = std::numeric_limits<long>::max();
+
+    static std::optional<std::uint64_t> file_io_position(service::ipc_context *ctx, file *vfs_file) {
+        if (ctx->msg->function & epoc::fs::ipc_arg_slot2_des) {
+            int error;
+            const auto packet = file_data_descriptor(ctx, false, sizeof(std::int64_t), error, 2);
+            std::int64_t position;
+            if (!packet || ((packet->info & epoc::descriptor_length_mask) != sizeof(position))
+                || !file_guest_range(ctx, packet->data, sizeof(position), false, &position) || (position < -1)) {
+                return std::nullopt;
+            }
+            if (position != -1) {
+                return static_cast<std::uint64_t>(position);
+            }
+        } else {
+            const auto position = ctx->get_argument_value<std::int32_t>(2);
+            if (!position) {
+                return std::nullopt;
+            }
+            if ((*position != std::numeric_limits<std::int32_t>::min()) && (*position != -1)) {
+                if (*position < 0) {
+                    return std::nullopt;
+                }
+                return static_cast<std::uint64_t>(*position);
+            }
+        }
+        return vfs_file->tell();
+    }
+
     void fs_server_client::file_write(service::ipc_context *ctx) {
-        std::optional<std::int32_t> handle_res = ctx->get_argument_value<std::int32_t>(3);
-
-        if (!handle_res) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto length = ctx->get_argument_value<std::int32_t>(1);
+        if (!handle || !length || (*length < 0)) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        std::optional<std::string> write_data = ctx->get_argument_value<std::string>(0);
-
-        if (!write_data) {
-            ctx->complete(epoc::error_argument);
-            return;
-        }
-
-        fs_node *node = get_file_node(*handle_res);
-
-        if (node == nullptr || node->vfs_node->type != io_component_type::file) {
+        fs_node *node = get_file_node(*handle);
+        if (!node || node->vfs_node->type != io_component_type::file) {
             ctx->complete(epoc::error_bad_handle);
             return;
         }
-
-        file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
-
         if (!(node->open_mode & WRITE_MODE)) {
             ctx->complete(epoc::error_access_denied);
             return;
         }
-
-        std::int32_t write_len = *ctx->get_argument_value<std::int32_t>(1);
-        std::int32_t write_pos_provided = *ctx->get_argument_value<std::int32_t>(2);
-
-        std::uint64_t write_pos = 0;
-        std::uint64_t size_of_file = vfs_file->size();
-
-        write_pos = vfs_file->tell();
-
-        // Low MaxUint64
-        if ((write_pos_provided != static_cast<int>(0x80000000)) && (write_pos_provided != -1)) {
-            write_pos = write_pos_provided;
+        int descriptor_error;
+        const auto descriptor = file_data_descriptor(ctx, false, static_cast<std::uint32_t>(*length), descriptor_error);
+        if (!descriptor) {
+            ctx->complete(descriptor_error);
+            return;
         }
 
-        if (write_pos > size_of_file) {
-            // Fill the file with temporary 0
-            vfs_file->seek(0, file_seek_mode::end);
-            static char ZERO_BYTE = 0;
+        auto *vfs_file = static_cast<file *>(node->vfs_node.get());
+        const auto position = file_io_position(ctx, vfs_file);
+        if (!position || (*position > file_io_max_position)) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        const auto size = vfs_file->size();
+        if (size > file_io_max_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        // RFile::Write at a position beyond EOF appends at EOF. OpenC is
+        // responsible for extending the file when implementing POSIX holes.
+        const auto write_position = std::min(*position, size);
+        if (static_cast<std::uint64_t>(*length) > file_io_max_position - write_position) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        // A zero-length write must not extend the file or inspect a null payload.
+        if (!*length) {
+            ctx->complete(epoc::error_none);
+            return;
+        }
 
-            if (vfs_file->write_file(&ZERO_BYTE, 1, static_cast<std::uint32_t>(write_pos - size_of_file)) != write_pos - size_of_file) {
-                LOG_WARN(SERVICE_EFSRV, "Unable to supply stubbed bytes for beyond file size write operation!");
+        if (vfs_file->seek(write_position, file_seek_mode::beg) != write_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        std::array<std::uint8_t, 64 * 1024> data;
+        const auto length_bytes = static_cast<std::uint32_t>(*length);
+        std::uint32_t offset = 0;
+        while (offset < length_bytes) {
+            const auto count = std::min<std::uint32_t>(length_bytes - offset, data.size());
+            if (!file_guest_range(ctx, descriptor->data + offset, count, false, data.data())) {
+                ctx->complete(epoc::error_bad_descriptor);
+                return;
             }
+            if (vfs_file->write_file(data.data(), 1, count) != count) {
+                ctx->complete(epoc::error_write);
+                return;
+            }
+            offset += count;
         }
-
-        // If this write pos is beyond the current end of file, use last pos
-        vfs_file->seek(write_pos, file_seek_mode::beg);
-        size_t wrote_size = vfs_file->write_file(write_data.value().data(), 1, write_len);
-
-        //LOG_TRACE(SERVICE_EFSRV, "File {} wroted with size: {}, at {}", common::ucs2_to_utf8(vfs_file->file_name()), wrote_size, write_pos);
-
         ctx->complete(epoc::error_none);
     }
 
     void fs_server_client::file_read(service::ipc_context *ctx) {
-        std::optional<std::int32_t> handle_res = ctx->get_argument_value<std::int32_t>(3);
-
-        if (!handle_res) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto length = ctx->get_argument_value<std::int32_t>(1);
+        if (!handle || !length || (*length < 0)) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        fs_node *node = get_file_node(*handle_res);
-
-        if (node == nullptr || node->vfs_node->type != io_component_type::file) {
+        fs_node *node = get_file_node(*handle);
+        if (!node || node->vfs_node->type != io_component_type::file) {
             ctx->complete(epoc::error_bad_handle);
             return;
         }
-
-        file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
-
-        int read_len = *ctx->get_argument_value<std::int32_t>(1);
-        std::uint64_t read_pos = 0;
-        std::uint64_t last_pos = vfs_file->tell();
-
-        read_pos = last_pos;
-        
-        if (ctx->msg->function & epoc::fs::ipc_arg_slot2_des) {
-            std::optional<std::uint64_t> temp = ctx->get_argument_data_from_descriptor<std::uint64_t>(2);
-            if (!temp.has_value()) {
-                ctx->complete(epoc::error_argument);
+        int descriptor_error;
+        const auto descriptor = file_data_descriptor(ctx, true, static_cast<std::uint32_t>(*length), descriptor_error);
+        if (!descriptor) {
+            ctx->complete(descriptor_error);
+            return;
+        }
+        auto *vfs_file = static_cast<file *>(node->vfs_node.get());
+        const auto position = file_io_position(ctx, vfs_file);
+        if (!position || (*position > file_io_max_position)) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        if (vfs_file->seek(*position, file_seek_mode::beg) != *position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        const auto size = vfs_file->size();
+        if (size > file_io_max_position) {
+            ctx->complete(epoc::error_general);
+            return;
+        }
+        // RFile reads at or beyond EOF return an empty descriptor.
+        const auto count = static_cast<std::uint32_t>(*position >= size ? 0
+            : std::min<std::uint64_t>(*length, size - *position));
+        std::array<std::uint8_t, 64 * 1024> data;
+        std::uint32_t offset = 0;
+        while (offset < count) {
+            const auto requested = std::min<std::uint32_t>(count - offset, data.size());
+            const auto read = vfs_file->read_file(data.data(), 1, requested);
+            if ((read > requested) || ((read < requested) && (*position + offset + read < vfs_file->size()))) {
+                ctx->complete(epoc::error_general);
                 return;
             }
-            if (temp.value() != static_cast<std::uint64_t>(-1)) {
-                read_pos = temp.value();
+            if (!file_guest_range(ctx, descriptor->data + offset, static_cast<std::uint32_t>(read), true, data.data())) {
+                ctx->complete(epoc::error_bad_descriptor);
+                return;
             }
-        } else {
-            std::int32_t pos_gotten = *ctx->get_argument_value<std::int32_t>(2);
-
-            if ((pos_gotten != static_cast<std::int32_t>(0x80000000)) && (pos_gotten != -1)) {
-                read_pos = static_cast<std::uint64_t>(pos_gotten);
+            offset += static_cast<std::uint32_t>(read);
+            if (read < requested) {
+                break;
             }
         }
-
-        vfs_file->seek(read_pos, file_seek_mode::beg);
-
-        uint64_t size = vfs_file->size();
-
-        if (size - read_pos < read_len) {
-            read_len = static_cast<int>(size - read_pos);
+        if (!file_set_read_length(ctx, *descriptor, offset)) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
         }
-
-        std::vector<char> read_data;
-        read_data.resize(read_len);
-
-        size_t read_finish_len = vfs_file->read_file(read_data.data(), 1, read_len);
-        ctx->write_data_to_descriptor_argument(0, reinterpret_cast<uint8_t *>(read_data.data()), static_cast<std::uint32_t>(read_finish_len));
-
-        //LOG_TRACE(SERVICE_EFSRV, "Readed {} from {} to address 0x{:x}", read_finish_len, read_pos, ctx->msg->args.args[0]);
         ctx->complete(epoc::error_none);
     }
 
@@ -631,11 +814,9 @@ namespace eka2l1 {
         void *backing_;
         std::size_t size_;
 
-        fs_file_mapping(fs_node *source, kernel::chunk *chunk, void *backing, const std::size_t size,
-            file_attrib *attrib)
+        fs_file_mapping(fs_node *source, kernel::chunk *chunk, void *backing, const std::size_t size)
             : source_(source), chunk_(chunk), backing_(backing), size_(size) {
             source_->ref();
-            attrib->increment_use(source_->process);
         }
 
         ~fs_file_mapping() override {
@@ -759,8 +940,7 @@ namespace eka2l1 {
             return;
         }
 
-        auto &attrib = server<fs_server>()->attribs[canonical_file_attrib_path(source_file->file_name())];
-        auto *mapping = make_new<fs_file_mapping>(source, chunk, backing, mapped_size, &attrib);
+        auto *mapping = make_new<fs_file_mapping>(source, chunk, backing, mapped_size);
         const auto handle = obj_table_.add(mapping);
         const address base = chunk->base(process).ptr_address();
         int error = epoc::error_none;
@@ -803,11 +983,12 @@ namespace eka2l1 {
         file *vfs_file = reinterpret_cast<file *>(node->vfs_node.get());
 
         // Reset its status, so seek back, this is just in case it got used again
-        vfs_file->flush();
+        const bool flushed = vfs_file->flush();
+        const int attribute_error = flushed ? node->flush_attributes() : epoc::error_general;
         vfs_file->seek(0, file_seek_mode::beg);
 
         obj_table_.remove(*handle_res);
-        ctx->complete(epoc::error_none);
+        ctx->complete(!flushed ? epoc::error_general : attribute_error);
     }
 
     void fs_server_client::file_open(service::ipc_context *ctx) {
@@ -853,18 +1034,31 @@ namespace eka2l1 {
             *ctx->get_argument_value<std::int32_t>(1), true, true);
 
         if (handle <= 0) {
+            io->delete_entry(full_path);
             ctx->complete(handle);
             return;
         }
 
         LOG_TRACE(SERVICE_EFSRV, "Handle opened: {}", handle);
 
-        ctx->write_data_to_descriptor_argument<int>(3, handle);
-
-        // Arg2 take the temp path
         const utf16_str guest_path = eka2l1::transform_separators<char16_t>(
             full_path, true, eka2l1::get_separator_16);
-        ctx->write_arg(2, guest_path);
+        int error = epoc::error_none;
+        const std::size_t max_path_chars = ctx->get_argument_max_data_size(2)
+            / (ctx->sys->get_kernel_system()->is_eka1() ? 1 : sizeof(char16_t));
+        const bool enough_space = max_path_chars >= guest_path.size()
+            && ctx->get_argument_max_data_size(3) >= sizeof(handle);
+        if (!enough_space)
+            error = epoc::error_overflow;
+        const bool handle_written = enough_space && ctx->write_data_to_descriptor_argument<int>(3, handle, &error);
+        const bool path_written = handle_written && ctx->write_arg(2, guest_path);
+        if (!handle_written || !path_written) {
+            obj_table_.remove(handle);
+            io->delete_entry(full_path);
+            server<fs_server>()->temporary_file_cleanset_.erase(common::lowercase_ucs2_string(full_path));
+            ctx->complete(error == epoc::error_none ? epoc::error_bad_descriptor : error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -883,13 +1077,12 @@ namespace eka2l1 {
 
         const epoc::handle dup_handle = obj_table_.add(node);
 
-        file *f = reinterpret_cast<file *>(node->vfs_node.get());
-
-        auto &node_attrib = server<fs_server>()->attribs[
-            canonical_file_attrib_path(f->file_name())];
-        node_attrib.increment_use(node->process);
-
-        ctx->write_data_to_descriptor_argument<epoc::handle>(3, dup_handle);
+        int error = epoc::error_none;
+        if (!ctx->write_data_to_descriptor_argument<epoc::handle>(3, dup_handle, &error)) {
+            obj_table_.remove(dup_handle);
+            ctx->complete(error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -921,26 +1114,46 @@ namespace eka2l1 {
         std::optional<entry_info> info = io->get_entry_info(f->file_name());
         assert(info);
 
-        const std::uint32_t attrib = epoc::fs::build_attribute_from_entry_info(info.value());
-        ctx->write_data_to_descriptor_argument(0, attrib);
-        ctx->complete(epoc::error_none);
+        std::uint32_t attrib = epoc::fs::build_attribute_from_entry_info(info.value());
+        const auto found = server<fs_server>()->attribs.find(canonical_file_attrib_path(f->file_name()));
+        if (found != server<fs_server>()->attribs.end() && found->second.pending_read_only) {
+            if (*found->second.pending_read_only)
+                attrib |= epoc::fs::entry_att_read_only;
+            else
+                attrib &= ~epoc::fs::entry_att_read_only;
+        }
+        int error = epoc::error_none;
+        ctx->write_data_to_descriptor_argument(0, attrib, &error);
+        ctx->complete(error);
     }
 
     void fs_server_client::file_set_att(service::ipc_context *ctx) {
-        std::int32_t target_handle = *ctx->get_argument_value<std::int32_t>(3);
-
-        if (!target_handle) {
+        const auto handle = ctx->get_argument_value<std::int32_t>(3);
+        const auto set = ctx->get_argument_value<std::uint32_t>(0);
+        const auto clear = ctx->get_argument_value<std::uint32_t>(1);
+        if (!handle || !set || !clear) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        fs_node *node = get_file_node(target_handle);
-
-        if (!node) {
-            ctx->complete(epoc::error_not_found);
+        auto *node = get_file_node(*handle);
+        if (!node || !node->vfs_node || node->vfs_node->type != io_component_type::file) {
+            ctx->complete(epoc::error_bad_handle);
             return;
         }
-
+        if (!(node->open_mode & WRITE_MODE)) {
+            ctx->complete(epoc::error_access_denied);
+            return;
+        }
+        const auto change = requested_read_only_change(*set, *clear);
+        if (change == read_only_change::invalid || change == read_only_change::unsupported) {
+            ctx->complete(change == read_only_change::invalid ? epoc::error_argument : epoc::error_not_supported);
+            return;
+        }
+        if (change != read_only_change::unchanged) {
+            auto *file = static_cast<eka2l1::file *>(node->vfs_node.get());
+            auto &attribute = server<fs_server>()->attribs.at(canonical_file_attrib_path(file->file_name()));
+            attribute.pending_read_only = change == read_only_change::set;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1042,6 +1255,11 @@ namespace eka2l1 {
             return;
         }
 
+        if (ctx->get_argument_max_data_size(3) < sizeof(int)) {
+            ctx->complete(epoc::error_overflow);
+            return;
+        }
+
         *name_res = get_full_symbian_path(ss_path, *name_res);
         std::string name_utf8 = common::ucs2_to_utf8(*name_res);
 
@@ -1098,7 +1316,12 @@ namespace eka2l1 {
 
         LOG_TRACE(SERVICE_EFSRV, "Handle opened: {}", handle);
 
-        ctx->write_data_to_descriptor_argument<int>(3, handle);
+        int error = epoc::error_none;
+        if (!ctx->write_data_to_descriptor_argument<int>(3, handle, &error)) {
+            obj_table_.remove(handle);
+            ctx->complete(error);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
@@ -1148,51 +1371,33 @@ namespace eka2l1 {
             }
         }
 
-        // Check the attribute first
-        fs_node *new_node = server<fs_server>()->make_new<fs_node>();
-        auto &node_attrib = server<fs_server>()->attribs[
-            canonical_file_attrib_path(name)];
-
-        if (node_attrib.is_exlusive()) {
-            // Check if we can open it
-            if (node_attrib.owner != own_pr_uid) {
-                // Access denied
-                return epoc::error_in_use;
-            }
-        }
-
-        node_attrib.increment_use(own_pr_uid);
-
-        if (share_mode == epoc::fs::file_share_exclusive) {
-            // Try to claim and return denied if we can't
-            if (!node_attrib.claim_exclusive(own_pr_uid)) {
-                return epoc::error_in_use;
-            }
-        }
-
-        //======================= CHECK COMPARE MODE ===============================
-
-        if (node_attrib.is_readable_and_writeable() && !node_attrib.is_optional()) {
-            if (share_mode == epoc::fs::file_share_readers_only) {
-                // Hell no.
+        if (access_mode & WRITE_MODE) {
+            auto info = io->get_entry_info(name);
+            if (info && (epoc::fs::build_attribute_from_entry_info(*info) & epoc::fs::entry_att_read_only))
                 return epoc::error_access_denied;
-            }
         }
 
-        if (node_attrib.is_readonly() && ((share_mode == epoc::fs::file_share_any) || (share_mode == epoc::fs::file_share_readers_or_writers))) {
-            return epoc::error_access_denied;
+        auto &attributes = server<fs_server>()->attribs;
+        const auto key = canonical_file_attrib_path(name);
+        auto existing = attributes.find(key);
+        if (existing != attributes.end()) {
+            if (!existing->second.compatible(share_mode, access_mode & WRITE_MODE))
+                return epoc::error_in_use;
+            if (!existing->second.can_acquire(share_mode, access_mode & WRITE_MODE))
+                return epoc::error_no_memory;
         }
 
-        //======================= PROMOTE MODE ==============================
-        // TODO
-
-        //======================= DO OPEN AND FILL ==========================
-        new_node->vfs_node = io->open_file(name, access_mode);
-
-        if (!new_node->vfs_node) {
+        // Compatibility and read-only checks precede any truncating open.
+        // Publish a claim only after opening succeeds; a failed open must not
+        // leave exclusive state or a partly initialized server object behind.
+        auto opened = io->open_file(name, access_mode);
+        if (!opened || !opened->valid()) {
             LOG_TRACE(SERVICE_EFSRV, "Can't open file {}", common::ucs2_to_utf8(name));
             return epoc::error_not_found;
         }
+        auto *new_node = server<fs_server>()->make_new<fs_node>();
+        new_node->vfs_node = std::move(opened);
+        attributes[key].acquire(share_mode, access_mode & WRITE_MODE);
 
         new_node->mix_mode = real_mode;
         new_node->open_mode = access_mode;

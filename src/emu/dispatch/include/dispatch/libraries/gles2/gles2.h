@@ -31,6 +31,14 @@ namespace eka2l1::dispatch {
     BRIDGE_FUNC_LIBRARY(void, gl_shader_source_emu, std::uint32_t shader, std::int32_t count, eka2l1::ptr<const char> *strings,
         const std::int32_t *length);
     BRIDGE_FUNC_LIBRARY(void, gl_get_shader_iv_emu, std::uint32_t shader, std::uint32_t pname, std::int32_t *params);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_shader_precision_format_emu, std::uint32_t shader_type, std::uint32_t precision_type,
+        std::int32_t *range, std::int32_t *precision);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_renderbuffer_parameteriv_emu, std::uint32_t target, std::uint32_t pname, std::int32_t *params);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_framebuffer_attachment_parameteriv_emu, std::uint32_t target, std::uint32_t attachment,
+        std::uint32_t pname, std::int32_t *params);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_fv_emu, std::uint32_t index, std::uint32_t pname, float *params);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_iv_emu, std::uint32_t index, std::uint32_t pname, std::int32_t *params);
+    BRIDGE_FUNC_LIBRARY(void, gl_get_vertex_attrib_pointerv_emu, std::uint32_t index, std::uint32_t pname, eka2l1::ptr<void> *pointer);
     BRIDGE_FUNC_LIBRARY(void, gl_compile_shader_emu, std::uint32_t shader);
     BRIDGE_FUNC_LIBRARY(bool, gl_is_shader_emu, std::uint32_t name);
     BRIDGE_FUNC_LIBRARY(bool, gl_is_program_emu, std::uint32_t name);
@@ -52,7 +60,7 @@ namespace eka2l1::dispatch {
     BRIDGE_FUNC_LIBRARY(bool, gl_is_framebuffer_emu, std::uint32_t name);
     BRIDGE_FUNC_LIBRARY(void, gl_bind_framebuffer_emu, std::uint32_t target, std::uint32_t fb);
     BRIDGE_FUNC_LIBRARY(void, gl_framebuffer_texture2d_emu, std::uint32_t target, std::uint32_t attachment_type,
-        std::uint32_t attachment_target, std::uint32_t attachment);
+        std::uint32_t attachment_target, std::uint32_t attachment, std::int32_t level);
     BRIDGE_FUNC_LIBRARY(void, gl_framebuffer_renderbuffer_emu, std::uint32_t target, std::uint32_t attachment_type,
         std::uint32_t attachment_target, std::uint32_t attachment);
     BRIDGE_FUNC_LIBRARY(std::uint32_t, gl_check_framebuffer_status_emu, std::uint32_t target);

@@ -27,6 +27,13 @@
 #include <e32base.h>
 #include <e32std.h>
 
+// Preserve legacy SDK mangling while building against the official Symbian^3 headers.
+#ifdef EKA2L1_MODERN_MMF_HEADERS
+typedef TInt TMdaPatchPriorityPreference;
+#else
+typedef TMdaPriorityPreference TMdaPatchPriorityPreference;
+#endif
+
 enum TMdaState {
     EMdaStateIdle = 0,
     EMdaStatePlay = 1,
@@ -84,11 +91,16 @@ public:
 struct CMMFMdaAudioUtility : public CActive {
 protected:
     TInt iPriority;
-    TMdaPriorityPreference iPref;
+    TMdaPatchPriorityPreference iPref;
     TMdaPlayType iPlayType;
 
 private:
     TMdaState iState;
+    CPeriodic *iUrlPoller;
+    TBool iOpeningUrl;
+
+    static TInt PollOpenUrlCallback(TAny *aUtility);
+    TInt PollOpenUrl();
 
 protected:
     CMMFMdaAudioOpenComplete iOpener;
@@ -101,7 +113,7 @@ protected:
     void ReloadRecordedClip();
 
 public:
-    CMMFMdaAudioUtility(const TInt aPriority, const TMdaPriorityPreference aPref);
+    CMMFMdaAudioUtility(const TInt aPriority, const TMdaPatchPriorityPreference aPref);
     ~CMMFMdaAudioUtility();
 
     void TransitionState(const TMdaState aNewState, const TInt aError = KErrNone);
@@ -113,6 +125,7 @@ public:
     void StartListeningForCompletion();
 
     void SupplyUrlL(const TDesC &aUrl);
+    void SupplyRemoteUrlL(const TDesC &aUrl, TInt aIapId, const TDesC8 &aMimeType);
     void SupplyDataL(const TDesC8 &aData);
 
     // An empty clip opens as a recording destination instead of being handed to the player.
@@ -148,6 +161,10 @@ public:
         return iState;
     }
 
+    TInt LoadingProgress() const {
+        return iOpeningUrl ? 0 : (iState == EMdaStateIdle ? KErrNotReady : 100);
+    }
+
     void SetRepeats(const TInt aHowManyTimes, const TTimeIntervalMicroSeconds &aSilenceInterval);
 
     // Base hook for devired
@@ -159,8 +176,8 @@ private:
     MMdaAudioPlayerCallback &iCallback;
 
 public:
-    CMMFMdaAudioPlayerUtility(MMdaAudioPlayerCallback &aCallback, const TInt aPriority, const TMdaPriorityPreference aPref);
-    static CMMFMdaAudioPlayerUtility *NewL(MMdaAudioPlayerCallback &aCallback, const TInt aPriority, const TMdaPriorityPreference aPref);
+    CMMFMdaAudioPlayerUtility(MMdaAudioPlayerCallback &aCallback, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
+    static CMMFMdaAudioPlayerUtility *NewL(MMdaAudioPlayerCallback &aCallback, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
 
     virtual void OnStateChanged(const TMdaState aCurrentState, const TMdaState aPreviousState, const TInt aError);
 };
@@ -172,8 +189,8 @@ private:
     CMdaAudioRecorderUtility &iParent;
 
 public:
-    CMMFMdaAudioRecorderUtility(CMdaAudioRecorderUtility &aParent, MMdaObjectStateChangeObserver &aObserver, const TInt aPriority, const TMdaPriorityPreference aPref);
-    static CMMFMdaAudioRecorderUtility *NewL(CMdaAudioRecorderUtility &aParent, MMdaObjectStateChangeObserver &aObserver, const TInt aPriority, const TMdaPriorityPreference aPref);
+    CMMFMdaAudioRecorderUtility(CMdaAudioRecorderUtility &aParent, MMdaObjectStateChangeObserver &aObserver, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
+    static CMMFMdaAudioRecorderUtility *NewL(CMdaAudioRecorderUtility &aParent, MMdaObjectStateChangeObserver &aObserver, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
 
     virtual void OnStateChanged(const TMdaState aCurrentState, const TMdaState aPreviousState, const TInt aError);
 
@@ -209,12 +226,12 @@ private:
     TAny *iDispatchInstance;
 
 public:
-    CMMFMdaAudioToneUtility(MMdaAudioToneObserver &aObserver, const TInt aPriority, const TMdaPriorityPreference aPref);
+    CMMFMdaAudioToneUtility(MMdaAudioToneObserver &aObserver, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
     void ConstructL();
 
     ~CMMFMdaAudioToneUtility();
 
-    static CMMFMdaAudioToneUtility *NewL(MMdaAudioToneObserver &aObserver, const TInt aPriority, const TMdaPriorityPreference aPref);
+    static CMMFMdaAudioToneUtility *NewL(MMdaAudioToneObserver &aObserver, const TInt aPriority, const TMdaPatchPriorityPreference aPref);
 
     TInt SetVolume(const TInt aNewVolume);
     TInt GetVolume();

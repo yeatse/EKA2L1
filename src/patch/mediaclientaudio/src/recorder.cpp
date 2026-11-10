@@ -48,7 +48,7 @@ static TInt ClipSize(const TDesC &aFileName) {
 }
 
 ///============ RECORDER MAIN =================
-EXPORT_C CMdaAudioRecorderUtility *CMdaAudioRecorderUtility::NewL(MMdaObjectStateChangeObserver &aObserver, CMdaServer *aServer, TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C CMdaAudioRecorderUtility *CMdaAudioRecorderUtility::NewL(MMdaObjectStateChangeObserver &aObserver, CMdaServer *aServer, TInt aPriority, TMdaPatchPriorityPreference aPref) {
     CMdaAudioRecorderUtility *util = new (ELeave) CMdaAudioRecorderUtility();
     CleanupStack::PushL(util);
     util->iProperties = CMMFMdaAudioRecorderUtility::NewL(*util, aObserver, aPriority, aPref);
@@ -212,9 +212,15 @@ TInt CMdaAudioRecorderUtility::MaxGain() {
     return 0;
 }
 
+#ifdef EKA2L1_MODERN_MMF_HEADERS
+TInt CMdaAudioRecorderUtility::SetVolume(TInt aVolume) {
+    return iProperties->SetVolume(aVolume);
+}
+#else
 void CMdaAudioRecorderUtility::SetVolume(TInt aVolume) {
     iProperties->SetVolume(aVolume);
 }
+#endif
 
 void CMdaAudioRecorderUtility::SetGain(TInt aGain) {
     LogOut(KMcaCat, _L("Unimplemented function setting recorder's gain"));
@@ -450,7 +456,7 @@ EXPORT_C void CMdaAudioRecorderUtility::ReplaceMetaDataEntryL(TInt aMetaDataInde
     LogOut(KMcaCat, _L("Replace metadata entry unimplemented"));
 }
 
-EXPORT_C void CMdaAudioRecorderUtility::SetPriority(TInt aPriority, TMdaPriorityPreference aPref) {
+EXPORT_C void CMdaAudioRecorderUtility::SetPriority(TInt aPriority, TMdaPatchPriorityPreference aPref) {
     LogOut(KMcaCat, _L("Set priority unimplemented!"));
 }
 

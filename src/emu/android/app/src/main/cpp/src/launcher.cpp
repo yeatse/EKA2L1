@@ -684,8 +684,9 @@ namespace eka2l1::android {
 
     void launcher::on_finished_text_input(const std::string &text, const bool force_close) {
         if (input_complete_callback_) {
-            input_complete_callback_(common::utf8_to_ucs2(text));
+            auto callback = std::move(input_complete_callback_);
             input_complete_callback_ = nullptr;
+            callback(force_close ? std::u16string{} : common::utf8_to_ucs2(text), !force_close);
         }
     }
 

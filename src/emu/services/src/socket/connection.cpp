@@ -29,8 +29,18 @@
 #include <algorithm>
 #include <cstring>
 #include <iterator>
+#include <limits>
 
 namespace eka2l1::epoc::socket {
+    void connection_events::notify(const connection_state &state, bool previously_active) {
+        const auto callbacks = observers;
+        for (const auto &[owner, callback] : callbacks) {
+            if (observers.count(owner)) {
+                callback(state, previously_active);
+            }
+        }
+    }
+
     connection_state::~connection_state() {
         if (active) {
             advance(conn_progress_link_layer_closed);
@@ -39,22 +49,61 @@ namespace eka2l1::epoc::socket {
     }
 
     void connection_state::advance(std::int32_t new_stage) {
+        if (stage == new_stage) {
+            return;
+        }
+        const bool previously_active = active;
         stage = new_stage;
         active = new_stage == conn_progress_connection_opened || new_stage == conn_progress_link_layer_open;
+        if (active) {
+            authoritative_stop = false;
+        }
         const auto callbacks = observers;
         for (const auto &[owner, callback] : callbacks) {
             if (observers.count(owner)) {
                 callback(new_stage);
             }
         }
+        if (const auto notifications = events.lock()) {
+            notifications->notify(*this, previously_active);
+        }
     }
 
     std::shared_ptr<connection_state> connection_registry::create() {
         states_.erase(std::remove_if(states_.begin(), states_.end(),
             [](const auto &state) { return state.expired(); }), states_.end());
+        if (states_.size() >= 1999999) {
+            return nullptr;
+        }
         auto state = std::make_shared<connection_state>();
+        // ConnMon reserves IDs from 2,000,000 for bearer-wide queries.
+        while (monitor_find(next_monitor_id_)) {
+            next_monitor_id_ = next_monitor_id_ == 1999999 ? 1 : next_monitor_id_ + 1;
+        }
+        state->monitor_id = next_monitor_id_;
+        next_monitor_id_ = next_monitor_id_ == 1999999 ? 1 : next_monitor_id_ + 1;
+        state->events = events_;
         states_.push_back(state);
         return state;
+    }
+
+    std::vector<std::uint32_t> connection_registry::monitor_snapshot() const {
+        std::vector<std::uint32_t> result;
+        for (const auto &weak : states_) {
+            if (const auto state = weak.lock(); state && state->active) {
+                result.push_back(state->monitor_id);
+            }
+        }
+        return result;
+    }
+
+    std::shared_ptr<connection_state> connection_registry::monitor_find(std::uint32_t id) const {
+        for (const auto &weak : states_) {
+            if (auto state = weak.lock(); state && state->monitor_id == id) {
+                return state;
+            }
+        }
+        return nullptr;
     }
 
     std::vector<connection_info> connection_registry::enumerate() {
@@ -323,6 +372,10 @@ namespace eka2l1::epoc::socket {
         auto state = registry.find(info);
         if (!state) {
             state = registry.create();
+            if (!state) {
+                ctx->complete(epoc::error_no_memory);
+                return;
+            }
             state->info = info;
         }
         bind_state(state);
@@ -337,6 +390,23 @@ namespace eka2l1::epoc::socket {
         snapshot_ = parent_->server<socket_server>()->connections().enumerate();
         ctx->complete(ctx->write_data_to_descriptor_argument(0, static_cast<std::uint32_t>(snapshot_.size()))
             ? epoc::error_none : epoc::error_argument);
+    }
+
+    void socket_connection_proxy::stop(service::ipc_context *ctx) {
+        const auto mode = ctx->get_argument_value<std::uint32_t>(0);
+        if (!mode || *mode > 1) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        const auto state = observed_state_.lock();
+        if (!state || !state->active) {
+            ctx->complete(epoc::error_not_ready);
+            return;
+        }
+        state->authoritative_stop = *mode == 1;
+        state->advance(conn_progress_link_layer_closed);
+        state->advance(conn_progress_connection_closed);
+        ctx->complete(epoc::error_none);
     }
 
     void socket_connection_proxy::get_info(service::ipc_context *ctx) {
@@ -356,6 +426,26 @@ namespace eka2l1::epoc::socket {
             ctx->complete(epoc::error_not_ready);
         } else if (name == u"IAP\\Id" || name == u"IAP\\IAPNetwork") {
             const auto value = name == u"IAP\\Id" ? state->info.iap_id : state->info.network_id;
+            ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
+        } else if (name == u"IAP\\IAPService") {
+            // Integer and text settings use the active connection's IAP record.
+            auto *cenrep = reinterpret_cast<central_repo_server *>(ctx->sys->get_kernel_system()
+                ->get_by_name<service::server>(CENTRAL_REPO_SERVER_NAME));
+            auto *repo = cenrep ? cenrep->load_repo_with_lookup(ctx->sys->get_io_system(),
+                ctx->sys->get_device_manager(), 0xCCCCCC00) : nullptr;
+            if (repo) {
+                repo->access_count--;
+            }
+            const auto *entry = repo ? repo->find_entry(0x02840000 | (state->info.iap_id << 8)) : nullptr;
+            if (!entry || entry->data.etype != central_repo_entry_type::integer) {
+                ctx->complete(epoc::error_not_found);
+                return;
+            }
+            if (entry->data.intd > std::numeric_limits<std::uint32_t>::max()) {
+                ctx->complete(epoc::error_overflow);
+                return;
+            }
+            const auto value = static_cast<std::uint32_t>(entry->data.intd);
             ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
         } else {
             ctx->complete(epoc::error_not_found);
@@ -419,6 +509,39 @@ namespace eka2l1::epoc::socket {
 
                 case socket_reform_cn_start:
                     start(ctx, false);
+                    break;
+
+                case socket_reform_cn_stop:
+                    stop(ctx);
+                    break;
+
+                case socket_reform_cn_attach:
+                    attach(ctx);
+                    break;
+
+                case socket_reform_cn_enumerate_connections:
+                    enumerate(ctx);
+                    break;
+
+                case socket_reform_cn_get_connection_info:
+                    get_info(ctx);
+                    break;
+
+                case socket_reform_cn_progress:
+                    ctx->complete(ctx->write_data_to_descriptor_argument(0, progress_) ? epoc::error_none : epoc::error_argument);
+                    break;
+
+                case socket_reform_cn_last_progress_error:
+                    ctx->complete(ctx->write_data_to_descriptor_argument(0, conn_progress{}) ? epoc::error_none : epoc::error_argument);
+                    break;
+
+                case socket_reform_cn_cancel_progress_notification:
+                    cancel_progress();
+                    ctx->complete(epoc::error_none);
+                    break;
+
+                case socket_reform_cn_progress_notification:
+                    progress_notify(ctx);
                     break;
 
                 case socket_reform_cn_get_int_setting:
@@ -488,17 +611,9 @@ namespace eka2l1::epoc::socket {
                     attach(ctx);
                     break;
 
-                case socket_cn_stop: {
-                    const auto state = observed_state_.lock();
-                    if (!state || !state->active) {
-                        ctx->complete(epoc::error_not_ready);
-                        break;
-                    }
-                    state->advance(conn_progress_link_layer_closed);
-                    state->advance(conn_progress_connection_closed);
-                    ctx->complete(epoc::error_none);
+                case socket_cn_stop:
+                    stop(ctx);
                     break;
-                }
 
                 case socket_cn_progress:
                     ctx->complete(ctx->write_data_to_descriptor_argument(0, progress_) ? epoc::error_none : epoc::error_argument);

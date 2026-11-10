@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <cubeb/cubeb.h>
 #include <drivers/audio/stream.h>
 
@@ -28,7 +29,7 @@ namespace eka2l1::drivers {
         cubeb_stream *stream_;
         data_callback callback_;
         
-        std::uint64_t idled_frames_;
+        std::atomic<std::uint64_t> idled_frames_;
         std::uint8_t internal_channels_;
 
         bool in_action_;
@@ -53,7 +54,7 @@ namespace eka2l1::drivers {
     struct cubeb_audio_output_stream : public audio_output_stream, public cubeb_audio_stream_base {
     private:
         data_callback callback_;
-        bool pausing_;
+        std::atomic<bool> pausing_;
         float volume_;
 
     protected:

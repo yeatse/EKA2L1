@@ -1901,6 +1901,44 @@ namespace eka2l1::drivers {
         list_queue.push(list);
     }
 
+    bool ogl_graphics_driver::try_submit_finite_finish(command_list &commands) {
+        const std::lock_guard<std::mutex> guard(finite_finish_packets_mutex_);
+        if (should_stop) {
+            return false;
+        }
+        const auto token = commands.base_[0].data_[0];
+        const auto inserted = finite_finish_packets_.emplace(token, nullptr);
+        if (!inserted.second) {
+            return false;
+        }
+        if (!list_queue.try_push(commands)) {
+            finite_finish_packets_.erase(inserted.first);
+            return false;
+        }
+        inserted.first->second.reset(commands.base_);
+        return true;
+    }
+
+    bool ogl_graphics_driver::release_finite_finish_packet(command_list &commands) {
+        if (commands.size_ != 1 || commands.base_[0].opcode_ != graphics_driver_finish) {
+            return false;
+        }
+        const std::lock_guard<std::mutex> guard(finite_finish_packets_mutex_);
+        const auto packet = finite_finish_packets_.find(commands.base_[0].data_[0]);
+        if (packet == finite_finish_packets_.end() || packet->second.get() != commands.base_) {
+            return false;
+        }
+        finite_finish_packets_.erase(packet);
+        return true;
+    }
+
+    finite_finish_result ogl_graphics_driver::finite_finish(const std::uint32_t timeout_ms) {
+        if (!context_) {
+            return finite_finish_result::not_supported;
+        }
+        return queued_finite_finish(timeout_ms);
+    }
+
     void ogl_graphics_driver::display(command &cmd) {
         context_->swap_buffers();
 
@@ -1910,6 +1948,16 @@ namespace eka2l1::drivers {
 
     void ogl_graphics_driver::dispatch(command &cmd) {
         switch (cmd.opcode_) {
+        case graphics_driver_finish:
+            if (finite_finish_pending(cmd.data_[0])) {
+                // This executes after earlier command lists on the GL worker.
+                // Finish waits for GPU drawing before buffer reuse.
+                glFinish();
+                complete_finite_finish(cmd.data_[0], should_stop
+                    ? finite_finish_result::aborted : finite_finish_result::success);
+            }
+            break;
+
         case graphics_driver_draw_bitmap: {
             draw_bitmap(cmd);
             break;
@@ -2097,13 +2145,18 @@ namespace eka2l1::drivers {
                 dispatch(list->base_[i]);
             }
 
-            delete[] list->base_;
+            if (!release_finite_finish_packet(*list)) {
+                delete[] list->base_;
+            }
         }
+        abort_finite_finishes();
     }
 
     void ogl_graphics_driver::abort() {
         list_queue.abort();
         should_stop = true;
+
+        abort_finite_finishes();
 
         cond_.notify_all();
     }

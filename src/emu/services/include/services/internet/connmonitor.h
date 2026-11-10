@@ -22,7 +22,9 @@
 
 #include <kernel/server.h>
 #include <services/framework.h>
+#include <services/socket/connection.h>
 #include <array>
+#include <deque>
 
 namespace eka2l1 {
     struct central_repo;
@@ -74,9 +76,28 @@ namespace eka2l1 {
     };
 
     struct connmonitor_client_session : public service::typical_session {
-        epoc::notify_info nof_info;
+        // TEventInfo wire layout from the Nokia ConnMon client/server interface.
+        struct event_info {
+            std::int32_t type = 0;
+            std::uint32_t connection = 0;
+            std::uint32_t subconnection = 0;
+            std::uint32_t data = 0;
+            std::uint32_t data2 = 0;
+            std::uint32_t data3 = 0;
+        };
+        static_assert(sizeof(event_info) == 24);
+        std::unique_ptr<service::ipc_context> event_request_;
+        std::deque<event_info> events_;
+        std::shared_ptr<epoc::socket::connection_events> connection_events_;
+        std::vector<std::uint32_t> snapshot_;
+
+        epoc::socket::connection_registry *registry();
+        void enqueue(const event_info &event);
+        void deliver_event();
+        void stop_notifications();
 
         explicit connmonitor_client_session(service::typical_server *serv, const kernel::uid ss_id, epoc::version client_version);
+        ~connmonitor_client_session() override;
 
         void fetch(service::ipc_context *ctx) override;
         void get_connection_count(eka2l1::service::ipc_context *ctx);

@@ -460,7 +460,7 @@ namespace eka2l1 {
             std::memcpy(desc.hash.data.data(), file_des->hash.hash_data.raw_data.data(), desc.hash.data.size());
             desc.operation = static_cast<std::int32_t>(file_des->op);
             desc.operation_options = static_cast<std::int32_t>(file_des->op_op);
-            desc.uncompressed_length = file_des->len;
+            desc.uncompressed_length = file_des->uncompressed_len;
             desc.target = file_path;
             desc.sid = 0;
 

@@ -19,6 +19,7 @@
  */
 
 #include <services/fs/fs.h>
+#include <services/fs/host_volume.h>
 #include <services/fs/std.h>
 
 #include <system/epoc.h>
@@ -228,40 +229,87 @@ namespace eka2l1 {
     }
 
     void fs_server_client::volume(service::ipc_context *ctx) {
-        drive_number drv = static_cast<drive_number>(*ctx->get_argument_value<std::int32_t>(1));
-
-        if (static_cast<std::uint32_t>(drv) == DEFAULT_DRIVE_NUM) {
-            drv = static_cast<drive_number>(server<fs_server>()->system_drive_prop->get_int());
+        auto requested_drive = ctx->get_argument_value<std::int32_t>(1);
+        if (!requested_drive) {
+            ctx->complete(epoc::error_argument);
+            return;
         }
 
-        std::optional<eka2l1::drive> io_drive = ctx->sys->get_io_system()->get_drive_entry(static_cast<drive_number>(drv));
-        std::u16string drive_name = u"EKA2L1_A";
+        if (static_cast<std::uint32_t>(*requested_drive) == DEFAULT_DRIVE_NUM) {
+            // KDefaultDrive belongs to this RFs session, not the system drive.
+            requested_drive = epoc::fs::volume_session_drive(ss_path);
+            if (!requested_drive) {
+                ctx->complete(epoc::error_bad_name);
+                return;
+            }
+        }
+        if (*requested_drive < drive_a || *requested_drive >= drive_count) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
 
+        const auto drv = static_cast<drive_number>(*requested_drive);
+        auto *io = ctx->sys->get_io_system();
+        auto io_drive = io->get_drive_entry(drv);
+        if (!io_drive || io_drive->media_type == drive_media::none) {
+            ctx->complete(epoc::error_not_ready);
+            return;
+        }
+        std::u16string root = u"A:\\";
+        root[0] += static_cast<char16_t>(drv - drive_a);
+        const auto mapped_root = io->get_raw_path(root);
+        if (!mapped_root || mapped_root->empty()) {
+            ctx->complete(epoc::error_not_ready);
+            return;
+        }
+        const bool read_only = io_drive->media_type == drive_media::rom
+            || (io_drive->attribute & io_attrib_write_protected);
+        const auto space = epoc::fs::query_host_volume(std::filesystem::path(*mapped_root), read_only);
+        if (space.error != epoc::error_none) {
+            ctx->complete(space.error);
+            return;
+        }
+
+        // ROM capacity follows its host filesystem; its free space is zero.
+        std::u16string drive_name = u"EKA2L1_A";
         drive_name.back() += static_cast<char>(drv - drive_a);
 
-#define VOLUME_INFO_GETTERS(info_name)                                                \
-    LOG_WARN(SERVICE_EFSRV, "Volume size stubbed with 1GB");                          \
+#define VOLUME_INFO_GETTERS(info_name)                                              \
     fill_drive_info(reinterpret_cast<epoc::fs::drive_info_v1 *>(&info_name.drv_info), \
-        io_drive.has_value() ? &io_drive.value() : nullptr, cli_ver);                 \
-    info_name.uid = drv;                                                              \
-    info_name.size = common::GB(1);                                                   \
-    info_name.free = common::GB(1);                                                   \
+        &io_drive.value(), cli_ver);                                               \
+    if (read_only)                                                                 \
+        info_name.drv_info.media_att |= epoc::fs::media_att_write_protected;         \
+    info_name.uid = drv;                                                           \
+    info_name.size = space.capacity;                                               \
+    info_name.free = space.available;                                              \
     info_name.name.assign(nullptr, drive_name);
 
         const epoc::version cli_ver = client_version();
+        // TVolumeInfo requires the fixed prefix and permits optional cache fields.
+        constexpr std::size_t v2_prefix_size = sizeof(epoc::fs::drive_info_v2)
+            + sizeof(std::uint32_t) + 2 * sizeof(std::int64_t)
+            + sizeof(epoc::bufc_static<char16_t, 0x100>);
+        const auto minimum_size = cli_ver.major >= 2 ? v2_prefix_size : sizeof(epoc::fs::volume_info_v1);
+        if (ctx->get_argument_max_data_size(0) < minimum_size) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
+        }
+        int write_error = epoc::error_argument;
+        bool written;
         if (cli_ver.major >= 2) {
-            epoc::fs::volume_info_v2 info_new;
+            epoc::fs::volume_info_v2 info_new{};
             VOLUME_INFO_GETTERS(info_new);
 
-            ctx->write_data_to_descriptor_argument<epoc::fs::volume_info_v2>(0, info_new, nullptr, true);
+            written = ctx->write_data_to_descriptor_argument<epoc::fs::volume_info_v2>(0, info_new, &write_error, true);
         } else {
-            epoc::fs::volume_info_v1 info_old;
+            epoc::fs::volume_info_v1 info_old{};
             VOLUME_INFO_GETTERS(info_old);
 
-            ctx->write_data_to_descriptor_argument<epoc::fs::volume_info_v1>(0, info_old, nullptr, true);
+            written = ctx->write_data_to_descriptor_argument<epoc::fs::volume_info_v1>(0, info_old, &write_error, true);
         }
+#undef VOLUME_INFO_GETTERS
 
-        ctx->complete(epoc::error_none);
+        ctx->complete(written ? epoc::error_none : write_error);
     }
 
     void fs_server_client::query_drive_info_ext(service::ipc_context *ctx) {

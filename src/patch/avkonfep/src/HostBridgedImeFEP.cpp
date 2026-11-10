@@ -54,9 +54,9 @@ CHostDialogIme::~CHostDialogIme() {
     Deque();
 }
 
-TInt CHostDialogIme::Open(const TDesC *aInitialText, const TInt aMaxLength) {
+TInt CHostDialogIme::Open(const TDesC *aInitialText, const TInt aMaxLength, const TBool aSecret) {
     iStatus = KRequestPending;
-    TInt result = ::EHUIOpenGlobalTextView(0, aInitialText, aMaxLength, &iStatus);
+    TInt result = ::EHUIOpenGlobalTextViewWithSecret(0, aInitialText, aMaxLength, aSecret, &iStatus);
     if (result != KErrNone) {
         return result;
     }
@@ -66,9 +66,10 @@ TInt CHostDialogIme::Open(const TDesC *aInitialText, const TInt aMaxLength) {
 }
 
 void CHostDialogIme::RunL() {
-    if (iStatus.Int() == KErrNone) {
+    if (iStatus.Int() == KErrNone)
         iHost->CommitChangedTextL();
-    }
+    else
+        iHost->CancelChangedTextL();
 }
 
 void CHostDialogIme::DoCancel() {
@@ -126,8 +127,6 @@ void CHostBridgedImeFEP::OpenDialogInputL(const TBool aTranstractRestart) {
     HBufC *initialText = NULL;
     TPtr initialTextPtr(0, 0);
 
-    iInFEPWork = ETrue;
-
     if (editor->DocumentLengthForFep()) {
         // Spawn text dialog from host and listen for completion
         initialText = HBufC::NewLC(editor->DocumentLengthForFep());
@@ -137,21 +136,17 @@ void CHostBridgedImeFEP::OpenDialogInputL(const TBool aTranstractRestart) {
         editor->GetEditorContentForFep(initialTextPtr, 0, editor->DocumentLengthForFep());
     }
 
-    TCursorSelection selection(0, editor->DocumentLengthForFep());
-    editor->SetCursorSelectionForFepL(selection);
-    editor->StartFepInlineEditL(initialTextPtr, initialTextPtr.Length(), ETrue, NULL, *this, *this);
-
-    // Start the request
-    if (iImeDialog.Open(&initialTextPtr, editor->DocumentMaximumLengthForFep()) != KErrNone) {
-        LogOut(KAvkonFepCat, _L("Text view is already owned (this should already been canceled in losing foreground)!"));
-        User::Leave(KErrInUse);
-    }
-
+    // Replace the editor's document after the host commits its draft.
+    iInFEPWork = ETrue;
+    // SupportsSecretText returns a capability mask.
+    const TBool secret = iInputCapabilities.SupportsSecretText() != EFalse;
+    TInt error = iImeDialog.Open(&initialTextPtr, editor->DocumentMaximumLengthForFep(), secret);
     iInFEPWork = EFalse;
-    
+
     if (initialText) {
         CleanupStack::PopAndDestroy();
     }
+    User::LeaveIfError(error);
 }
 
 CAknEdwinState* CHostBridgedImeFEP::EditorState() const {
@@ -301,7 +296,9 @@ void CHostBridgedImeFEP::CommitChangedTextL() {
         ::EHUIGetStoredText(0, &length, textChangedBuf->Ptr());
     }
 
-    editor->UpdateFepInlineTextL(textChanged, 0);
+    TCursorSelection wholeDocument(0, editor->DocumentLengthForFep());
+    editor->SetCursorSelectionForFepL(wholeDocument);
+    editor->StartFepInlineEditL(textChanged, textChanged.Length(), ETrue, NULL, *this, *this);
     editor->CommitFepInlineEditL(*CCoeEnv::Static());
 
     TInt endPosition = editor->DocumentLengthForFep();
@@ -359,16 +356,14 @@ void CHostBridgedImeFEP::HandleDestructionOfFocusedItem() {
     }
 }
 
+void CHostBridgedImeFEP::CancelChangedTextL() {
+    iDialogPending = EFalse;
+}
+
 void CHostBridgedImeFEP::CancelDialogL() {
     if (iDialogPending) {
-        MCoeFepAwareTextEditor *editor = iInputCapabilities.FepAwareTextEditor();
-
-        if (editor) {
-            editor->CancelFepInlineEdit();
-        }
-
-        iImeDialog.Cancel();
         iDialogPending = EFalse;
+        iImeDialog.Cancel();
     }
 }
 

@@ -157,7 +157,8 @@ namespace eka2l1::epoc::internet {
         addrinfo hint_info;
         std::memset(&hint_info, 0, sizeof(addrinfo));
 
-        hint_info.ai_family = (addr_family_ == INET6_ADDRESS_FAMILY) ? AF_INET6 : AF_INET;
+        // KAfInet carries IPv4 and IPv6; Open C filters the returned addresses.
+        hint_info.ai_family = (addr_family_ == INET6_ADDRESS_FAMILY) ? AF_INET6 : AF_UNSPEC;
         hint_info.ai_socktype = (protocol_id_ == INET_UDP_PROTOCOL_ID) ? SOCK_DGRAM : SOCK_STREAM; 
         hint_info.ai_protocol = (protocol_id_ == INET_UDP_PROTOCOL_ID) ? IPPROTO_UDP : IPPROTO_TCP;
         hint_info.ai_flags = config::numeric_host_address(name_utf8) ? AI_NUMERICHOST : 0;

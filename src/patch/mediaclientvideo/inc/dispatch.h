@@ -27,6 +27,13 @@ struct TVideoWindowGeometry {
     TRect iClip;
 };
 
+struct TVideoMediaInfo {
+    TInt iHasAudio;
+    TInt iHasVideo;
+    TUint32 iAudioType;
+    TUint8 iMime[64];
+};
+
 #define HLE_DISPATCH_FUNC(ret, name, ARGS...) \
     ret name(const TUint32 func_id, ##ARGS)
 
@@ -38,6 +45,8 @@ HLE_DISPATCH_FUNC(TInt, EVideoPlayerRegisterWindow, TAny *aInstance, TInt aWsSsH
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerSetClipRect, TAny *aInstance, TInt aWindowManagedHandle, const TRect *aRect);
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerSetGeometry, TAny *aInstance, TInt aWindowManagedHandle, const TVideoWindowGeometry *aGeometry);
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerOpenUrl, TAny *aInstance, const TDesC *aUrl);
+HLE_DISPATCH_FUNC(TInt, EVideoPlayerPollOpenUrl, TAny *aInstance);
+HLE_DISPATCH_FUNC(TInt, EVideoPlayerMediaInfo, TAny *aInstance, TVideoMediaInfo *aInfo);
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerOpenDes, TAny *aInstance, const TDesC8 *aDescContent);
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerPlay, TAny *aInstance, const TTimeIntervalMicroSeconds *aRange);
 HLE_DISPATCH_FUNC(TInt, EVideoPlayerPause, TAny *aInstance);

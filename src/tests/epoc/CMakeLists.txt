@@ -43,6 +43,7 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/services/sensor/buffering.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/sensor/rotation.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/surface.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/window/managed_surface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/scale.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/window/keyboard.cpp

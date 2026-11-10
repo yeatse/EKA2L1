@@ -31,8 +31,45 @@ extern "C" {
 }
 
 #include <deque>
+#include <cstring>
 
 namespace eka2l1::drivers {
+    std::string video_player_ffmpeg::mime_type() const {
+        if (!format_ctx_ || !format_ctx_->iformat)
+            return {};
+        const char *name = format_ctx_->iformat->name;
+        if (std::strstr(name, "mov")) {
+            auto *brand = av_dict_get(format_ctx_->metadata, "major_brand", nullptr, 0);
+            if (brand && !std::strncmp(brand->value, "3g", 2))
+                return image_stream_index_ >= 0 ? "video/3gpp" : "audio/3gpp";
+            if (!brand || !std::strncmp(brand->value, "qt", 2))
+                return "video/quicktime";
+            return image_stream_index_ >= 0 ? "video/mp4" : "audio/mp4";
+        }
+        if (!std::strcmp(name, "avi")) return "video/x-msvideo";
+        if (!std::strcmp(name, "wav")) return "audio/wav";
+        if (!std::strcmp(name, "mp3")) return "audio/mpeg";
+        if (!std::strcmp(name, "aac")) return "audio/aac";
+        if (!std::strncmp(name, "amr", 3)) return "audio/amr";
+        if (format_ctx_->iformat->mime_type)
+            return format_ctx_->iformat->mime_type;
+        return "application/octet-stream";
+    }
+
+    std::uint32_t video_player_ffmpeg::audio_type() const {
+        if (!audio_codec_ctx_ || audio_stream_index_ < 0)
+            return 0;
+        // MMF FourCC values, rather than FFmpeg's private codec enum values.
+        switch (audio_codec_ctx_->codec_id) {
+        case AV_CODEC_ID_AAC: return 0x43414120;
+        case AV_CODEC_ID_MP3: return 0x33504d20;
+        case AV_CODEC_ID_AMR_NB: return 0x524d4120;
+        case AV_CODEC_ID_AMR_WB: return 0x57524d41;
+        case AV_CODEC_ID_PCM_S16LE: return 0x36315020;
+        default: return 0;
+        }
+    }
+
     // Read-ahead bounds for the decode loop. Video packets are buffered so that
     // reading is never throttled by the video display pacing (which used to leave
     // less than one video frame worth of audio queued, causing audio underruns).
@@ -438,6 +475,13 @@ namespace eka2l1::drivers {
             // Read ahead until a video frame is in hand and the audio backlog is
             // comfortable (or the safety caps are hit).
             while (!eof_reached && !should_stop_ && (pending_image_packets.size() < MAX_PENDING_IMAGE_PACKETS)) {
+                // The low-water mark below measures decoded samples, not the
+                // compressed packet queue. Fill it while reading so the first
+                // pass stops at the intended audio backlog instead of reading
+                // to a temporary EOF and caching a short packet from a growing
+                // file. Real decode/read errors still follow the paths below.
+                decode_pending_audio();
+
                 // Hard cap: never hold more compressed audio than this, even while
                 // still hunting for a video packet (the video stream may simply
                 // end before the audio stream does).

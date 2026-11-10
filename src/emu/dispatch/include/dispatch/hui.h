@@ -35,7 +35,7 @@ namespace eka2l1::dispatch {
         epoc::notify_info info_;
         std::uint64_t request_id_ = 0;
     public:
-        void on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text);
+        void on_input_view_complete(kernel_system *kern, std::uint64_t request_id, const std::u16string &result_text, bool accepted);
         void set_notify_info(epoc::notify_info info);
         void cancel(kernel_system *kern);
 
@@ -63,6 +63,8 @@ namespace eka2l1::dispatch {
     };
 
     BRIDGE_FUNC_DISPATCHER(std::int32_t, ehui_open_input_view, epoc::desc16 *initial_text, const std::int32_t max_length, eka2l1::ptr<epoc::request_status> status);
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, ehui_open_input_view_with_secret, epoc::desc16 *initial_text, const std::int32_t max_length, const std::int32_t secret, eka2l1::ptr<epoc::request_status> status);
+
     BRIDGE_FUNC_DISPATCHER(void, ehui_get_stored_input_text, std::int32_t *text_length, char16_t *text_ptr);
     BRIDGE_FUNC_DISPATCHER(void, ehui_close_input_view);
     BRIDGE_FUNC_DISPATCHER(bool, ehui_is_keypad_based);

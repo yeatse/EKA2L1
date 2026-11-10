@@ -60,8 +60,10 @@
 
 #include <loader/rom.h>
 
+#include <chrono>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include <drivers/graphics/graphics.h>
 #include <drivers/itc.h>
@@ -124,6 +126,7 @@ namespace eka2l1::epoc {
         }
 
         objects.clear();
+        serv.managed_surfaces()->unregister_session(guest_session->unique_id());
 
         if (lock_screens) {
             epoc::screen *scr = serv.screens;
@@ -1368,6 +1371,27 @@ namespace eka2l1::epoc {
         case ws_cl_op_get_double_click_settings:
             get_double_click_settings(ctx, cmd);
             break;
+        case ws_cl_op_register_surface:
+        case ws_cl_op_unregister_surface: {
+            struct surface_registration_command { std::int32_t screen; surface_id id; };
+            static_assert(sizeof(surface_registration_command) == 20);
+            if (cmd.header.cmd_len != sizeof(surface_registration_command)) {
+                ctx.complete(epoc::error_argument); break;
+            }
+            surface_registration_command request{};
+            std::memcpy(&request, cmd.data_ptr, sizeof(request));
+            if (request.screen < 0 || !get_ws().get_screen(request.screen)) {
+                ctx.complete(epoc::error_argument); break;
+            }
+            auto registry = get_ws().managed_surfaces();
+            if (cmd.header.op == ws_cl_op_register_surface) {
+                ctx.complete(registry->register_surface(guest_session->unique_id(), request.screen, request.id));
+            } else {
+                registry->unregister_surface(guest_session->unique_id(), request.screen, request.id);
+                ctx.complete(epoc::error_none);
+            }
+            break;
+        }
 
         default:
             LOG_INFO(SERVICE_WINDOW, "Unimplemented ClOp: 0x{:x}", cmd.header.op);
@@ -1760,6 +1784,8 @@ namespace eka2l1 {
     window_server::window_server(system *sys)
         : service::server(sys->get_kernel_system(), sys, nullptr, get_winserv_name_by_epocver(sys->get_symbian_version_use()), true, true)
         , bmp_cache(sys->get_kernel_system())
+        , surface_registry_(std::make_shared<epoc::surface_registry>())
+        , managed_surface_registry_(std::make_shared<epoc::managed_surface_registry>(sys->get_kernel_system(), surface_registry_))
         , anim_sched(sys->get_kernel_system(), sys->get_ntimer(), 1)
         , screens(nullptr)
         , focus_screen_(nullptr)
@@ -1775,6 +1801,7 @@ namespace eka2l1 {
         REGISTER_IPC(window_server, init, ws_mess_init, "Ws::Init");
         REGISTER_IPC(window_server, send_to_command_buffer, ws_mess_command_buffer, "Ws::CommandBuffer");
         REGISTER_IPC(window_server, send_to_command_buffer, ws_mess_sync_msg_buf, "Ws::MessSyncBuf");
+        REGISTER_IPC(window_server, finish_rendering, ws_mess_finish, "Ws::Finish");
 
         // For addition mappings before actual game launches
         init_key_mappings();
@@ -2411,7 +2438,6 @@ namespace eka2l1 {
         repeatable_event_ = kern->get_ntimer()->register_event("WsRepeatableKeyEvent",
             [this](std::uint64_t data, std::uint64_t microsecs_late) {
                 const std::uint32_t scancode = static_cast<std::uint32_t>(data);
-                const std::uint32_t code = static_cast<std::uint32_t>(data >> 32);
 
                 epoc::event repeatable_evt;
                 ntimer *timing = kern->get_ntimer();
@@ -2423,7 +2449,7 @@ namespace eka2l1 {
 
                     repeatable_evt.handle = get_focus()->client_handle;
                     repeatable_evt.time = kern->universal_time();
-                    repeatable_evt.key_evt_.code = code;
+                    repeatable_evt.key_evt_.code = key_shipper.translator_.key_code_for_scan(scancode);
                     repeatable_evt.key_evt_.scancode = scancode;
                     repeatable_evt.key_evt_.repeats = 1;
 
@@ -2512,6 +2538,93 @@ namespace eka2l1 {
 
         assert(false && "Unreachable code");
         return nullptr;
+    }
+
+    void window_server::surface_updated(const std::shared_ptr<epoc::window_surface> &surface) {
+        for (auto &client : clients) {
+            for (auto &object : client.second->objects) {
+                auto *canvas = dynamic_cast<epoc::canvas_base *>(object.get());
+                if (canvas && (canvas->background_surface_.surface == surface || canvas->direct_surface_.surface == surface)) {
+                    const std::lock_guard<std::mutex> guard(canvas->scr->screen_mutex);
+                    canvas->surface_damage();
+                }
+            }
+        }
+    }
+    void window_server::finish_rendering(service::ipc_context &context) {
+        auto *kernel = get_kernel_system();
+        auto *driver = get_graphics_driver();
+        if (!driver || driver->aborted() || kernel->wipeout_in_progress()) {
+            context.complete(epoc::error_not_ready);
+            return;
+        }
+        // Keep the request's session and windows alive while the timing thread
+        // runs. Frontend teardown follows this synchronous call returning.
+        struct retained_session {
+            service::session *session;
+            explicit retained_session(service::session *owner) : session(owner) {
+                if (session) session->increase_access_count();
+            }
+            ~retained_session() {
+                if (session) session->decrease_access_count();
+            }
+        } retained(context.msg->msg_session);
+        struct unlocked_kernel {
+            kernel_system *kernel;
+            explicit unlocked_kernel(kernel_system *owner) : kernel(owner) { kernel->unlock(); }
+            ~unlocked_kernel() { kernel->lock(); }
+        };
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+        auto result = drivers::finite_finish_result::timed_out;
+        auto *const first_screen = screens;
+        {
+            // The normal timing-thread scheduler must be allowed to consume
+            // pending WServ drawing before the ordered GPU completion fence.
+            // Use the timing thread to keep submission within the deadline.
+            unlocked_kernel unlocked(kernel);
+            for (;;) {
+                if (driver->aborted()) {
+                    result = drivers::finite_finish_result::aborted;
+                    break;
+                }
+                bool pending = false;
+                for (auto *screen = first_screen; screen; screen = screen->next) {
+                    const std::unique_lock<std::mutex> guard(screen->screen_mutex, std::try_to_lock);
+                    if (!guard.owns_lock() || (screen->flags_ & (epoc::screen::FLAG_SERVER_REDRAW_PENDING | epoc::screen::FLAG_CLIENT_REDRAW_PENDING))) {
+                        pending = true;
+                        break;
+                    }
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= deadline) {
+                    break;
+                }
+                if (!pending) {
+                    // A successful screen lock also orders this fence after a
+                    // scheduler that cleared flags before submitting its list.
+                    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+                    if (remaining > 0) {
+                        result = driver->finite_finish(static_cast<std::uint32_t>(remaining));
+                    }
+                    break;
+                }
+                // No kernel/screen lock is held during either bounded wait.
+                std::this_thread::sleep_until(std::min(deadline, now + std::chrono::milliseconds(1)));
+            }
+        }
+        std::int32_t error = epoc::error_not_supported;
+        switch (result) {
+        case drivers::finite_finish_result::success: error = epoc::error_none; break;
+        case drivers::finite_finish_result::timed_out: error = epoc::error_timed_out; break;
+        case drivers::finite_finish_result::aborted: error = epoc::error_not_ready; break;
+        case drivers::finite_finish_result::not_supported: break;
+        }
+        // Shutdown joins the emulation thread before driver/server destruction.
+        // Avoid signaling a client stopped or completed by another host callback.
+        if (context.msg->msg_status != ipc_message_status::completed && context.msg->own_thr
+            && context.msg->own_thr->current_state() != kernel::thread_state::stop) {
+            context.complete(error);
+        }
     }
 
     void window_server::send_to_command_buffer(service::ipc_context &ctx) {

@@ -23,6 +23,7 @@
 #include <common/container.h>
 #include <dispatch/def.h>
 #include <drivers/video/video.h>
+#include <drivers/media_download.h>
 #include <drivers/itc.h>
 #include <mem/ptr.h>
 #include <services/window/classes/winuser.h>
@@ -52,6 +53,13 @@ namespace eka2l1::dispatch {
         eka2l1::rect clip;
     };
 
+    struct video_media_info {
+        std::int32_t has_audio;
+        std::int32_t has_video;
+        std::uint32_t audio_type;
+        char mime[64];
+    };
+
     class epoc_video_player : public epoc::canvas_observer {
     private:
         std::shared_ptr<epoc::window_surface> surface_;
@@ -60,6 +68,8 @@ namespace eka2l1::dispatch {
         bool legacy_display_;
         std::optional<eka2l1::rect> crop_region_;
         drivers::video_player_instance video_player_;
+        std::shared_ptr<drivers::media_download> download_;
+        bool opening_url_ = false;
 
         common::identity_container<epoc_video_posting_target> postings_;
 
@@ -94,6 +104,9 @@ namespace eka2l1::dispatch {
         bool set_volume(const std::uint32_t vol);
 
         bool open_file(const std::u16string &real_path);
+        std::int32_t open_network_url(std::string url);
+        std::int32_t poll_open_url();
+        std::int32_t media_info(video_media_info &) const;
         bool open_with_custom_stream(std::unique_ptr<common::ro_stream> &stream);
 
         void set_rotation(const int rotation);
@@ -131,6 +144,8 @@ namespace eka2l1::dispatch {
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_set_geometry, const std::uint32_t handle, const std::int32_t managed_handle, const video_window_geometry *geometry);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_unregister_window, const std::uint32_t handle, const std::int32_t managed_handle);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_open_file, const std::uint32_t handle, epoc::desc16 *filename);
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_poll_open_url, const std::uint32_t handle);
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_media_info, const std::uint32_t handle, video_media_info *info);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_max_volume, const std::uint32_t handle);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_current_volume, const std::uint32_t handle);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, evideo_player_set_volume, const std::uint32_t handle, const std::int32_t new_vol);

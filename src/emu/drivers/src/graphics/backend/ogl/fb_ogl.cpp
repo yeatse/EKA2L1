@@ -187,7 +187,10 @@ namespace eka2l1::drivers {
             color_buffers[attachment_id] = tex;
         }
 
-        if (tex->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
+        if (!tex) {
+            // Object zero detaches an attachment of either texture or renderbuffer type.
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + attachment_id, GL_RENDERBUFFER, 0);
+        } else if (tex->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + attachment_id, GL_RENDERBUFFER,
                 static_cast<GLuint>(tex->driver_handle()));
         } else {
@@ -201,49 +204,26 @@ namespace eka2l1::drivers {
     }
 
     bool ogl_framebuffer::set_depth_stencil_buffer(drawable *depth, drawable *stencil, const int depth_face_index, const int stencil_face_index) {
-        if ((depth != depth_buffer) && (depth == stencil)) {
-            depth_buffer = depth;
-            stencil_buffer = stencil;
-
-            if (depth_buffer->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
-                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
-                    static_cast<GLuint>(depth_buffer->driver_handle()));
+        auto attach = [](GLenum attachment, drawable *object, int face_index) {
+            if (!object) {
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER, 0);
+            } else if (object->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
+                glFramebufferRenderbuffer(GL_FRAMEBUFFER, attachment, GL_RENDERBUFFER,
+                    static_cast<GLuint>(object->driver_handle()));
             } else {
-                ogl_texture *odepth = reinterpret_cast<ogl_texture*>(depth_buffer);
-
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, ((odepth->get_total_dimensions() > 3) ?
-                    (GL_TEXTURE_CUBE_MAP_POSITIVE_X + depth_face_index) : GL_TEXTURE_2D), static_cast<GLuint>(depth_buffer->driver_handle()), 0);
+                auto *texture = static_cast<ogl_texture *>(object);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, texture->get_total_dimensions() > 3
+                    ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + face_index : GL_TEXTURE_2D,
+                    static_cast<GLuint>(texture->driver_handle()), 0);
             }
-        } else {
-            if (depth != depth_buffer) {
-                depth_buffer = depth;
-
-                if (depth_buffer->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
-                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
-                        static_cast<GLuint>(depth_buffer->driver_handle()));
-                } else {
-                    ogl_texture *odepth = reinterpret_cast<ogl_texture*>(depth_buffer);
-
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, ((odepth->get_total_dimensions() > 3) ?
-                        (GL_TEXTURE_CUBE_MAP_POSITIVE_X + depth_face_index) : GL_TEXTURE_2D), static_cast<GLuint>(depth_buffer->driver_handle()), 0);
-                }
-            }
-            
-            if (stencil != stencil_buffer) {
-                stencil_buffer = stencil;
-
-                if (stencil_buffer->get_drawable_type() == DRAWABLE_TYPE_RENDERBUFFER) {
-                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
-                        static_cast<GLuint>(stencil_buffer->driver_handle()));
-                } else {
-                    ogl_texture *ostencil = reinterpret_cast<ogl_texture*>(stencil_buffer);
-
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, ((ostencil->get_total_dimensions() > 3) ?
-                        (GL_TEXTURE_CUBE_MAP_POSITIVE_X + depth_face_index) : GL_TEXTURE_2D),
-                        static_cast<GLuint>(stencil_buffer->driver_handle()), 0);
-                }
-            }
-        }
+        };
+        // Separate attachment points also represent a packed depth/stencil
+        // object. Always apply both: null is a valid detach, and a texture's
+        // cube-map face can change without changing its object pointer.
+        attach(GL_DEPTH_ATTACHMENT, depth, depth_face_index);
+        attach(GL_STENCIL_ATTACHMENT, stencil, stencil_face_index);
+        depth_buffer = depth;
+        stencil_buffer = stencil;
 
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
             return false;

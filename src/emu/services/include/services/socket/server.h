@@ -56,6 +56,7 @@ namespace eka2l1 {
             void bind_state(const std::shared_ptr<connection_state> &state, bool monitor = false);
             void attach(service::ipc_context *ctx);
             void start(service::ipc_context *ctx, bool with_preferences);
+            void stop(service::ipc_context *ctx);
             void enumerate(service::ipc_context *ctx);
             void get_info(service::ipc_context *ctx);
             void get_int_setting(service::ipc_context *ctx);
@@ -269,10 +270,18 @@ namespace eka2l1 {
         socket_reform_cn_open_with_name = 0x49,
         socket_reform_cn_start = 0x4A,
         socket_reform_cn_set_start_preferences = 0x4B,
+        socket_reform_cn_stop = 0x4C,
         socket_reform_cn_get_int_setting = 0x4D,
         socket_reform_cn_get_des_setting = 0x50,
+        socket_reform_cn_attach = 0x52,
         socket_reform_cn_close = 0x97,
         socket_reform_cn_name = 0x98,
+        socket_reform_cn_progress = 0x99,
+        socket_reform_cn_progress_notification = 0x9A,
+        socket_reform_cn_cancel_progress_notification = 0x9B,
+        socket_reform_cn_last_progress_error = 0x9C,
+        socket_reform_cn_enumerate_connections = 0x9F,
+        socket_reform_cn_get_connection_info = 0xA0,
         socket_reform_cn_control = 0x10,
         socket_reform_cn_get_long_des_setting = 0x51,
         socket_reform_pr_find = 0x82,

@@ -280,7 +280,8 @@ namespace eka2l1::common {
         }
 
         case prot_read_write: {
-            open_mode = O_RDWR | O_CREAT;
+            // Private COW mappings need read access to the existing backing file.
+            open_mode = is_private && size == 0 ? O_RDONLY : O_RDWR | O_CREAT;
             break;
         }
 

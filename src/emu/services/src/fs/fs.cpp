@@ -178,6 +178,11 @@ namespace eka2l1 {
     }
 
     fs_server::~fs_server() {
+        // Session tables release file/mapping references and pending attributes.
+        // Do this while derived sharing state and the temporary-file set live,
+        // before typical_server's base destructor would clear the sessions.
+        sessions.clear();
+        obj_con.clear();
         io_system *io = sys->get_io_system();
         for (const std::u16string &path: temporary_file_cleanset_) {
             io->delete_entry(path);
@@ -358,6 +363,17 @@ namespace eka2l1 {
         }
     }
 
+    int fs_server_client::check_closed_entry(io_system *io, const std::u16string &path, bool deny_read_only) {
+        const auto open = server<fs_server>()->attribs.find(canonical_file_attrib_path(path));
+        if (open != server<fs_server>()->attribs.end() && open->second.use_count)
+            return epoc::error_in_use;
+        auto info = io->get_entry_info(path);
+        if (!info)
+            return epoc::error_not_found;
+        return deny_read_only && (epoc::fs::build_attribute_from_entry_info(*info) & epoc::fs::entry_att_read_only)
+            ? epoc::error_access_denied : epoc::error_none;
+    }
+
     void fs_server_client::replace(service::ipc_context *ctx) {
         auto given_path_target = ctx->get_argument_value<std::u16string>(0);
         auto given_path_dest = ctx->get_argument_value<std::u16string>(1);
@@ -372,6 +388,13 @@ namespace eka2l1 {
 
         io_system *io = ctx->sys->get_io_system();
 
+        int error = check_closed_entry(io, target, false);
+        if (error == epoc::error_none && io->exist(dest))
+            error = check_closed_entry(io, dest, true);
+        if (error != epoc::error_none) {
+            ctx->complete(error);
+            return;
+        }
         // If exists, delete it so the new file can be replaced
         if (io->exist(dest)) {
             io->delete_entry(dest);
@@ -418,6 +441,11 @@ namespace eka2l1 {
             return;
         }
 
+        const auto error = check_closed_entry(io, target, false);
+        if (error != epoc::error_none) {
+            ctx->complete(error);
+            return;
+        }
         bool res = io->rename(target, dest);
 
         if (!res) {
@@ -445,6 +473,11 @@ namespace eka2l1 {
 
         io_system *io = ctx->sys->get_io_system();
 
+        const auto error = check_closed_entry(io, path, true);
+        if (error != epoc::error_none) {
+            ctx->complete(error);
+            return;
+        }
         bool success = io->delete_entry(path);
 
         if (!success) {
@@ -980,29 +1013,45 @@ namespace eka2l1 {
     }
 
     void fs_server_client::set_entry(service::ipc_context *ctx) {
-        std::optional<std::u16string> fname_op = ctx->get_argument_value<std::u16string>(0);
-        std::optional<epoc::time> time = ctx->get_argument_data_from_descriptor<epoc::time>(1);
-        std::uint32_t set_att_mask = *ctx->get_argument_value<std::uint32_t>(2);
-        std::uint32_t clear_att_mask = *ctx->get_argument_value<std::uint32_t>(3);
-
-        if (!fname_op) {
+        const auto name = ctx->get_argument_value<std::u16string>(0);
+        const auto time = ctx->get_argument_data_from_descriptor<epoc::time>(1);
+        const auto set = ctx->get_argument_value<std::uint32_t>(2);
+        const auto clear = ctx->get_argument_value<std::uint32_t>(3);
+        if (!name || !time || !set || !clear) {
             ctx->complete(epoc::error_argument);
             return;
         }
-
-        const std::u16string fname = get_full_symbian_path(ss_path, fname_op.value());
-        LOG_INFO(SERVICE_EFSRV, "Set entry of: {}", common::ucs2_to_utf8(fname));
-
-        io_system *io = ctx->sys->get_io_system();
-
-        std::optional<entry_info> entry_hle = io->get_entry_info(fname);
-
-        if (!entry_hle) {
+        const auto change = requested_read_only_change(*set, *clear);
+        if (change == read_only_change::invalid) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        // RFs::SetAtt sends TTime(0). Nonzero modification time and unsupported
+        // attributes must not be acknowledged without implementing them.
+        if (*time || change == read_only_change::unsupported) {
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        const auto path = get_full_symbian_path(ss_path, *name);
+        if (!check_path_capabilities_pass(path, ctx->msg->own_thr->owning_process(),
+                epoc::fs::private_comp_access_policy, epoc::fs::sys_resource_modify_access_policy,
+                epoc::fs::sys_resource_modify_access_policy)) {
+            ctx->complete(epoc::error_permission_denied);
+            return;
+        }
+        auto *io = ctx->sys->get_io_system();
+        if (!io->get_entry_info(path)) {
             ctx->complete(epoc::error_not_found);
             return;
         }
-
-        ctx->complete(epoc::error_none);
+        const auto key = canonical_file_attrib_path(path);
+        const auto open = server<fs_server>()->attribs.find(key);
+        if (open != server<fs_server>()->attribs.end() && open->second.use_count) {
+            ctx->complete(epoc::error_in_use);
+            return;
+        }
+        ctx->complete(change == read_only_change::unchanged ? epoc::error_none
+            : file_attribute_result(io->set_entry_read_only(path, change == read_only_change::set)));
     }
 
     void fs_server::private_path(service::ipc_context *ctx) {

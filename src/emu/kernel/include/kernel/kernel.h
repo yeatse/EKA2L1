@@ -309,6 +309,8 @@ namespace eka2l1 {
         std::vector<kernel_obj_unq_ptr> semas_;
         std::vector<kernel_obj_unq_ptr> condvars_;
         std::vector<kernel_obj_unq_ptr> change_notifiers_;
+        std::uint64_t last_free_guest_ram_ = 0;
+        bool guest_ram_sample_valid_ = false;
         std::vector<kernel_obj_unq_ptr> libraries_;
         std::vector<kernel_obj_unq_ptr> codesegs_;
         std::vector<kernel_obj_unq_ptr> timers_;
@@ -620,6 +622,11 @@ namespace eka2l1 {
             return wiping_;
         }
 
+        // Count each non-ROM chunk once while holding the kernel lock.
+        std::uint64_t total_guest_ram() const;
+        std::uint64_t free_guest_ram() const;
+        void guest_memory_changed();
+
         // Whether the given raw thread pointer still refers to a live kernel thread.
         // A destroyed thread is erased from threads_, so a stale pointer will not match.
         // Used to guard completions (property subscriptions, audio callbacks, ...) against
@@ -774,7 +781,12 @@ namespace eka2l1 {
             switch (obj_type) {
                 ADD_OBJECT_TO_CONTAINER(kernel::object_type::thread, threads_, )
                 ADD_OBJECT_TO_CONTAINER(kernel::object_type::process, processes_, setup_new_process(reinterpret_cast<process_ptr>(obj.get())));
-                ADD_OBJECT_TO_CONTAINER(kernel::object_type::chunk, chunks_, )
+                case kernel::object_type::chunk: {
+                    T *result = obj.get();
+                    chunks_.push_back(std::move(obj));
+                    guest_memory_changed();
+                    return result;
+                }
                 ADD_OBJECT_TO_CONTAINER(kernel::object_type::server, servers_, )
                 ADD_OBJECT_TO_CONTAINER(kernel::object_type::prop, props_, )
                 ADD_OBJECT_TO_CONTAINER(kernel::object_type::prop_ref, prop_refs_, )

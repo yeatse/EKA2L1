@@ -28,6 +28,10 @@
 
 #include <functional>
 #include <memory>
+#include <algorithm>
+#include <chrono>
+#include <limits>
+#include <map>
 
 namespace eka2l1::drivers {
     enum graphics_driver_opcode : std::uint16_t {
@@ -106,7 +110,19 @@ namespace eka2l1::drivers {
         graphics_driver_read_framebuffer,
         graphics_driver_backup_state, // Backup all possible state to a struct
         graphics_driver_restore_state, // Restore previously backup data
-        graphics_driver_copy_framebuffer_to_texture
+        graphics_driver_copy_framebuffer_to_texture,
+        graphics_driver_validate_program,
+        graphics_driver_get_shader_precision,
+        graphics_driver_get_integer,
+        graphics_driver_get_float,
+        graphics_driver_finish
+    };
+
+    enum class finite_finish_result {
+        success,
+        not_supported,
+        aborted,
+        timed_out
     };
 
     enum graphics_driver_extension {
@@ -124,15 +140,104 @@ namespace eka2l1::drivers {
 
     class graphics_driver : public driver {
         graphic_api api_;
+        struct finite_finish_state {
+            bool complete = false;
+            finite_finish_result result = finite_finish_result::aborted;
+        };
+        std::mutex finite_finish_mutex_;
+        std::condition_variable finite_finish_condition_;
+        std::map<std::uint64_t, std::shared_ptr<finite_finish_state>> finite_finishes_;
+        std::uint64_t next_finite_finish_ = 1;
 
     protected:
         display_hook disp_hook_;
+
+        // An accepted command list owns its command storage, just like ordinary
+        // submission. This path must never wait for queue capacity.
+        virtual bool try_submit_finite_finish(command_list &) {
+            return false;
+        }
+
+        finite_finish_result queued_finite_finish(const std::uint32_t timeout_ms) {
+            if (!timeout_ms) {
+                return finite_finish_result::timed_out;
+            }
+            const auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(std::min(timeout_ms, std::uint32_t{2000}));
+            auto state = std::make_shared<finite_finish_state>();
+            auto storage = std::make_unique<command[]>(1);
+            command_list commands(1);
+            commands.base_ = storage.get();
+            commands.size_ = 1;
+            commands.base_[0].opcode_ = graphics_driver_finish;
+            std::uint64_t token = 0;
+            {
+                const std::lock_guard<std::mutex> guard(finite_finish_mutex_);
+                if (aborted() || next_finite_finish_ == std::numeric_limits<std::uint64_t>::max()) {
+                    return finite_finish_result::aborted;
+                }
+                token = next_finite_finish_++;
+                finite_finishes_.emplace(token, state);
+            }
+            // Only the opaque token crosses the driver queue. In particular,
+            // status_ stays null: a late command cannot write a caller's stack.
+            commands.base_[0].data_[0] = token;
+            if (!try_submit_finite_finish(commands)) {
+                const std::lock_guard<std::mutex> guard(finite_finish_mutex_);
+                finite_finishes_.erase(token);
+                return aborted() ? finite_finish_result::aborted : finite_finish_result::timed_out;
+            }
+            storage.release();
+            std::unique_lock<std::mutex> lock(finite_finish_mutex_);
+            const bool completed = finite_finish_condition_.wait_until(lock, deadline,
+                [&]() { return state->complete || aborted(); });
+            finite_finishes_.erase(token);
+            if (state->complete) {
+                return state->result;
+            }
+            return completed ? finite_finish_result::aborted : finite_finish_result::timed_out;
+        }
+
+        bool finite_finish_pending(const std::uint64_t token) {
+            const std::lock_guard<std::mutex> guard(finite_finish_mutex_);
+            return finite_finishes_.count(token) != 0;
+        }
+
+        void complete_finite_finish(const std::uint64_t token,
+            const finite_finish_result result) {
+            const std::lock_guard<std::mutex> guard(finite_finish_mutex_);
+            const auto pending = finite_finishes_.find(token);
+            if (pending == finite_finishes_.end()) {
+                return;
+            }
+            pending->second->result = result;
+            pending->second->complete = true;
+            finite_finishes_.erase(pending);
+            finite_finish_condition_.notify_all();
+        }
+
+        void abort_finite_finishes() {
+            const std::lock_guard<std::mutex> guard(finite_finish_mutex_);
+            for (const auto &pending : finite_finishes_) {
+                pending.second->result = finite_finish_result::aborted;
+                pending.second->complete = true;
+            }
+            finite_finishes_.clear();
+            finite_finish_condition_.notify_all();
+        }
 
     public:
         explicit graphics_driver(graphic_api api)
             : api_(api) {}
 
         virtual ~graphics_driver() {
+        }
+
+        // Completes prior queued drawing, not physical display scanout. The
+        // caller must retain the driver for the duration of this call. Backends
+        // opt in only when they provide actual ordered rendering completion.
+        virtual finite_finish_result finite_finish(const std::uint32_t = 2000) {
+            return finite_finish_result::not_supported;
         }
 
         const graphic_api get_current_api() const {

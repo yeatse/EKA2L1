@@ -66,6 +66,8 @@ if (EKA2L1_IOS)
 endif ()
 
 add_library(drivers
+        include/drivers/media_download.h
+        src/media_download.cpp
         include/drivers/network/tls.h
         src/network/tls.cpp
         include/drivers/itc.h
@@ -258,6 +260,15 @@ if (NOT MSVC)
 endif()
 
 target_link_libraries(drivers PRIVATE common glm miniBAE_EMU mbedtls)
+if (NOT EKA2L1_IOS AND NOT ANDROID)
+    find_package(CURL 7.85 QUIET)
+endif ()
+if (CURL_FOUND AND TARGET CURL::libcurl)
+    target_link_libraries(drivers PRIVATE CURL::libcurl)
+    target_compile_definitions(drivers PRIVATE EKA2L1_HAS_MEDIA_DOWNLOAD=1)
+else ()
+    target_compile_definitions(drivers PRIVATE EKA2L1_HAS_MEDIA_DOWNLOAD=0)
+endif ()
 if (APPLE)
     target_sources(drivers PRIVATE src/network/tls_trust_apple.cpp)
     target_link_libraries(drivers PRIVATE "-framework Security" "-framework CoreFoundation")

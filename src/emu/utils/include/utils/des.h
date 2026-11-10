@@ -58,6 +58,8 @@ namespace eka2l1::epoc {
 
     constexpr int des_err_not_large_enough_to_hold = -1;
 
+    constexpr std::uint32_t descriptor_length_mask = 0x0FFFFFFF;
+
     // These are things that we can't do within header
     struct desc_base {
         std::uint32_t info;
@@ -69,7 +71,7 @@ namespace eka2l1::epoc {
 
         inline std::uint32_t get_length() const {
             // 28 low bit stores the length
-            return info & 0xFFFFFF;
+            return info & descriptor_length_mask;
         }
 
         inline des_type get_descriptor_type() const {
@@ -81,7 +83,7 @@ namespace eka2l1::epoc {
         }
 
         inline void set_descriptor_type(const des_type dtype) {
-            info &= 0x00FFFFFF;
+            info &= descriptor_length_mask;
             info |= (dtype << 28);
         }
 
@@ -396,7 +398,7 @@ namespace eka2l1::epoc {
     };
 
     inline void set_descriptor_length_variable(std::uint32_t &var, std::uint32_t newlen) {
-        var &= ~0xFFFFFF;
-        var |= (newlen & 0xFFFFFF);
+        var &= ~descriptor_length_mask;
+        var |= (newlen & descriptor_length_mask);
     }
 }

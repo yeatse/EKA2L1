@@ -36,6 +36,7 @@
 #endif
 
 #include <memory>
+#include <map>
 #include <queue>
 
 namespace eka2l1::drivers {
@@ -71,6 +72,13 @@ namespace eka2l1::drivers {
 
     class ogl_graphics_driver : public shared_graphics_driver {
         eka2l1::request_queue<command_list> list_queue;
+
+        // The queue itself stores raw command_list records. Keep new finish
+        // packets owned through timeout and an abort that stops queue draining.
+        std::mutex finite_finish_packets_mutex_;
+        std::map<std::uint64_t, std::unique_ptr<command[]>> finite_finish_packets_;
+        bool try_submit_finite_finish(command_list &commands) override;
+        bool release_finite_finish_packet(command_list &commands);
 
         std::unique_ptr<ogl_shader_program> sprite_program;
         std::unique_ptr<ogl_shader_program> brush_program;
@@ -211,6 +219,7 @@ namespace eka2l1::drivers {
 
         void set_viewport(const eka2l1::rect &viewport) override;
         void submit_command_list(command_list &cmd_list) override;
+        finite_finish_result finite_finish(std::uint32_t timeout_ms = 2000) override;
 
         void run() override;
         void abort() override;

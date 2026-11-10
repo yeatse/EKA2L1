@@ -29,6 +29,8 @@ namespace eka2l1::dispatch {
     BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_destroy, eka2l1::ptr<void> handle);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_supply_url, eka2l1::ptr<void> handle,
         const std::uint16_t *url, const std::uint32_t url_length, std::uint64_t *duration_us);
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_poll_open_url, eka2l1::ptr<void> handle, std::uint64_t *duration_us);
+    BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_close_source, eka2l1::ptr<void> handle);
     BRIDGE_FUNC_DISPATCHER(std::int32_t, eaudio_player_supply_buffer, eka2l1::ptr<void> handle, epoc::des8 *buffer,
         std::uint64_t *duration_us);
 

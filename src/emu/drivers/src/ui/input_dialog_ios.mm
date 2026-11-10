@@ -15,6 +15,7 @@ namespace {
         int max_length;
         std::uint64_t generation;
         eka2l1::drivers::ui::input_dialog_complete_callback complete;
+        bool secret = false;
     };
     std::shared_ptr<input_request> g_input;
     bool g_automatic_input = true;
@@ -135,7 +136,7 @@ namespace eka2l1::drivers::ui {
     }
 
     bool open_input_view(const std::u16string &initial_text, const int max_len,
-        input_dialog_complete_callback complete_callback) {
+        input_dialog_complete_callback complete_callback, const bool secret) {
         const std::u16string initial_text_copy = initial_text;
         const auto generation = ++g_input_generation;
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -143,7 +144,7 @@ namespace eka2l1::drivers::ui {
                 return;
             }
             close_input_view_on_main();
-            g_input = std::make_shared<input_request>(input_request{initial_text_copy, max_len, generation, complete_callback});
+            g_input = std::make_shared<input_request>(input_request{initial_text_copy, max_len, generation, complete_callback, secret});
             if (g_automatic_input || g_present_next_input) {
                 g_present_next_input = false;
                 present_input_view();
@@ -163,6 +164,7 @@ namespace eka2l1::drivers::ui {
                                                                            message:nil
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+                field.secureTextEntry = request->secret;
                 field.text = to_ns_string(request->text);
                 field.clearButtonMode = UITextFieldViewModeWhileEditing;
                 field.autocapitalizationType = UITextAutocapitalizationTypeNone;
@@ -185,7 +187,7 @@ namespace eka2l1::drivers::ui {
                 g_active_alert = nil;
                 notify_input_available();
                 if (request->complete) {
-                    request->complete(result);
+                    request->complete(result, true);
                 }
             }];
             UIAlertAction *cancel = [UIAlertAction actionWithTitle:@"Cancel"
@@ -199,7 +201,7 @@ namespace eka2l1::drivers::ui {
                 if (g_automatic_input) {
                     g_input.reset();
                     if (request->complete) {
-                        request->complete(request->text);
+                        request->complete({}, false);
                     }
                 }
             }];

@@ -29,6 +29,7 @@ extern "C" {
 // On beginning, contains the initial text. On finish with request status done, return the committed text
 // The text will be clamped to max length of descriptor
 HLE_DISPATCH_FUNC(TInt, EHUIOpenGlobalTextView, const TDesC *aInitialText, const TInt aMaxLength, TRequestStatus *aStatus);
+HLE_DISPATCH_FUNC(TInt, EHUIOpenGlobalTextViewWithSecret, const TDesC *aInitialText, const TInt aMaxLength, TBool aSecret, TRequestStatus *aStatus);
 HLE_DISPATCH_FUNC(void, EHUIGetStoredText, TInt *aLength, const void *aPtr);
 HLE_DISPATCH_FUNC(void, EHUICancelGlobalTextView);
 HLE_DISPATCH_FUNC(TBool, EHUIIsKeypadBased);

@@ -989,7 +989,8 @@ namespace eka2l1::dispatch {
 
     gles_driver_object::gles_driver_object(egl_context_es_shared &ctx)
         : namespace_(*ctx.namespace_)
-        , driver_handle_(0) {
+        , driver_handle_(0)
+        , client_handle_(0) {
     }
 
     egl_context_es_shared &gles_driver_object::context() {
@@ -1276,7 +1277,9 @@ namespace eka2l1::dispatch {
         while (buffers_.find(name) != buffers_.end()) {
             ++name;
         }
-        buffers_.emplace(name, std::make_unique<gles_driver_buffer>(*this));
+        auto buffer = std::make_unique<gles_driver_buffer>(*this);
+        buffer->assign_client_handle(name);
+        buffers_.emplace(name, std::move(buffer));
         return name;
     }
 
@@ -1294,6 +1297,7 @@ namespace eka2l1::dispatch {
             auto &buffer = buffers_[name];
             if (!buffer) {
                 buffer = std::make_unique<gles_driver_buffer>(*this);
+                buffer->assign_client_handle(name);
             }
             buffer->was_bound_ = true;
         }
@@ -1724,6 +1728,18 @@ namespace eka2l1::dispatch {
                 ? GL_CLOCKWISE_EMU : GL_COUNTER_CLOCKWISE_EMU);
             break;
 
+        case GL_VIEWPORT_EMU: {
+            // API state is in guest coordinates. The driver applies its own
+            // scale and Y inversion when submitting this rectangle.
+            const eka2l1::vec2 size = (ctx->viewport_bl_.size == eka2l1::vec2(-1, -1) && ctx->draw_surface_)
+                ? ctx->draw_surface_->dimension_ : ctx->viewport_bl_.size;
+            params[0] = convert_query_value<T>(ctx->viewport_bl_.top.x);
+            params[1] = convert_query_value<T>(ctx->viewport_bl_.top.y);
+            params[2] = convert_query_value<T>(size.x);
+            params[3] = convert_query_value<T>(size.y);
+            break;
+        }
+
         case GL_SCISSOR_BOX_EMU: {
             const eka2l1::vec2 size = (ctx->scissor_bl_.size == eka2l1::vec2(-1, -1) && ctx->draw_surface_)
                 ? ctx->draw_surface_->dimension_ : ctx->scissor_bl_.size;
@@ -1782,10 +1798,25 @@ namespace eka2l1::dispatch {
             break;
 
         case GL_MAX_VIEWPORT_DIMS_EMU:
+            params[0] = params[1] = static_cast<T>(GLES_EMU_MAX_TEXTURE_SIZE);
+            break;
+
         case GL_MAX_TEXTURE_SIZE_EMU:
+        case GL_MAX_CUBE_MAP_TEXTURE_SIZE_EMU:
             // We clamp on this
             *params = static_cast<T>(GLES_EMU_MAX_TEXTURE_SIZE);
             break;
+
+        case GL_ALIASED_POINT_SIZE_RANGE_EMU:
+        case GL_ALIASED_LINE_WIDTH_RANGE_EMU: {
+            float range[2] = {};
+            if (!drivers::get_graphics_float(drv, pname, range)) {
+                return false;
+            }
+            params[0] = convert_query_value<T>(range[0]);
+            params[1] = convert_query_value<T>(range[1]);
+            break;
+        }
 
         case GL_SMOOTH_LINE_WIDTH_RANGE_EMU:
             params[0] = static_cast<T>(1);
@@ -2074,7 +2105,9 @@ namespace eka2l1::dispatch {
             default:
                 break;
             }
+            auto *object = stub_obj.get();
             texs[i] = static_cast<std::uint32_t>(ctx->objects_.add(stub_obj));
+            object->assign_client_handle(texs[i]);
         }
     }
 

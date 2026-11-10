@@ -20,6 +20,7 @@
 
 #include <services/internet/connmonitor.h>
 #include <services/centralrepo/centralrepo.h>
+#include <services/socket/server.h>
 #include <system/epoc.h>
 
 #include <utils/err.h>
@@ -52,6 +53,57 @@ namespace eka2l1 {
     connmonitor_client_session::connmonitor_client_session(service::typical_server *serv, const kernel::uid ss_id,
         epoc::version client_version)
         : service::typical_session(serv, ss_id, client_version) {
+    }
+
+    connmonitor_client_session::~connmonitor_client_session() {
+        stop_notifications();
+    }
+
+    epoc::socket::connection_registry *connmonitor_client_session::registry() {
+        auto *owner = server<connmonitor_server>();
+        auto *system = owner->get_system();
+        const auto name = get_socket_server_name_by_epocver(system->get_symbian_version_use());
+        auto *socket = reinterpret_cast<socket_server *>(system->get_kernel_system()->get_by_name<service::server>(name));
+        return socket ? &socket->connections() : nullptr;
+    }
+
+    void connmonitor_client_session::enqueue(const event_info &event) {
+        // Like the real ConnMon event queue, keep bounded recent history while
+        // the client is handling a previous event. State queries remain current.
+        if (events_.size() == 256) {
+            events_.pop_front();
+        }
+        events_.push_back(event);
+        deliver_event();
+    }
+
+    void connmonitor_client_session::deliver_event() {
+        if (!event_request_ || events_.empty()) {
+            return;
+        }
+        auto request = std::move(event_request_);
+        if (!request->sys->get_kernel_system()->is_thread_alive(request->msg->own_thr)) {
+            return;
+        }
+        const bool written = request->write_data_to_descriptor_argument(0, events_.front());
+        if (written) {
+            events_.pop_front();
+        }
+        request->complete(written ? epoc::error_none : epoc::error_bad_descriptor);
+    }
+
+    void connmonitor_client_session::stop_notifications() {
+        if (connection_events_) {
+            connection_events_->observers.erase(this);
+            connection_events_.reset();
+        }
+        events_.clear();
+        if (event_request_) {
+            auto request = std::move(event_request_);
+            if (request->sys->get_kernel_system()->is_thread_alive(request->msg->own_thr)) {
+                request->complete(epoc::error_cancel);
+            }
+        }
     }
 
     void connmonitor_client_session::fetch(service::ipc_context *ctx) {
@@ -133,54 +185,139 @@ namespace eka2l1 {
     }
 
     void connmonitor_client_session::get_connection_count(eka2l1::service::ipc_context *ctx) {
-        std::uint32_t connection_count = 1;
-
-        ctx->write_data_to_descriptor_argument(0, connection_count);
+        const auto *connections = registry();
+        auto snapshot = connections ? connections->monitor_snapshot() : std::vector<std::uint32_t>{};
+        const auto count = static_cast<std::uint32_t>(snapshot.size());
+        if (ctx->get_argument_max_data_size(0) < sizeof(count)
+            || !ctx->write_data_to_descriptor_argument(0, count)) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
+        }
+        snapshot_ = std::move(snapshot);
         ctx->complete(epoc::error_none);
     }
 
     void connmonitor_client_session::receive_event(eka2l1::service::ipc_context *ctx) {
-        nof_info = epoc::notify_info(ctx->msg->request_sts, ctx->msg->own_thr);
+        if (event_request_) {
+            ctx->complete(epoc::error_in_use);
+            return;
+        }
+        if (ctx->get_argument_max_data_size(0) < sizeof(event_info)) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
+        }
+        auto *connections = registry();
+        if (!connections) {
+            ctx->complete(epoc::error_not_ready);
+            return;
+        }
+        if (!connection_events_) {
+            connection_events_ = connections->events();
+            connection_events_->observers[this] = [this](const epoc::socket::connection_state &state, bool was_active) {
+                // Progress events carry the NIF stage in data1; deletion events
+                // carry the authoritative-stop flag in data3.
+                if (!was_active && state.active) {
+                    enqueue({1, state.monitor_id});
+                }
+                enqueue({8, state.monitor_id, 0, static_cast<std::uint32_t>(state.stage)});
+                if (was_active && !state.active) {
+                    enqueue({2, state.monitor_id, 0, 0, 0, state.authoritative_stop ? 1u : 0u});
+                }
+            };
+        }
+        event_request_ = ctx->move_to_new();
+        deliver_event();
     }
 
     void connmonitor_client_session::get_connection_info(eka2l1::service::ipc_context *ctx) {
-        std::uint32_t index = *(ctx->get_argument_value<std::uint32_t>(0));
-        std::uint32_t *connection_id_ptr = reinterpret_cast<std::uint32_t *>(ctx->get_descriptor_argument_ptr(1));
-        std::uint32_t *subconnection_count_ptr = reinterpret_cast<std::uint32_t *>(ctx->get_descriptor_argument_ptr(2));
-
-        *connection_id_ptr = bearer_id_gprs;
-        *subconnection_count_ptr = 1;
-
+        const auto index = ctx->get_argument_value<std::uint32_t>(0);
+        if (!index || !*index || *index > snapshot_.size()) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        const std::uint32_t subconnections = 0;
+        if (ctx->get_argument_max_data_size(1) < sizeof(std::uint32_t)
+            || ctx->get_argument_max_data_size(2) < sizeof(std::uint32_t)
+            || !ctx->write_data_to_descriptor_argument(1, snapshot_[*index - 1])
+            || !ctx->write_data_to_descriptor_argument(2, subconnections)) {
+            ctx->complete(epoc::error_bad_descriptor);
+            return;
+        }
         ctx->complete(epoc::error_none);
     }
 
     void connmonitor_client_session::get_int_attribute(eka2l1::service::ipc_context *ctx) {
-        std::uint32_t connection_id = *(ctx->get_argument_value<std::uint32_t>(0));
-        std::uint32_t subconnection_id = *(ctx->get_argument_value<std::uint32_t>(1));
-        std::uint32_t attribute = *(ctx->get_argument_value<std::uint32_t>(2));
-        std::int32_t *value_ptr = reinterpret_cast<std::int32_t *>(ctx->get_descriptor_argument_ptr(3));
-
-        *value_ptr = 0;
-        ctx->complete(epoc::error_none);
+        const auto connection = ctx->get_argument_value<std::uint32_t>(0);
+        const auto subconnection = ctx->get_argument_value<std::uint32_t>(1);
+        const auto attribute = ctx->get_argument_value<std::uint32_t>(2);
+        if (!connection || !subconnection || !attribute) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        if (*subconnection) {
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        auto *connections = registry();
+        const auto state = connections ? connections->monitor_find(*connection) : nullptr;
+        if (!state) {
+            ctx->complete(epoc::error_not_found);
+            return;
+        }
+        std::int32_t value = 0;
+        switch (*attribute) {
+        case 1: // KBearer: EKA exposes a virtual host-backed LAN connection.
+            value = 3; // EBearerLAN
+            break;
+        case 2: // KNetworkStatus
+            value = state->active ? 3 : 1; // Active / Unattached
+            break;
+        case 3: // KConnectionStatus
+            value = state->stage;
+            break;
+        default:
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        ctx->complete(ctx->get_argument_max_data_size(3) >= sizeof(value)
+                && ctx->write_data_to_descriptor_argument(3, value)
+            ? epoc::error_none : epoc::error_bad_descriptor);
     }
 
     void connmonitor_client_session::get_uint_attribute(eka2l1::service::ipc_context *ctx) {
-        std::uint32_t connection_id = *(ctx->get_argument_value<std::uint32_t>(0));
-        std::uint32_t subconnection_id = *(ctx->get_argument_value<std::uint32_t>(1));
-        std::uint32_t attribute = *(ctx->get_argument_value<std::uint32_t>(2));
-        std::uint32_t *value_ptr = reinterpret_cast<std::uint32_t *>(ctx->get_descriptor_argument_ptr(3));
-
-        *value_ptr = 0;
-        ctx->complete(epoc::error_none);
+        const auto connection = ctx->get_argument_value<std::uint32_t>(0);
+        const auto subconnection = ctx->get_argument_value<std::uint32_t>(1);
+        const auto attribute = ctx->get_argument_value<std::uint32_t>(2);
+        if (!connection || !subconnection || !attribute) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        if (*subconnection || (*attribute != 102 && *attribute != 103)) {
+            ctx->complete(epoc::error_not_supported);
+            return;
+        }
+        auto *connections = registry();
+        const auto state = connections ? connections->monitor_find(*connection) : nullptr;
+        if (!state) {
+            ctx->complete(epoc::error_not_found);
+            return;
+        }
+        const auto value = *attribute == 102 ? state->info.iap_id : state->info.network_id;
+        ctx->complete(ctx->get_argument_max_data_size(3) >= sizeof(value)
+                && ctx->write_data_to_descriptor_argument(3, value)
+            ? epoc::error_none : epoc::error_bad_descriptor);
     }
 
     void connmonitor_client_session::cancel_async_request(eka2l1::service::ipc_context *ctx) {
-        // Stubbed
-        ctx->complete(epoc::error_none);
+        // Count and attribute reads complete synchronously in this service;
+        // no pending request remains to cancel. Events have a separate API.
+        const auto request = ctx->get_argument_value<std::int32_t>(0);
+        ctx->complete(request && *request >= 1 && *request <= 7
+            ? epoc::error_none : epoc::error_argument);
     }
 
     void connmonitor_client_session::cancel_receive_event(eka2l1::service::ipc_context *ctx) {
-        nof_info.complete(epoc::error_cancel);
+        stop_notifications();
         ctx->complete(epoc::error_none);
     }
 }

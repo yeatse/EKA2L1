@@ -117,6 +117,41 @@ namespace eka2l1::drivers {
         return handle_num;
     }
 
+    bool validate_shader_program(graphics_driver *driver, drivers::handle program, std::string *validation_log) {
+        command cmd;
+        cmd.opcode_ = graphics_driver_validate_program;
+        cmd.data_[0] = program;
+        cmd.data_[1] = reinterpret_cast<std::uint64_t>(validation_log);
+        return send_sync_command(driver, cmd) == 0;
+    }
+
+    bool get_shader_precision(graphics_driver *driver, std::uint32_t shader_type, std::uint32_t precision_type,
+        std::int32_t *range, std::int32_t *precision) {
+        command cmd;
+        cmd.opcode_ = graphics_driver_get_shader_precision;
+        cmd.data_[0] = shader_type;
+        cmd.data_[1] = precision_type;
+        cmd.data_[2] = reinterpret_cast<std::uint64_t>(range);
+        cmd.data_[3] = reinterpret_cast<std::uint64_t>(precision);
+        return send_sync_command(driver, cmd) == 0;
+    }
+
+    bool get_graphics_integer(graphics_driver *driver, std::uint32_t pname, std::int32_t *value) {
+        command cmd;
+        cmd.opcode_ = graphics_driver_get_integer;
+        cmd.data_[0] = pname;
+        cmd.data_[1] = reinterpret_cast<std::uint64_t>(value);
+        return send_sync_command(driver, cmd) == 0;
+    }
+
+    bool get_graphics_float(graphics_driver *driver, std::uint32_t pname, float *value) {
+        command cmd;
+        cmd.opcode_ = graphics_driver_get_float;
+        cmd.data_[0] = pname;
+        cmd.data_[1] = reinterpret_cast<std::uint64_t>(value);
+        return send_sync_command(driver, cmd) == 0;
+    }
+
     drivers::handle create_buffer(graphics_driver *driver, const void *initial_data, const std::size_t initial_size, const buffer_upload_hint upload_hint) {
         drivers::handle handle_num = 0;
 

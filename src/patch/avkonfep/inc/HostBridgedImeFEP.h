@@ -25,7 +25,7 @@
 #include <fepplugin.h>
 #include <fepitfr.h>
 #include <ecom/ecom.h>
-#include <ecom/ImplementationProxy.h>
+#include <ecom/implementationproxy.h>
 #include <aknedstsobs.h>
 #include <aknextendedinputcapabilities.h>
 
@@ -39,7 +39,7 @@ public:
     CHostDialogIme(CHostBridgedImeFEP *aHost);
     virtual ~CHostDialogIme();
     
-    TInt Open(const TDesC *aInitialText, const TInt aMaxLength);
+    TInt Open(const TDesC *aInitialText, const TInt aMaxLength, const TBool aSecret);
 
     virtual void RunL();
     virtual void DoCancel();
@@ -103,6 +103,7 @@ public:
         TInt aPositionInInlineText);
 
     void CommitChangedTextL();
+    void CancelChangedTextL();
 };
 
 class CHostBridgedImeFEPPlugin : public CCoeFepPlugIn {

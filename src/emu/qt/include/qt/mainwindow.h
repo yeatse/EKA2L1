@@ -111,6 +111,8 @@ private:
     eka2l1::drivers::ui::input_dialog_complete_callback input_complete_callback_;
     std::u16string input_initial_text_;
     int input_text_max_len_;
+    bool input_text_secret_ = false;
+    quint64 input_dialog_request_id_ = 0;
 
     QString ngage_game_installing_name_;
 
@@ -188,9 +190,9 @@ private slots:
     void force_update_display_minimum_size();
     void on_window_title_setting_changed();
     void on_finished_text_input(const QString &text, const bool force_close);
-    void on_input_dialog_open_request();
-    void on_input_dialog_close_request();
-    void on_input_dialog_delay_launch_asked();
+    void on_input_dialog_open_request(quint64 request_id);
+    void on_input_dialog_close_request(quint64 request_id);
+    void on_input_dialog_delay_launch_asked(quint64 request_id);
     void on_hide_system_apps_changed();
     void on_bt_netplay_mod_friends_clicked();
     void on_btnetplay_friends_dialog_finished(int status);
@@ -217,8 +219,8 @@ signals:
     void restart_requested();
     void controller_button_press(eka2l1::drivers::input_event event);
     void screen_focus_group_changed();
-    void input_dialog_delay_launch_asked();
-    void input_dialog_close_request();
+    void input_dialog_delay_launch_asked(quint64 request_id);
+    void input_dialog_close_request(quint64 request_id);
     void install_ngage_game_name_available(QString name);
     void app_exited(const int exit_type, const int exit_reason, const QString exit_category);
 
@@ -252,7 +254,7 @@ public:
 
     bool controller_event_handler(eka2l1::drivers::input_event &event);
 
-    bool input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback);
+    bool input_dialog_open(const std::u16string &inital_text, const int max_length, eka2l1::drivers::ui::input_dialog_complete_callback complete_callback, const bool secret = false);
     eka2l1::drivers::ui::dialog_cancel_callback question_dialog_open(const std::u16string &text, const std::u16string &button1_text, const std::u16string &button2_text,
         eka2l1::drivers::ui::yes_no_dialog_complete_callback complete_callback);
 

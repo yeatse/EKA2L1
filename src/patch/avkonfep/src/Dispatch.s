@@ -1,6 +1,7 @@
 .include "../../../priv/inc/sv.S"
 
 .global EHUIOpenGlobalTextView
+.global EHUIOpenGlobalTextViewWithSecret
 .global EHUIGetStoredText
 .global EHUICancelGlobalTextView
 .global EHUIIsKeypadBased
@@ -24,3 +25,6 @@ EHUIIsManualInput:
 
 EHUISetInputAvailable:
     CallHleDispatch 0xA5
+
+EHUIOpenGlobalTextViewWithSecret:
+    CallHleDispatch 0xA6

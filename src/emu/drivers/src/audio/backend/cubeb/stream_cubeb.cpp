@@ -88,7 +88,7 @@ namespace eka2l1::drivers {
     std::size_t cubeb_audio_stream_base::call_callback(std::int16_t *output_buffer, const long frames) {
         if (should_stream_idle()) {
             std::memset(output_buffer, 0, frames * internal_channels_ * sizeof(std::int16_t));
-            idled_frames_ += static_cast<std::uint64_t>(frames);
+            idled_frames_.fetch_add(static_cast<std::uint64_t>(frames), std::memory_order_relaxed);
   
             return static_cast<std::size_t>(frames);
         }
@@ -101,10 +101,14 @@ namespace eka2l1::drivers {
             return false;
         }
 
-        if (idled_frames_ >= *pos) {
+        // The render thread can account another silent block after the Pulse
+        // position query releases its lock. Use one atomic snapshot so the
+        // comparison and subtraction cannot observe different counters.
+        const std::uint64_t idled_frames = idled_frames_.load(std::memory_order_relaxed);
+        if (idled_frames >= *pos) {
             *pos = 0;
         } else {
-            *pos -= idled_frames_;
+            *pos -= idled_frames;
         }
 
         return true;
@@ -115,9 +119,11 @@ namespace eka2l1::drivers {
             return true;
         }
 
+        // The callback may run before cubeb_stream_start returns. Reset its
+        // counter before starting, not after it can already have added frames.
+        idled_frames_.store(0, std::memory_order_relaxed);
         if (cubeb_stream_start(stream_) == CUBEB_OK) {
             in_action_ = true;
-            idled_frames_ = 0;
 
             return true;
         }
@@ -156,12 +162,12 @@ namespace eka2l1::drivers {
     }
 
     bool cubeb_audio_output_stream::should_stream_idle() {
-        return (pausing_ || driver_->suspending());
+        return (pausing_.load(std::memory_order_relaxed) || driver_->suspending());
     }
 
     bool cubeb_audio_output_stream::start() {
-        if (pausing_) {
-            pausing_ = false;
+        if (pausing_.load(std::memory_order_relaxed)) {
+            pausing_.store(false, std::memory_order_relaxed);
             return true;
         }
 
@@ -170,7 +176,7 @@ namespace eka2l1::drivers {
 
     bool cubeb_audio_output_stream::stop() {
         if (cubeb_audio_stream_base::stop_impl()) {
-            pausing_ = false;
+            pausing_.store(false, std::memory_order_relaxed);
             return true;
         }
 
@@ -178,7 +184,7 @@ namespace eka2l1::drivers {
     }
 
     void cubeb_audio_output_stream::pause() {
-        pausing_ = true;
+        pausing_.store(true, std::memory_order_relaxed);
     }
 
     bool cubeb_audio_output_stream::is_playing() {
@@ -186,7 +192,7 @@ namespace eka2l1::drivers {
     }
 
     bool cubeb_audio_output_stream::is_pausing() {
-        return pausing_;
+        return pausing_.load(std::memory_order_relaxed);
     }
 
     bool cubeb_audio_output_stream::set_volume(const float volume) {

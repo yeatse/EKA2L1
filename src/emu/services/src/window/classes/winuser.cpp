@@ -111,6 +111,7 @@ namespace eka2l1::epoc {
     }
 
     canvas_base::~canvas_base() {
+        client->get_ws().managed_surfaces()->release_window(id);
         // Detach observers first, while this object is still intact: EGL
         // surfaces keep a raw backed-window pointer and outlive windows whose
         // owner exited without destroying them (freed later by the dispatcher,
@@ -155,6 +156,7 @@ namespace eka2l1::epoc {
     }
 
     void canvas_base::attach_surface(const std::shared_ptr<window_surface> &surface, const surface_configuration &config, bool direct) {
+        if (!direct) { client->get_ws().managed_surfaces()->retain_window(id, scr->number, surface); }
         (direct ? direct_surface_ : background_surface_).attach(surface, config);
         if (surface_transparent_ && !direct) {
             scr->need_update_visible_regions(true);
@@ -165,6 +167,7 @@ namespace eka2l1::epoc {
     void canvas_base::detach_surface(const std::shared_ptr<window_surface> &surface) {
         const bool detached_background = background_surface_.detach(surface);
         const bool detached_direct = direct_surface_.detach(surface);
+        if (detached_background) { client->get_ws().managed_surfaces()->release_window(id); }
         if (detached_background || detached_direct) {
             if (surface_transparent_ && detached_background) {
                 scr->need_update_visible_regions(true);
@@ -1127,6 +1130,14 @@ namespace eka2l1::epoc {
             fix_native_orientation(ctx, cmd);
             break;
 
+        case EWsWinOpKeyColor:
+            // This compositor blends a premultiplied-alpha GDI overlay above
+            // surfaces, without chroma-key comparison. The public alpha-mode
+            // key (also used for a window without a surface) is transparent
+            // black: TRgb(0, 0, 0, 0). Return its native Internal() value.
+            ctx.complete(0x00000000);
+            break;
+
         case EWsWinOpSetBackgroundSurface: {
             if (cmd.header.cmd_len < sizeof(surface_id)) {
                 ctx.complete(epoc::error_argument);
@@ -1153,6 +1164,7 @@ namespace eka2l1::epoc {
             const std::lock_guard<std::mutex> guard(scr->screen_mutex);
             if (background_surface_.surface) {
                 background_surface_.detach(background_surface_.surface);
+                client->get_ws().managed_surfaces()->release_window(id);
                 if (surface_transparent_) {
                     scr->need_update_visible_regions(true);
                 }
@@ -1187,6 +1199,11 @@ namespace eka2l1::epoc {
                 break;
             }
             if (cmd.header.op == EWsWinOpGetBackgroundSurfaceConfig) {
+                if (flags & flags_enable_alpha) {
+                    // The public API forbids querying a transparent window.
+                    ctx.complete(epoc::error_not_supported);
+                    break;
+                }
                 const std::lock_guard<std::mutex> guard(scr->screen_mutex);
                 auto surface = background_surface_.surface;
                 if (!surface) {
@@ -1197,7 +1214,12 @@ namespace eka2l1::epoc {
                 config.id = client->get_ws().surfaces().add(surface);
                 config.orientation = ((-background_surface_.config.rotation / 90) % 4 + 4) % 4;
                 config.extent = background_surface_.config.extent.value_or(eka2l1::rect({ 0, 0 }, size()));
-                config.viewport = background_surface_.config.viewport.value_or(eka2l1::rect({ 0, 0 }, surface->size()));
+                auto source_size = surface->size();
+                if (auto managed = client->get_ws().managed_surfaces()->find(config.id)) {
+                    // Managed dimensions exist before the first GPU upload.
+                    source_size = managed->attributes.size;
+                }
+                config.viewport = background_surface_.config.viewport.value_or(eka2l1::rect({ 0, 0 }, source_size));
                 config.extent.transform_to_symbian_rectangle();
                 config.viewport.transform_to_symbian_rectangle();
                 ctx.write_data_to_descriptor_argument(reply_slot, reinterpret_cast<const std::uint8_t *>(&config), config.size);
@@ -1232,6 +1254,7 @@ namespace eka2l1::epoc {
             const auto redraw_offset = cmd.header.cmd_len - sizeof(std::int32_t);
             const bool redraw = *reinterpret_cast<const std::int32_t *>(static_cast<const std::uint8_t *>(cmd.data_ptr) + redraw_offset) != 0;
             const std::lock_guard<std::mutex> guard(scr->screen_mutex);
+            client->get_ws().managed_surfaces()->retain_window(id, scr->number, surface);
             background_surface_.attach(surface, placement);
             if (surface_transparent_) {
                 scr->need_update_visible_regions(true);

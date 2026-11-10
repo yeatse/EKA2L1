@@ -1198,13 +1198,20 @@ namespace eka2l1::common {
         }
 #endif
 
+        // Folded directory indexes use second-resolution host timestamps.
+        // Refresh the index when a creating open adds a directory entry.
+        const bool may_create_entry = mode && (mode[0] == 'w' || mode[0] == 'a')
+            && !common::exists(target_file);
 #if EKA2L1_PLATFORM(WIN32)
         std::wstring target_file_w = common::utf8_to_wstr(target_file);
         std::wstring target_mode_w = common::utf8_to_wstr(mode);
 
-        return _wfopen(target_file_w.c_str(), target_mode_w.c_str());
+        FILE *result = _wfopen(target_file_w.c_str(), target_mode_w.c_str());
 #else
-        return fopen(target_file.c_str(), mode);
+        FILE *result = fopen(target_file.c_str(), mode);
 #endif
+        if (result && may_create_entry)
+            invalidate_folded_directory_indexes();
+        return result;
     }
 }

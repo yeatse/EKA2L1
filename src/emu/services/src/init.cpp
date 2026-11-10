@@ -82,6 +82,7 @@
 #include <services/uiss/uiss.h>
 #include <services/unipertar/unipertar.h>
 #include <services/window/window.h>
+#include <services/window/surface_update.h>
 #include <services/host_launch.h>
 
 #include <services/init.h>
@@ -306,6 +307,9 @@ namespace eka2l1 {
 
             CREATE_SERVER(sys, fbs_server);
             CREATE_SERVER(sys, window_server);
+            if (sys->get_symbian_version_use() >= epocver::epoc10) {
+                CREATE_SERVER(sys, surface_update_server);
+            }
             CREATE_SERVER(sys, central_repo_server, [sys](central_repo &repo) {
                 provide_host_access_point(repo, sys->get_symbian_version_use());
                 epoc::initialize_input_language(repo, static_cast<std::uint32_t>(sys->get_system_language()));
