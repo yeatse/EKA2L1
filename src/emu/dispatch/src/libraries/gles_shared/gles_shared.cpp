@@ -614,13 +614,6 @@ namespace eka2l1::dispatch {
     }
 
     void egl_context_es_shared::on_surface_changed(eka2l1::drivers::graphics_driver *driver, egl_surface *prev_read, egl_surface *prev_draw) {
-        // Rebind viewport
-        viewport_bl_.top = eka2l1::vec2(0, 0);
-        viewport_bl_.size = eka2l1::vec2(-1, -1);
-
-        scissor_bl_.top = eka2l1::vec2(0, 0);
-        scissor_bl_.size = eka2l1::vec2(-1, -1);
-
         // A context that has never flushed has no state prefix, yet another context may have changed the shared host pipeline.
         if (draw_surface_ && read_surface_) {
             init_context_state();
@@ -955,8 +948,8 @@ namespace eka2l1::dispatch {
         , texture_pools_2d_(namespace_->texture_pools_2d_)
         , texture_pools_cube_(namespace_->texture_pools_cube_)
         , buffer_pools_(namespace_->buffer_pools_)
-        , viewport_bl_(eka2l1::vec2(0, 0), eka2l1::vec2(0, 0))
-        , scissor_bl_(eka2l1::vec2(0, 0), eka2l1::vec2(0, 0))
+        , viewport_bl_(eka2l1::vec2(0, 0), eka2l1::vec2(-1, -1))
+        , scissor_bl_(eka2l1::vec2(0, 0), eka2l1::vec2(-1, -1))
         , line_width_(1.0f)
         , non_shader_statuses_(0)
         , state_change_tracker_(0)
