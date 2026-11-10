@@ -112,5 +112,5 @@ namespace eka2l1::drivers {
 
     framebuffer_ptr make_framebuffer(graphics_driver *driver, const std::vector<drawable *> &color_buffer_list,
         const std::vector<int> &face_indicies, drawable *depth_buffer, const int depth_face_index,
-        drawable *stencil_buffer, const int stencil_face_index);
+        drawable *stencil_buffer, const int stencil_face_index, const bool initialize_attachments = false);
 }

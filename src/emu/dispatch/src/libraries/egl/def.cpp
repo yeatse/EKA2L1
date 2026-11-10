@@ -132,6 +132,7 @@ namespace eka2l1::dispatch {
         for (auto &ctx: contexts_) {
             if (ctx) {
                 ctx->destroy(driver_, cmd_builder);
+                ctx.reset();
                 freed_once = true;
             }
         }
@@ -147,6 +148,7 @@ namespace eka2l1::dispatch {
             driver_->submit_command_list(list);
         }
 
+        active_context_.clear();
         contexts_.clear();
         dsurfaces_.clear();
     }

@@ -907,7 +907,7 @@ APPLY_PENDING_ROUTES:
             }
 
             if ((internal_format != GL_RGBA4_EMU) && (internal_format != GL_RGB5_A1_EMU) && (internal_format != GL_RGB565_EMU)
-                && (internal_format != GL_RGBA_EMU) && (internal_format != GL_RGB_EMU)) {
+                && (internal_format != GL_RGBA_EMU) && (internal_format != GL_RGB_EMU) && (internal_format != GL_BGRA_EXT_EMU)) {
                 return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT_EMU;
             }
         }
@@ -1083,6 +1083,7 @@ APPLY_PENDING_ROUTES:
             break;
 
         case GL_RGBA_EMU:
+        case GL_BGRA_EXT_EMU:
             format = GL_RGBA_EMU;
             ttype = GL_UNSIGNED_BYTE_EMU;
             break;
@@ -1141,6 +1142,8 @@ APPLY_PENDING_ROUTES:
     }
 
     void egl_context_es2::destroy(drivers::graphics_driver *driver, drivers::graphics_command_builder &builder) {
+        egl_context_es_shared::destroy(driver, builder);
+
         while (!compiled_shader_cleanup_.empty()) {
             builder.destroy(compiled_shader_cleanup_.front());
             compiled_shader_cleanup_.pop();
@@ -1162,10 +1165,11 @@ APPLY_PENDING_ROUTES:
         }
 
         if (input_descs_) {
-            cmd_builder_.destroy(input_descs_);
+            builder.destroy(input_descs_);
+            input_descs_ = 0;
         }
 
-        egl_context_es_shared::destroy(driver, builder);
+        egl_context::destroy(driver, builder);
     }
 
     void egl_context_es2::flush_to_driver(egl_controller &controller, drivers::graphics_driver *drv, const bool is_frame_swap_flush) {
@@ -1474,6 +1478,14 @@ APPLY_PENDING_ROUTES:
 
         case GL_SHADER_COMPILER_EMU:
             *params = static_cast<T>(1);
+            break;
+
+        case GL_IMPLEMENTATION_COLOR_READ_FORMAT_EMU:
+            *params = static_cast<T>(GL_RGBA_EMU);
+            break;
+
+        case GL_IMPLEMENTATION_COLOR_READ_TYPE_EMU:
+            *params = static_cast<T>(GL_UNSIGNED_BYTE_EMU);
             break;
 
         case GL_MAX_VERTEX_UNIFORM_VECTORS_EMU:
@@ -3079,9 +3091,7 @@ APPLY_PENDING_ROUTES:
         gles_framebuffer_object *fb_obj = ctx->binded_framebuffer_
             ? get_binded_framebuffer_object_gles(ctx, controller) : nullptr;
 
-        // Framebuffer handle on driver side still 0 = not drawn anything yet. Don't waste time
-        // Maybe we should still read though. No one knows
-        if ((!fb_obj && (ctx->binded_framebuffer_ != 0)) || (fb_obj && !fb_obj->handle_value())) {
+        if (!fb_obj && ctx->binded_framebuffer_ != 0) {
             return;
         }
 
@@ -3127,6 +3137,14 @@ APPLY_PENDING_ROUTES:
         if (!fb_obj && ((format_for_read != drivers::texture_format::rgba) || (data_type_for_read != drivers::texture_data_type::ubyte))) {
             controller.push_error(ctx, GL_INVALID_OPERATION);
             return;
+        }
+
+        if (fb_obj) {
+            const auto error = fb_obj->ready_for_draw(controller, drv);
+            if (error) {
+                controller.push_error(ctx, error);
+                return;
+            }
         }
 
         // Flush all pending operations

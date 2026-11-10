@@ -859,6 +859,13 @@ namespace eka2l1::dispatch {
         } else {
             make_object_issuer();
 
+            // Programs detach their shader references while both objects are alive.
+            for (auto &obj: objects_) {
+                if (obj && obj->object_type() == GLES_OBJECT_PROGRAM) {
+                    obj.reset();
+                }
+            }
+
             for (auto &obj: objects_) {
                 if (obj) {
                     obj.reset();
@@ -1183,7 +1190,6 @@ namespace eka2l1::dispatch {
 
         eka2l1::vec2 size_upscaled = size_ * current_scale_;
 
-        // In assumption no one actually use GL_BGRA as their FB base format (it's not allowed to anyway)
         get_data_type_to_upload(internal_format_driver, format_driver, dtype, swizzles, internal_format_, 0, false);
 
         if (texture_type_ == GLES_DRIVER_TEXTURE_TYPE_2D) {
@@ -2780,6 +2786,10 @@ namespace eka2l1::dispatch {
         drivers::buffer_upload_hint upload_hint;
 
         switch (usage) {
+        case GL_STREAM_DRAW_EMU:
+            upload_hint = static_cast<drivers::buffer_upload_hint>(drivers::buffer_upload_stream | drivers::buffer_upload_draw);
+            break;
+
         case GL_STATIC_DRAW_EMU:
             upload_hint = static_cast<drivers::buffer_upload_hint>(drivers::buffer_upload_static | drivers::buffer_upload_draw);
             break;

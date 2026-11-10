@@ -32,7 +32,8 @@
 
 namespace eka2l1::drivers {
     ogl_framebuffer::ogl_framebuffer(const std::vector<drawable *> color_buffer_list, const std::vector<int> &face_index_of_color_buffers,
-            drawable *depth_buffer, drawable *stencil_buffer, const int face_index_of_depth_buffer, const int face_index_of_stencil_buffer)
+            drawable *depth_buffer, drawable *stencil_buffer, const int face_index_of_depth_buffer, const int face_index_of_stencil_buffer,
+            const bool initialize_attachments)
         : framebuffer(color_buffer_list, depth_buffer, stencil_buffer)
         , last_bind_type(framebuffer_bind_read_draw)
         , last_fb(-1)
@@ -100,18 +101,20 @@ namespace eka2l1::drivers {
             LOG_ERROR(DRIVER_GRAPHICS, "Framebuffer not complete! Reason {}", framebuffer_status);
         }
 
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClearStencil(0);
+        if (initialize_attachments) {
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClearStencil(0);
 #ifdef EKA2L1_PLATFORM_ANDROID
-        glClearDepthf(0);
+            glClearDepthf(0);
 #else
-        glClearDepth(0);
+            glClearDepth(0);
 #endif
-        std::uint32_t clear_flag = GL_COLOR_BUFFER_BIT;
-        if (depth_buffer) clear_flag |= GL_DEPTH_BUFFER_BIT;
-        if (stencil_buffer) clear_flag |= GL_STENCIL_BUFFER_BIT;
+            std::uint32_t clear_flag = GL_COLOR_BUFFER_BIT;
+            if (depth_buffer) clear_flag |= GL_DEPTH_BUFFER_BIT;
+            if (stencil_buffer) clear_flag |= GL_STENCIL_BUFFER_BIT;
 
-        glClear(clear_flag);
+            glClear(clear_flag);
+        }
 
         unbind(nullptr);
     }

@@ -45,7 +45,8 @@ namespace eka2l1::drivers {
         }
 
         explicit ogl_framebuffer(const std::vector<drawable *> color_buffer_list, const std::vector<int> &face_index_of_color_buffers,
-            drawable *depth_buffer, drawable *stencil_buffer, const int face_index_of_depth_buffer, const int face_index_of_stencil_buffer);
+            drawable *depth_buffer, drawable *stencil_buffer, const int face_index_of_depth_buffer, const int face_index_of_stencil_buffer,
+            const bool initialize_attachments = false);
 
         ~ogl_framebuffer() override;
 

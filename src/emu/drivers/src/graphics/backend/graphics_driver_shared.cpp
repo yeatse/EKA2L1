@@ -171,7 +171,7 @@ namespace eka2l1::drivers {
 
         if (fb) {
             auto new_fb = make_framebuffer(driver, { tex_to_replace.get() }, { 0 }, ds_tex_to_replace.get(), 0,
-                depth_bits == 16 ? nullptr : ds_tex_to_replace.get(), 0);
+                depth_bits == 16 ? nullptr : ds_tex_to_replace.get(), 0, true);
 
             fb->bind(driver, framebuffer_bind_read);
             new_fb->bind(driver, framebuffer_bind_draw);
@@ -198,7 +198,7 @@ namespace eka2l1::drivers {
 
     void bitmap::init_fb(graphics_driver *driver) {
         ds_tex = std::move(instantiate_bitmap_depth_stencil_texture(driver, tex->get_size()));
-        fb = make_framebuffer(driver, { tex.get() }, { 0 }, ds_tex.get(), 0, depth_bits == 16 ? nullptr : ds_tex.get(), 0);
+        fb = make_framebuffer(driver, { tex.get() }, { 0 }, ds_tex.get(), 0, depth_bits == 16 ? nullptr : ds_tex.get(), 0, true);
     }
 
     shared_graphics_driver::shared_graphics_driver(const graphic_api gr_api)
