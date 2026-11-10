@@ -661,6 +661,7 @@ void main_window::on_package_uninstalled() {
 }
 
 void main_window::on_device_set_requested(const int index) {
+    if (emulator_state_.debug_backend) emulator_state_.debug_backend->reset_session();
     if (bt_netplay_dialog_) {
         bt_netplay_dialog_->close();
         bt_netplay_dialog_ = nullptr;
@@ -701,6 +702,10 @@ void main_window::on_device_set_requested(const int index) {
             system->reset();
         } else {
             system->set_device(static_cast<std::uint8_t>(index));
+        }
+
+        if (!emulator_state_.stage_two_inited) {
+            finish_stage_two();
         }
     }
 
@@ -757,24 +762,23 @@ void main_window::on_status_bar_update(const std::uint64_t fps) {
     screen_status_label_->setText(QString("%1 FPS").arg(fps));
 }
 
+void main_window::finish_stage_two() {
+    if (!emulator_state_.symsys->get_device_manager()->get_current()) {
+        return;
+    }
+
+    ui_->label_al_not_available->setVisible(false);
+    emulator_state_.symsys->mount_device_drives();
+
+    // The app list needs the ROM drive mounted by stage two on the OS thread.
+    emulator_state_.init_done_event.reset();
+    emulator_state_.init_event.set();
+    emulator_state_.init_done_event.wait();
+}
+
 void main_window::on_new_device_added() {
     if (!applist_) {
-        ui_->label_al_not_available->setVisible(false);
-
-        emulator_state_.symsys->startup();
-        emulator_state_.symsys->set_device(0);
-
-        emulator_state_.symsys->mount_device_drives();
-
-        // Set and wait for reinitialization. The app list built below needs the ROM drive that
-        // only the stage two initialisation mounts, so this really has to wait for the retry.
-        emulator_state_.init_done_event.reset();
-        emulator_state_.init_event.set();
-        emulator_state_.init_done_event.wait();
-
-        refresh_current_device_label();
-        reprepare_touch_mappings();
-        setup_app_list(true);
+        on_device_set_requested(0);
     } else {
         if (emulator_state_.symsys) {
             applist_->update_devices(emulator_state_.symsys->get_device_manager());
@@ -1199,6 +1203,9 @@ void main_window::on_app_clicked(applist_widget_item *item) {
     bool launch_ok = false;
     if (item->is_j2me_) {
         launch_ok = eka2l1::j2me::launch(emulator_state_.symsys.get(), static_cast<std::uint32_t>(item->registry_index_), get_process_exit_callback());
+    } else if (emulator_state_.debug_backend) {
+        auto *registry = applist_->get_registry_from_widget_item(item);
+        launch_ok = registry && emulator_state_.debug_backend->launch_app(registry->mandatory_info.uid, get_process_exit_callback());
     } else  {
         launch_ok = applist_->launch_from_widget_item(item, get_process_exit_callback());
     }
@@ -1463,7 +1470,7 @@ void main_window::refresh_mount_availbility() {
     eka2l1::system *system = emulator_state_.symsys.get();
     if (system) {
         eka2l1::kernel_system *kern = system->get_kernel_system();
-        if (kern) {
+        if (kern && system->get_device_manager()->get_current()) {
             if (kern->is_eka1()) {
                 ui_->menu_mount_game_card_dump->setEnabled(true);
                 ui_->action_mount_recent_dumps->setEnabled(true);
@@ -2014,4 +2021,35 @@ eka2l1::drivers::ui::dialog_cancel_callback main_window::question_dialog_open(co
             }, Qt::QueuedConnection);
         }
     };
+}
+
+bool main_window::control_launch(std::uint32_t uid) {
+    if (!emulator_state_.debug_backend->launch_app(uid, get_process_exit_callback())) return false;
+    setup_and_switch_to_game_mode();
+    emit app_launching();
+    return true;
+}
+
+bool main_window::control_boot(int index) {
+    on_device_set_requested(index);
+    return emulator_state_.symsys->get_device_manager()->get_current_index() == index;
+}
+
+void main_window::control_close() {
+    on_restart_requested();
+}
+
+void main_window::control_changed(eka2l1::control::native_change change) {
+    if (applist_) {
+        if (change == eka2l1::control::native_change::applications) applist_->request_reload(false);
+        if (change == eka2l1::control::native_change::configuration) applist_->set_hide_system_apps(emulator_state_.conf.hide_system_apps);
+        if (change == eka2l1::control::native_change::devices) applist_->update_devices(emulator_state_.symsys->get_device_manager());
+    }
+    refresh_current_device_label();
+    refresh_mount_availbility();
+}
+
+void main_window::control_pause(bool paused) {
+    ui_->action_pause->setChecked(paused);
+    on_pause_toggled(paused);
 }

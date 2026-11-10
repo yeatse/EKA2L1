@@ -37,6 +37,8 @@
 #endif
 #endif
 
+#include <j2me/applist.h>
+#include <j2me/interface.h>
 #include <kernel/kernel.h>
 #include <services/applist/applist.h>
 
@@ -44,6 +46,7 @@
 #include <vfs/vfs.h>
 #include <qt/utils.h>
 
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -72,6 +75,7 @@ static void attach_command_line_console() {
 using namespace eka2l1;
 
 void register_command_line_options(eka2l1::common::arg_parser &parser) {
+    parser.add("--debug-control-port", "Enable the loopback HTTP control API on this port (1..65535). Disabled by default.", debug_control_option_handler);
     parser.add("--help, -h", "Display this help and exit", help_option_handler);
     parser.add("--listapp", "List all installed applications", list_app_option_handler);
     parser.add("--listdevices", "List all installed devices", list_devices_option_handler);
@@ -96,6 +100,7 @@ void register_command_line_options(eka2l1::common::arg_parser &parser) {
         keybind_profile_option_handler);
     parser.add("--mmcid, --cid, -cid", "Set the MMC-ID for the mounted card", set_mmcid_option_handler);
     parser.add("--runng, --appng, -rng, -ang", "Run a single N-Gage game inside the E drive", run_ngage_game_option_handler);
+    parser.add("--jar", "Install a MIDP-1.0 JAR, or refresh the installed copy, and run it. S60v1 devices only.", run_jar_option_handler);
 
 #if ENABLE_PYTHON_SCRIPTING
     parser.add("--gendocs", "Generate Python documentation", python_docgen_option_handler);
@@ -536,6 +541,61 @@ bool run_ngage_game_option_handler(eka2l1::common::arg_parser *parser, void *use
     return true;
 }
 
+bool run_jar_option_handler(eka2l1::common::arg_parser *parser, void *userdata, std::string *err) {
+    const char *path = parser->next_token();
+
+    if (!path) {
+        *err = "Request to run a JAR, but path not given";
+        return false;
+    }
+
+    desktop::emulator *emu = reinterpret_cast<desktop::emulator *>(userdata);
+
+    // Installing again an installed JAR only refreshes its copy, so it keeps its id
+    j2me::app_entry entry;
+    const j2me::install_error result = j2me::install(emu->symsys.get(), path, entry);
+
+    if (result != j2me::INSTALL_ERROR_JAR_SUCCESS) {
+        switch (result) {
+        case j2me::INSTALL_ERROR_JAR_NOT_FOUND:
+            *err = "Can not find the JAR file";
+            break;
+
+        case j2me::INSTALL_ERROR_JAR_INVALID:
+            *err = "The given file is not a valid JAR file";
+            break;
+
+        case j2me::INSTALL_ERROR_JAR_ONLY_MIDP1_SUPPORTED:
+            *err = "The JAR needs MIDP-2.0, but only MIDP-1.0 JARs on S60v1 devices are supported";
+            break;
+
+        case j2me::INSTALL_ERROR_NOT_SUPPORTED_FOR_PLAT:
+            *err = "JARs can only be run on S60v1 devices";
+            break;
+
+        default:
+            *err = "Installation of JAR failed";
+            break;
+        }
+
+        return false;
+    }
+
+    emu->symsys->get_j2me_applist()->flush();
+
+    if (!j2me::launch(emu->symsys.get(), entry.id_, [emu](kernel::process *pr) {
+        return emu->ui_main->get_process_exit_callback()(pr);
+    })) {
+        *err = "Launch of JAR failed";
+        return false;
+    }
+
+    emu->app_launch_from_command_line = true;
+    emu->launched_app_name_ = entry.title_;
+
+    return true;
+}
+
 #if ENABLE_PYTHON_SCRIPTING
 bool python_docgen_option_handler(eka2l1::common::arg_parser *parser, void *userdata, std::string *err) {
     try {
@@ -553,3 +613,18 @@ bool python_docgen_option_handler(eka2l1::common::arg_parser *parser, void *user
     return false;
 }
 #endif
+
+bool debug_control_option_handler(eka2l1::common::arg_parser *parser, void *userdata, std::string *err) {
+    const char *value = parser->next_token();
+    int port = 0;
+    if (value) {
+        auto end = value + std::strlen(value);
+        auto parsed = std::from_chars(value, end, port);
+        if (parsed.ec == std::errc{} && parsed.ptr == end && port > 0 && port <= 65535) {
+            reinterpret_cast<desktop::emulator *>(userdata)->debug_control_port = port;
+            return true;
+        }
+    }
+    *err = "--debug-control-port requires a port between 1 and 65535";
+    return false;
+}

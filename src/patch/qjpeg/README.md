@@ -9,6 +9,8 @@ of running libjpeg under emulation. Qt applications reach it through the normal
 requirement in `lib_manager`). It carries the ROM plugin's UID3 and
 capabilities.
 
+See `docs/qt-jpeg-host-decode.md`.
+
 ## Building
 
 Belle SDK (Qt 4.7.4), which produces a plugin the Qt 4.8.0 ROM accepts - the

@@ -103,8 +103,8 @@ namespace eka2l1::dispatch {
         attenuatation_[1] = attenuatation_[2] = 0.0f;
     }
 
-    egl_context_es1::egl_context_es1()
-        : egl_context_es_shared()
+    egl_context_es1::egl_context_es1(std::shared_ptr<gles_object_namespace> shared_namespace)
+        : egl_context_es_shared(std::move(shared_namespace))
         , active_client_texture_unit_(0)
         , active_mat_stack_(GL_MODELVIEW_EMU)
         , current_palette_mat_index_(0)
@@ -375,7 +375,11 @@ namespace eka2l1::dispatch {
         std::uint32_t handle = texture_units_[active_texture_unit_].binded_texture_handle_;
 
         auto *obj = objects_.get(handle);
-        if (!obj || !obj->get() || (*obj)->object_type() != GLES_OBJECT_TEXTURE) {
+        if (!obj) {
+            return nullptr;
+        }
+
+        if (!obj->get() || (*obj)->object_type() != GLES_OBJECT_TEXTURE) {
             if (!obj->get()) {
                 // The capacity is still enough. Someone has deleted the texture that should not be ! (yes, Pet Me by mBounce)
                 LOG_WARN(HLE_DISPATCHER, "Texture name {} was previously deleted, generate a new one"
@@ -1166,7 +1170,10 @@ namespace eka2l1::dispatch {
             return nullptr;
         }
 
-        return reinterpret_cast<egl_context_es1*>(context);
+        egl_context_es1 *es1_context = reinterpret_cast<egl_context_es1*>(context);
+        es1_context->make_object_issuer();
+
+        return es1_context;
     }
     
     BRIDGE_FUNC_LIBRARY(void, gl_matrix_mode_emu, std::uint32_t mode) {
@@ -3166,6 +3173,11 @@ namespace eka2l1::dispatch {
             cmd_builder_.set_dynamic_uniform(var_info->proj_mat_loc_, drivers::shader_var_type::mat4,
                 glm::value_ptr(proj_mat_stack_.top()), 64);
 
+            // Fixed positions are fed as raw integers, so scale back here; an unspecified w stays 1.
+            const float fixed_scale = (vertex_attrib_.data_type_ == GL_FIXED_EMU) ? 1.0f / 65536.0f : 1.0f;
+            const float position_scale[4] = { fixed_scale, fixed_scale, fixed_scale, (vertex_attrib_.size_ == 4) ? fixed_scale : 1.0f };
+            cmd_builder_.set_dynamic_uniform(var_info->position_scale_loc_, drivers::shader_var_type::vec4, position_scale, 16);
+
             if (drawing_points) {
                 float point_scale = draw_surface_->current_scale_;
                 float point_size_factor = 1.0f;
@@ -3307,11 +3319,10 @@ namespace eka2l1::dispatch {
             temp_desc.stride = vertex_attrib_.stride_;
 
             gl_enum_to_drivers_data_format(vertex_attrib_.data_type_, temp_format);
-            temp_desc.set_format(vertex_attrib_.size_, temp_format);
 
-            if (vertex_attrib_.data_type_ == GL_FIXED_EMU) {
-                temp_desc.set_normalized(true);
-            }
+            // Host GL_FIXED conversion is not always exact (Mesa divides by 65535), which shifts
+            // depth and breaks equality-sensitive depth tests. Fetch as integers and scale in the shader.
+            temp_desc.set_format(vertex_attrib_.size_, (vertex_attrib_.data_type_ == GL_FIXED_EMU) ? drivers::data_format::sint : temp_format);
 
             descs.push_back(temp_desc);
 

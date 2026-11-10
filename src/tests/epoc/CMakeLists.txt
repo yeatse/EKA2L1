@@ -7,6 +7,8 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/clip_writer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/video.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/gdbstub.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/j2me/applist.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/graphics/texture_upload.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/graphics/openvg.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/graphics/gles1.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/graphics/gles_queries.cpp
@@ -62,6 +64,7 @@ set(CORE_TEST_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/services/centralrepo/creiniloader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/sms/common.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/socket/opcodes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/services/ui/input_language.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/ui/iconops.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/services/ui/skin/skn.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/obj.cpp

@@ -408,18 +408,14 @@ void applist_widget::reload_whole_list() {
             std::vector<eka2l1::j2me::app_entry> entries = lister_j2me_->get_entries();
             exit_mutex_.unlock();
 
-            if (entries.size() == 0) {
-                show_no_apps_avail();
-            } else {
-                for (std::size_t i = 0; i < entries.size(); i++) {
-                    const std::lock_guard<std::mutex> guard(exit_mutex_);
-                    if (should_dead_) {
-                        scanning_done_evt_.set();
-                        return;
-                    }
-
-                    add_registeration_item_j2me(entries[i]);
+            for (std::size_t i = 0; i < entries.size(); i++) {
+                const std::lock_guard<std::mutex> guard(exit_mutex_);
+                if (should_dead_) {
+                    scanning_done_evt_.set();
+                    return;
                 }
+
+                add_registeration_item_j2me(entries[i]);
             }
 
             const std::lock_guard<std::mutex> guard(exit_mutex_);
@@ -440,20 +436,16 @@ void applist_widget::reload_whole_list() {
             std::vector<eka2l1::apa_app_registry> &registries = lister_->get_registerations();
             exit_mutex_.unlock();
 
-            if (registries.size() == 0) {
-                show_no_apps_avail();
-            } else {
-                for (std::size_t i = 0; i < registries.size(); i++) {
-                    const std::lock_guard<std::mutex> guard(exit_mutex_);
-                    if (should_dead_) {
-                        scanning_done_evt_.set();
-                        return;
-                    }
+            for (std::size_t i = 0; i < registries.size(); i++) {
+                const std::lock_guard<std::mutex> guard(exit_mutex_);
+                if (should_dead_) {
+                    scanning_done_evt_.set();
+                    return;
+                }
 
-                    if (!registries[i].caps.is_hidden) {
-                        if (!hide_system_apps_ || (hide_system_apps_ && !is_app_reg_system_app(registries.data() + i))) {
-                            add_registeration_item_native(registries[i], static_cast<int>(i));
-                        }
+                if (!registries[i].caps.is_hidden) {
+                    if (!hide_system_apps_ || (hide_system_apps_ && !is_app_reg_system_app(registries.data() + i))) {
+                        add_registeration_item_native(registries[i], static_cast<int>(i));
                     }
                 }
             }
@@ -469,6 +461,8 @@ void applist_widget::reload_whole_list() {
         QCoreApplication::processEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    // Deliver the final scanned items before another reload can clear their owners.
+    QCoreApplication::sendPostedEvents(this, QEvent::MetaCall);
 
     if (in_j2me) {
         if (list_j2me_widget_->count() == 0) {

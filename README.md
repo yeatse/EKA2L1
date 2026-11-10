@@ -8,7 +8,8 @@
   </p>
 
   <p align="center">
-    <a href="https://github.com/EKA2L1/EKA2L1/actions?query=branch%3Amaster"><img src="https://github.com/eka2l1/eka2l1/workflows/C/C++%20CI/badge.svg"></a>
+    <a href="https://github.com/yeatse/EKA2L1/actions/workflows/ios-unsigned-ipa.yml"><img src="https://github.com/yeatse/EKA2L1/actions/workflows/ios-unsigned-ipa.yml/badge.svg?branch=ios"></a>
+    <a href="https://github.com/yeatse/EKA2L1/actions/workflows/ios-testflight.yml"><img src="https://github.com/yeatse/EKA2L1/actions/workflows/ios-testflight.yml/badge.svg?branch=ios"></a>
     <a href="https://crowdin.com/project/eka2l1"><img src="https://badges.crowdin.net/eka2l1/localized.svg"></a>
   </p>
 
