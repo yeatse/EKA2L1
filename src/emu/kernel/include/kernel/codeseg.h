@@ -51,7 +51,7 @@ namespace eka2l1::kernel {
     };
 
     inline std::uint64_t make_import_info(const std::uint32_t offset_to_apply, const std::uint16_t ord, const std::uint16_t adj = 0) {
-        return (ord) | (adj << 16) | (static_cast<std::uint64_t>(offset_to_apply) << 32);
+        return static_cast<std::uint64_t>(ord) | (static_cast<std::uint64_t>(adj) << 16) | (static_cast<std::uint64_t>(offset_to_apply) << 32);
     }
 
     struct codeseg_create_info {
@@ -157,6 +157,10 @@ namespace eka2l1::kernel {
 
         bool mark{ false };
         bool loading_ = false;
+
+        // Set while attach() walks this codeseg's dependencies, so that DLLs
+        // which import from each other do not recurse forever.
+        bool attaching{ false };
 
         std::vector<std::unique_ptr<attached_info>> attaches;
         std::vector<address> premade_eps;

@@ -834,12 +834,14 @@ namespace eka2l1::dispatch {
         
         // Some games have 0 alphas in some situation!
         // TODO: This is hack definitely. So removal is ideal.
+        // Translucent window surfaces keep their drawn alpha during composition.
+        const bool keeps_alpha = draw_surface_->backed_window_ && draw_surface_->backed_window_->is_translucent();
         switch (draw_surface_->backed_screen_->disp_mode) {
         case epoc::display_mode::color16m:
         case epoc::display_mode::color16mu:
         case epoc::display_mode::color16ma:
             cmd_builder_.set_swizzle(draw_surface_->handle_, drivers::channel_swizzle::red, drivers::channel_swizzle::green,
-                drivers::channel_swizzle::blue, drivers::channel_swizzle::one);
+                drivers::channel_swizzle::blue, keeps_alpha ? drivers::channel_swizzle::alpha : drivers::channel_swizzle::one);
 
             break;
 

@@ -193,6 +193,10 @@ namespace eka2l1::kernel {
             return false;
         }
 
+        if (attaching) {
+            return false;
+        }
+
         if (!forcefully) {
             auto att = common::find_and_ret_if(attaches, [=](const std::unique_ptr<attached_info> &info) {
                 return info->attached_process == new_foe;
@@ -238,9 +242,11 @@ namespace eka2l1::kernel {
                     att->get()->use_count++;
                     mark = true;
 
+                    attaching = true;
                     for (auto &dep : dependencies) {
                         dep.dep_->attach(new_foe, forcefully);
                     }
+                    attaching = false;
                 }
 
                 return false;
@@ -354,7 +360,10 @@ namespace eka2l1::kernel {
 
         attaches.emplace_back(std::make_unique<attached_info>(this, new_foe, dt_chunk, code_chunk));
 
-        // Attach all of its dependencies
+        // Attach all of its dependencies. A dependency that imports back from
+        // this codeseg finds it attaching and skips it: its attach info, code
+        // and exports already exist, so the import patching below still works.
+        attaching = true;
         for (auto &dependency : dependencies) {
             dependency.dep_->attach(new_foe);
 
@@ -382,6 +391,8 @@ namespace eka2l1::kernel {
                 }
             }
         }
+
+        attaching = false;
 
         if (need_patch_and_reloc && !relocation_list.empty()) {
             apply_relocations(code_base_ptr, data_base_ptr, the_addr_of_code_run, the_addr_of_data_run, false);
