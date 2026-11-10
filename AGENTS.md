@@ -105,6 +105,12 @@ host shell does not pass it to an app started by Activity Manager. The old
 validation with `adb shell 'setprop wrap.com.github.eka2l1 ""'`, then force-stop
 the app; the next launch uses normal BGRA behavior.
 
+For isolated Android working directories, use an absolute `data-storage` path in
+`config.yml`; do not copy a desktop configuration with a relative `data` path.
+Validate with the APK's matching GLES resources and patch files. An APK assembled
+by replacing only the native library may lack these assets and cannot establish
+a clean rendering baseline.
+
 ## Verification
 
 Size verification to the change. Documentation-only changes need a diff review,
