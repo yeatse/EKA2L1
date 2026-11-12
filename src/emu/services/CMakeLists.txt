@@ -162,6 +162,7 @@ add_library(epocservs
         include/services/window/keys.h
         include/services/window/scheduler.h
         include/services/window/screen.h
+        include/services/window/surfaceupdate.h
         include/services/window/util.h
         include/services/window/window.h
         src/allocator.cpp
@@ -343,6 +344,7 @@ add_library(epocservs
         src/window/scheduler.cpp
         src/window/screen.cpp
         src/window/surface.cpp
+        src/window/surfaceupdate.cpp
         src/window/util.cpp
         src/window/window.cpp)
 

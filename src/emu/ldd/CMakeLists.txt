@@ -7,6 +7,7 @@ add_library(epocldd
         include/ldd/mmcif/consts.h
         include/ldd/mmcif/mmcif.h
         include/ldd/oldcamera/oldcamera.h
+        include/ldd/surfacemanager/surfacemanager.h
         include/ldd/videodriver/videodriver.h
         src/collection.cpp
         src/ecomm/ecomm.cpp
@@ -14,6 +15,7 @@ add_library(epocldd
         src/hal/hal.cpp
         src/mmcif/mmcif.cpp
         src/oldcamera/oldcamera.cpp
+        src/surfacemanager/surfacemanager.cpp
         src/videodriver/videodriver.cpp
 )
 

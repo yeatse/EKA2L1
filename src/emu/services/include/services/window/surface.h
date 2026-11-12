@@ -26,6 +26,10 @@ namespace eka2l1::drivers {
     class graphics_command_builder;
 }
 
+namespace eka2l1::kernel {
+    class chunk;
+}
+
 namespace eka2l1::epoc {
     struct surface_pixels {
         eka2l1::vec2 size;
@@ -64,13 +68,42 @@ namespace eka2l1::epoc {
 
     using surface_id = std::array<std::uint32_t, 4>;
 
+    enum surface_pixel_format : std::uint32_t {
+        surface_pixel_format_rgb888 = 0x10275495,
+        surface_pixel_format_xrgb8888 = 0x10275496,
+        surface_pixel_format_argb8888 = 0x10275498,
+        surface_pixel_format_argb8888_pre = 0x1027549A,
+        surface_pixel_format_rgb565 = 0x1027549E
+    };
+
+    // A surface the guest made through the surface manager driver and fills itself.
+    struct guest_surface {
+        std::shared_ptr<window_surface> surface;
+        kernel::chunk *chunk = nullptr;
+        eka2l1::vec2 size{ 0, 0 };
+        std::uint32_t pixel_format = 0;
+        std::uint32_t stride = 0;
+        std::uint32_t buffers = 0;
+        std::uint32_t first_buffer = 0;
+        std::uint32_t buffer_pitch = 0;
+        int references = 0;
+
+        static bool format_supported(std::uint32_t format);
+        bool present(std::uint32_t buffer);
+    };
+
     class surface_registry {
         std::map<surface_id, std::weak_ptr<window_surface>> surfaces_;
+        std::map<surface_id, guest_surface> guests_;
         std::uint64_t next_id_ = 1;
 
     public:
         surface_id add(const std::shared_ptr<window_surface> &surface);
         std::shared_ptr<window_surface> find(const surface_id &id) const;
+
+        surface_id add_guest(const guest_surface &guest);
+        guest_surface *guest(const surface_id &id);
+        void remove_guest(const surface_id &id);
     };
 
     struct surface_configuration {

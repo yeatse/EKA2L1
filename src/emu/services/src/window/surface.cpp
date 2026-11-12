@@ -13,6 +13,8 @@
 #include <drivers/graphics/graphics.h>
 #include <drivers/itc.h>
 
+#include <kernel/chunk.h>
+
 #include <limits>
 
 namespace eka2l1::epoc {
@@ -41,6 +43,63 @@ namespace eka2l1::epoc {
     std::shared_ptr<window_surface> surface_registry::find(const surface_id &id) const {
         const auto it = surfaces_.find(id);
         return it == surfaces_.end() ? nullptr : it->second.lock();
+    }
+
+    surface_id surface_registry::add_guest(const guest_surface &guest) {
+        const surface_id id = add(guest.surface);
+        guests_[id] = guest;
+        return id;
+    }
+
+    guest_surface *surface_registry::guest(const surface_id &id) {
+        const auto it = guests_.find(id);
+        return it == guests_.end() ? nullptr : &it->second;
+    }
+
+    void surface_registry::remove_guest(const surface_id &id) {
+        guests_.erase(id);
+    }
+
+    bool guest_surface::format_supported(std::uint32_t format) {
+        switch (format) {
+        case surface_pixel_format_rgb888:
+        case surface_pixel_format_xrgb8888:
+        case surface_pixel_format_argb8888:
+        case surface_pixel_format_argb8888_pre:
+        case surface_pixel_format_rgb565:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool guest_surface::present(std::uint32_t buffer) {
+        if (!surface || !chunk || buffer >= buffers) {
+            return false;
+        }
+        const auto *source = static_cast<const std::uint8_t *>(chunk->host_base()) + first_buffer + buffer * buffer_pitch;
+        std::vector<std::uint8_t> rgba(static_cast<std::size_t>(size.x) * size.y * 4);
+        std::uint8_t *out = rgba.data();
+        for (int y = 0; y < size.y; y++) {
+            const std::uint8_t *in = source + static_cast<std::size_t>(y) * stride;
+            for (int x = 0; x < size.x; x++, out += 4) {
+                if (pixel_format == surface_pixel_format_rgb565) {
+                    const std::uint32_t value = in[0] | (in[1] << 8);
+                    const std::uint32_t r = value >> 11, g = (value >> 5) & 63, b = value & 31;
+                    out[0] = static_cast<std::uint8_t>((r << 3) | (r >> 2));
+                    out[1] = static_cast<std::uint8_t>((g << 2) | (g >> 4));
+                    out[2] = static_cast<std::uint8_t>((b << 3) | (b >> 2));
+                    in += 2;
+                } else {
+                    out[0] = in[2];
+                    out[1] = in[1];
+                    out[2] = in[0];
+                    in += (pixel_format == surface_pixel_format_rgb888) ? 3 : 4;
+                }
+                out[3] = 255;
+            }
+        }
+        return surface->publish_pixels(rgba.data(), rgba.size(), size);
     }
 
     window_surface::~window_surface() {

@@ -50,6 +50,7 @@
 #include <services/featmgr/featmgr.h>
 #include <services/fs/fs.h>
 #include <services/goommonitor/goommonitor.h>
+#include <services/window/surfaceupdate.h>
 #include <services/hwrm/haptics/haptics.h>
 #include <services/hwrm/hwrm.h>
 #include <services/internet/accesspoints.h>
@@ -383,6 +384,7 @@ namespace eka2l1 {
             } else {
                 CREATE_SERVER(sys, goom_monitor_server);
                 CREATE_SERVER(sys, alf_streamer_server);
+                CREATE_SERVER(sys, surface_update_server);
                 CREATE_SERVER(sys, dm_domain_server);
 
                 // MMF server family

@@ -945,7 +945,8 @@ namespace eka2l1::epoc {
 
                 winuser->visible_region.make_empty();
 
-                if ((winuser->win_type != epoc::window_type::blank) || (!winuser->scr->scr_config.blt_offscreen)) {
+                if ((winuser->win_type != epoc::window_type::blank) || winuser->scr->is_screenplay_architecture()
+                    || (!winuser->scr->scr_config.blt_offscreen)) {
                     if (!visible_left_region_.empty() && winuser->is_visible()) {
                         if (winuser->flags & epoc::window::flag_shape_region) {
                             winuser->visible_region = winuser->shape_region;
