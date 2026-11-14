@@ -2546,6 +2546,32 @@ namespace eka2l1::epoc {
         return (kern->crr_process()->get_thread_count() == 1);
     }
 
+    // RThread::Context: the user registers of another thread (TArmRegSet:
+    // r0-r15, then the flags), as much as the descriptor holds.
+    BRIDGE_FUNC(void, thread_context, kernel::handle h, eka2l1::ptr<epoc::des8> context_des) {
+        kernel::thread *thr = kern->get<kernel::thread>(h);
+        kernel::process *crr_process = kern->crr_process();
+        epoc::des8 *context = context_des.get(crr_process);
+
+        if (!context) {
+            return;
+        }
+
+        if (!thr || (thr == kern->crr_thread())) {
+            context->set_length(crr_process, 0);
+            return;
+        }
+
+        arm::core::thread_context &saved = thr->get_thread_context();
+        std::uint32_t words[17];
+        std::copy(saved.cpu_registers.begin(), saved.cpu_registers.end(), words);
+        words[16] = saved.cpsr;
+
+        const std::uint32_t size = common::min<std::uint32_t>(sizeof(words), context->get_max_length(crr_process));
+        std::memcpy(context->get_pointer(crr_process), words, size);
+        context->set_length(crr_process, size);
+    }
+
     BRIDGE_FUNC(std::int32_t, thread_get_cpu_time, const kernel::handle h, std::uint64_t *time_run_in_us) {
         kernel::thread *thr = kern->get<kernel::thread>(h);
 
@@ -6090,6 +6116,7 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0x5F, process_get_memory_info),
         BRIDGE_REGISTER(0x60, library_get_memory_info),
         BRIDGE_REGISTER(0x64, process_type),
+        BRIDGE_REGISTER(0x67, thread_context),
         BRIDGE_REGISTER(0x68, thread_create),
         BRIDGE_REGISTER(0x69, handle_open_object_by_find_handle),
         BRIDGE_REGISTER(0x6A, handle_close),
@@ -6279,6 +6306,7 @@ namespace eka2l1::epoc {
         BRIDGE_REGISTER(0x5F, process_get_memory_info),
         BRIDGE_REGISTER(0x60, library_get_memory_info),
         BRIDGE_REGISTER(0x64, process_type),
+        BRIDGE_REGISTER(0x67, thread_context),
         BRIDGE_REGISTER(0x68, thread_create),
         BRIDGE_REGISTER(0x69, handle_open_object_by_find_handle),
         BRIDGE_REGISTER(0x6A, handle_close),
