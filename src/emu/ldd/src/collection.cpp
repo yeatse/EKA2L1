@@ -18,6 +18,7 @@
  */
 
 #include <ldd/collection.h>
+#include <ldd/accelerometer/accelerometer.h>
 #include <ldd/ecomm/ecomm.h>
 #include <ldd/ekeyb/ekeyb.h>
 #include <ldd/hal/hal.h>
@@ -49,6 +50,7 @@ namespace eka2l1::ldd {
     FACTORY_DECLARE(ekeyb_factory)
     FACTORY_DECLARE(old_camera_factory)
     FACTORY_DECLARE(surface_manager_factory)
+    FACTORY_DECLARE(accelerometer_factory)
 
     static std::unordered_map<std::string, factory_instantiate_func> insts_map = {
         FACTORY_REGISTER("gd1drv", mmcif_factory),
@@ -59,6 +61,7 @@ namespace eka2l1::ldd {
         FACTORY_REGISTER("ekeyb", ekeyb_factory),
         FACTORY_REGISTER("cameraldd", old_camera_factory),
         FACTORY_REGISTER("surfacemanagerdriver", surface_manager_factory),
+        FACTORY_REGISTER("accelerometer", accelerometer_factory),
     };
 
     factory_instantiate_func get_factory_func(const char *name) {

@@ -343,29 +343,6 @@ struct KeypadLayoutConfiguration: Codable, Equatable {
     }
 }
 
-private struct KeypadElementBackdrop: View {
-    let element: KeypadElement
-
-    @ViewBuilder var body: some View {
-        if #available(iOS 26.0, *) {
-            // Liquid Glass keys carry their own surface and must see what lies behind.
-            EmptyView()
-        } else {
-            legacyBackdrop
-        }
-    }
-
-    @ViewBuilder private var legacyBackdrop: some View {
-        switch element {
-        case .dpad:
-            Circle().fill(.black)
-        case .leftSoft, .rightSoft, .numeric, .menu, .clear, .call, .end, .edit:
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.black)
-        }
-    }
-}
-
 enum KeypadDefaults {
     static let opacityKey = "ios.keypadOpacity"
     static let opacity = 0.85
@@ -412,7 +389,7 @@ struct SystemMenuKey: View {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 16, weight: .semibold))
                 .frame(width: size.width, height: size.height)
-                .keyCap(kind: .soft, pressed: false)
+                .keyCap(pressed: false)
         }
         .accessibilityLabel("emulator.menu")
     }
@@ -500,6 +477,7 @@ struct VirtualKeypad: View {
     let size: CGSize
     let controlSize: CGSize
     let configuration: KeypadLayoutConfiguration
+    let dpadMode: DirectionPadMode
     let fullScreen: Bool
     let actions: KeypadMenuActions
 
@@ -509,7 +487,7 @@ struct VirtualKeypad: View {
                 runtimeElement(element) {
                     switch element {
                     case .dpad:
-                        DirectionPad(diameter: KeypadElement.dpad.size(in: controlSize).width)
+                        DirectionPad(mode: dpadMode, diameter: KeypadElement.dpad.size(in: controlSize).width)
                     case .leftSoft:
                         SoftKey(side: .left, size: KeypadElement.leftSoft.size(in: controlSize))
                     case .rightSoft:
@@ -547,7 +525,6 @@ struct VirtualKeypad: View {
         let elementSize = element.size(in: controlSize)
         return content()
             .frame(width: elementSize.width, height: elementSize.height)
-            .background(KeypadElementBackdrop(element: element))
             .position(position(for: element))
     }
 }
@@ -559,6 +536,7 @@ struct KeypadLayoutEditor: View {
     let controlSize: CGSize
     let safeAreaInsets: EdgeInsets
     @Binding var configuration: KeypadLayoutConfiguration
+    @Binding var dpadMode: DirectionPadMode
     @Binding var opacity: Double
     @Binding var fullScreen: Bool
     let actions: KeypadMenuActions
@@ -714,11 +692,10 @@ struct KeypadLayoutEditor: View {
         .accessibilityLabel("settings.keypadOpacity")
     }
 
+    @ViewBuilder
     private func draggableElement(_ element: KeypadElement) -> some View {
         let elementSize = element.size(in: controlSize)
-        return ZStack {
-            KeypadElementBackdrop(element: element)
-
+        let control = ZStack(alignment: .topTrailing) {
             elementContent(element)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -729,6 +706,15 @@ struct KeypadLayoutEditor: View {
                     .white.opacity(0.9),
                     style: StrokeStyle(lineWidth: 2, dash: [7, 5])
                 )
+
+            if element == .dpad {
+                Image(systemName: "arrow.right.arrow.left")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(6)
+                    .background(.black.opacity(0.72), in: Circle())
+                    .padding(8)
+            }
         }
         .frame(width: elementSize.width, height: elementSize.height)
         .opacity(opacity)
@@ -754,9 +740,23 @@ struct KeypadLayoutEditor: View {
                     dragStarts[element] = nil
                 }
         )
-        .accessibilityLabel(Text(verbatim: element.title))
-        .accessibilityHint("keypad.editor.dragHint")
         .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: element.title))
+
+        if element == .dpad {
+            control
+                .onTapGesture(perform: toggleDPadMode)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityValue(dpadMode.title)
+                .accessibilityHint("keypad.editor.dpadMode.hint")
+                .accessibilityAction { toggleDPadMode() }
+        } else {
+            control.accessibilityHint("keypad.editor.dragHint")
+        }
+    }
+
+    private func toggleDPadMode() {
+        dpadMode = dpadMode == .cross ? .stick : .cross
     }
 
     @ViewBuilder
@@ -764,7 +764,7 @@ struct KeypadLayoutEditor: View {
         let elementSize = element.size(in: controlSize)
         switch element {
         case .dpad:
-            DirectionPad(diameter: elementSize.width)
+            DirectionPad(mode: dpadMode, diameter: elementSize.width, isInteractive: false)
         case .leftSoft:
             SoftKey(side: .left, size: elementSize)
         case .rightSoft:

@@ -77,8 +77,12 @@ namespace eka2l1::drivers {
 
             if (!base_) {
                 renew();
-            } else if (size_ == max_cap_) {
-                grow();
+            } else if (size_ >= max_cap_) {
+                command *grown = new command[max_cap_ * 2];
+                std::copy(base_, base_ + size_, grown);
+                delete[] base_;
+                base_ = grown;
+                max_cap_ *= 2;
             }
 
             command *res = base_ + size_;
@@ -97,16 +101,6 @@ namespace eka2l1::drivers {
             // No memory leak!
             base_ = new command[max_cap_];
             size_ = 0;
-        }
-
-        // Commands handed out earlier are only filled in before the next call, so moving them is safe.
-        void grow() {
-            command *bigger = new command[max_cap_ * 2];
-            std::copy(base_, base_ + size_, bigger);
-
-            delete[] base_;
-            base_ = bigger;
-            max_cap_ *= 2;
         }
     };
 

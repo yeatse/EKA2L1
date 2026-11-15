@@ -163,6 +163,13 @@ namespace eka2l1::epoc {
             launcher->set_receive_focus(true);
             host_launcher_group = std::move(launcher);
         }
+        for (std::size_t i = 0; i < scr_config.modes.size(); i++) {
+            if (scr_config.modes[i].defined) {
+                crr_mode = static_cast<std::uint8_t>(i);
+                break;
+            }
+        }
+
         disp_mode = current_mode().disp_mode;
         dsa_disp_mode = current_mode().dsa_disp_mode;
         dsa_disp_mode_initial = current_mode().dsa_disp_mode;
@@ -170,7 +177,7 @@ namespace eka2l1::epoc {
         // A wsini can list several unrotated modes (P900 has 208x320 and 208x208); the
         // first one is the physical panel, the rest are alternative layouts.
         for (std::size_t i = 0; i < scr_config.modes.size(); i++) {
-            if (scr_config.modes[i].rotation == 0) {
+            if (scr_config.modes[i].defined && (scr_config.modes[i].rotation == 0)) {
                 physical_mode = static_cast<std::uint8_t>(i);
                 break;
             }
@@ -244,6 +251,10 @@ namespace eka2l1::epoc {
 
     void screen::present_framebuffer(drivers::graphics_driver *driver, kernel_system *kern,
         const eka2l1::rect *symbian_rects, const std::uint32_t rect_count) {
+        if (!driver) {
+            return;
+        }
+
         // Update the DSA screen texture
         const epoc::config::screen_mode &mode_info = current_mode();
         const eka2l1::vec2 screen_size = mode_info.size;
@@ -480,6 +491,10 @@ namespace eka2l1::epoc {
     }
 
     void screen::redraw(drivers::graphics_driver *driver) {
+        if (!driver) {
+            return;
+        }
+
         if (!screen_texture) {
             set_screen_mode(nullptr, driver, crr_mode);
         }
@@ -526,6 +541,10 @@ namespace eka2l1::epoc {
     }
 
     void screen::resize(drivers::graphics_driver *driver, const eka2l1::vec2 &new_size) {
+        if (!driver) {
+            return;
+        }
+
         // Make command list first, and bind our screen bitmap
         drivers::graphics_command_builder builder;
         bool need_bind = true;
@@ -659,23 +678,24 @@ namespace eka2l1::epoc {
                 flags_ &= ~FLAG_SCREEN_UPSCALE_FACTOR_LOCK;
             }
 
+            // Restore the group's saved settings before the callbacks, so the orientation its app asks for wins
             if (new_focus_screen) {
                 serv->set_focus_screen(new_focus_screen);
 
                 alternative_focus->gain_focus();
 
-                serv->send_focus_group_change_events(new_focus_screen);
-                new_focus_screen->fire_focus_change_callbacks(focus_change_target);
-
                 new_focus_screen->restore_from_config(serv->get_graphics_driver(),
                     alternative_focus->saved_setting, serv);
+
+                serv->send_focus_group_change_events(new_focus_screen);
+                new_focus_screen->fire_focus_change_callbacks(focus_change_target);
             } else if (focus && is_me_currently_focus) {
                 focus->gain_focus();
 
+                restore_from_config(serv->get_graphics_driver(), focus->saved_setting, serv);
+
                 serv->send_focus_group_change_events(this);
                 fire_focus_change_callbacks(focus_change_target);
-
-                restore_from_config(serv->get_graphics_driver(), focus->saved_setting, serv);
             }
         }
 
@@ -756,7 +776,7 @@ namespace eka2l1::epoc {
 
     void screen::set_screen_mode(window_server *winserv, drivers::graphics_driver *drv, const int mode) {
         const auto *new_mode = mode_info(mode);
-        if (!new_mode) {
+        if (!new_mode || !new_mode->defined) {
             return;
         }
 
@@ -779,7 +799,7 @@ namespace eka2l1::epoc {
             dsa_disp_mode_initial = new_mode->dsa_disp_mode;
             reset_framebuffer_tracking();
 
-            if (dsa_texture) {
+            if (drv && dsa_texture) {
                 drivers::graphics_command_builder builder;
                 builder.destroy_bitmap(dsa_texture);
                 auto commands = builder.retrieve_command_list();
@@ -867,7 +887,7 @@ namespace eka2l1::epoc {
         } else {
             // We need to confirm this rotation exists
             for (std::size_t i = 0; i < scr_config.modes.size(); i++) {
-                if (scr_config.modes[i].rotation == rot) {
+                if (scr_config.modes[i].defined && (scr_config.modes[i].rotation == rot)) {
                     // Reset the UI rotation
                     ui_rotation = 0;
                     set_screen_mode(winserv, drv, static_cast<int>(i));
@@ -917,7 +937,8 @@ namespace eka2l1::epoc {
 
         // The buffer is laid out for the mode currently displayed, not for the panel's
         // native orientation, so a rotated mode gets its own row length.
-        const std::uint32_t tight_pitch = epoc::get_byte_width(current_mode().size.x, bits_per_pixel);
+        const std::uint32_t row_pixels = common::max<std::uint32_t>(current_mode().size.x, min_row_pixels_);
+        const std::uint32_t tight_pitch = epoc::get_byte_width(row_pixels, bits_per_pixel);
 
         // ScreenPlay phones expose their 32-bit display framebuffer with a
         // 64-byte-aligned pitch. Keep older bitmap-screen architectures on

@@ -708,6 +708,10 @@ void main_window::on_device_set_requested(const int index) {
         } else {
             system->set_device(static_cast<std::uint8_t>(index));
         }
+
+        if (!emulator_state_.stage_two_inited) {
+            finish_stage_two();
+        }
     }
 
     restore_ui_layouts();
@@ -763,24 +767,23 @@ void main_window::on_status_bar_update(const std::uint64_t fps) {
     screen_status_label_->setText(QString("%1 FPS").arg(fps));
 }
 
+void main_window::finish_stage_two() {
+    if (!emulator_state_.symsys->get_device_manager()->get_current()) {
+        return;
+    }
+
+    ui_->label_al_not_available->setVisible(false);
+    emulator_state_.symsys->mount_device_drives();
+
+    // The app list needs the ROM drive mounted by stage two on the OS thread.
+    emulator_state_.init_done_event.reset();
+    emulator_state_.init_event.set();
+    emulator_state_.init_done_event.wait();
+}
+
 void main_window::on_new_device_added() {
     if (!applist_) {
-        ui_->label_al_not_available->setVisible(false);
-
-        emulator_state_.symsys->startup();
-        emulator_state_.symsys->set_device(0);
-
-        emulator_state_.symsys->mount_device_drives();
-
-        // Set and wait for reinitialization. The app list built below needs the ROM drive that
-        // only the stage two initialisation mounts, so this really has to wait for the retry.
-        emulator_state_.init_done_event.reset();
-        emulator_state_.init_event.set();
-        emulator_state_.init_done_event.wait();
-
-        refresh_current_device_label();
-        reprepare_touch_mappings();
-        setup_app_list(true);
+        on_device_set_requested(0);
     } else {
         if (emulator_state_.symsys) {
             applist_->update_devices(emulator_state_.symsys->get_device_manager());
@@ -1277,10 +1280,7 @@ void main_window::spawn_package_install_camper(QString package_file_path) {
             current_progress_dialog_->setAttribute(Qt::WA_DeleteOnClose, true);
             current_progress_dialog_->show();
 
-            drive_number install_drive = drive_e;
-            if (emulator_state_.symsys->is_s80_device_active()) {
-                install_drive = drive_d;
-            }
+            const drive_number install_drive = emulator_state_.symsys->get_default_install_drive();
 
             const eka2l1::package::installation_result install_result = run_off_gui_thread([this, pkgmngr, package_file_path, install_drive]() {
                 return pkgmngr->install_package(
@@ -1472,7 +1472,7 @@ void main_window::refresh_mount_availbility() {
     eka2l1::system *system = emulator_state_.symsys.get();
     if (system) {
         eka2l1::kernel_system *kern = system->get_kernel_system();
-        if (kern) {
+        if (kern && system->get_device_manager()->get_current()) {
             if (kern->is_eka1()) {
                 ui_->menu_mount_game_card_dump->setEnabled(true);
                 ui_->action_mount_recent_dumps->setEnabled(true);
@@ -2055,6 +2055,13 @@ void main_window::control_changed(eka2l1::control::native_change change) {
     }
     refresh_current_device_label();
     refresh_mount_availbility();
+}
+
+void main_window::control_run_blocking(const std::function<void()> &work) {
+    run_off_gui_thread([&work] {
+        work();
+        return true;
+    });
 }
 
 void main_window::control_pause(bool paused) {

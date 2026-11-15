@@ -41,6 +41,8 @@
 #                               Gameloft movie renders, reaches the main menu,
 #                               selects Free Race / Nassau / Normal Race,
 #                               chooses the Mini, and asserts a rendered race.
+#   N-Gage 2.0  (0x2000AFBD) : opt-in `ngage2`: reads the Games catalogue and
+#                               launches Snakes Subsonic through PlayServer.
 #   strings      (no sim)     : reconciles the Localizable string catalog with
 #                               the build's .stringsdata. FAILs on new/stale
 #                               entries (an agent must fix them); a pure
@@ -55,7 +57,8 @@
 # N95/rm-320) and apps available, plus `curl`, `jq`, ImageMagick (`magick`) and
 # a Swift toolchain (`xcrun swiftc`, for the OCR helper) on PATH. The angrybirds
 # and asphalt6 suites additionally need the X7 (rm-707) and their game
-# installed. The optional HID backend needs `axe` (bundled inside
+# installed. The ngage2 suite needs the N-Gage 2.0 runtime and Snakes Subsonic installed
+# on the 5320. The optional HID backend needs `axe` (bundled inside
 # xcodebuildmcp; auto-located). It does NOT build the emulator.
 #
 # Regression MUST run against a Release build. Note `build_ios.sh` defaults to
@@ -73,6 +76,7 @@
 #   scripts/ios_regression_test.sh n95calc         # N95 boot/host-survival only
 #   scripts/ios_regression_test.sh angrybirds      # X7 touch suite only
 #   scripts/ios_regression_test.sh asphalt6        # X7 Asphalt 6 race suite
+#   scripts/ios_regression_test.sh ngage2          # 5320, installed N-Gage 2.0 Snakes
 #   scripts/ios_regression_test.sh strings         # string catalog sync check (no simulator)
 #   scripts/ios_regression_test.sh --install <path-to-EKA2L1.app> [suite]
 #
@@ -445,6 +449,46 @@ test_fbattle() {
     fi
 
     assert_no_crash "FBattle"
+}
+
+test_ngage2() {
+    echo "== N-Gage 2.0 Games IPC (Snakes Subsonic, 5320) =="
+    start_app
+    api POST /devices/rm-409/boot >/dev/null || die "boot 5320: $API_ERR"
+    LOG_BASE="$(log_offset)"
+    local catalogue launched
+    catalogue="$(api GET /ngage2/games)" || { check FAIL "N-Gage 2.0: Games catalogue request"; return; }
+    if printf '%s' "$catalogue" | jq -e '.games[] | select(.uid == "0x2000AFBD" and .name == "Snakes Subsonic")' >/dev/null; then
+        check PASS "N-Gage 2.0: GamesList supplies the game UID and title"
+    else
+        check FAIL "N-Gage 2.0: GamesList supplies the game UID and title"
+        echo "$catalogue"
+        return
+    fi
+    if api GET /apps | jq -e 'all(.apps[]; .uid != "0x2000AFBD")' >/dev/null; then
+        check PASS "N-Gage 2.0: catalogue discovery needs no Apparc registration"
+    else
+        check FAIL "N-Gage 2.0: catalogue discovery needs no Apparc registration"
+    fi
+    launched="$(api POST /ngage2/games/0x2000AFBD/launch)" || { check FAIL "N-Gage 2.0: PlayServer launch request"; return; }
+    if printf '%s' "$launched" | jq -e '.uid == "0x2000AFBD" and .session.uid == "0x20003B78" and .session.state == "running"' >/dev/null; then
+        check PASS "N-Gage 2.0: PlayServer launches the game while Games stays attached"
+    else
+        check FAIL "N-Gage 2.0: PlayServer launches the game while Games stays attached"
+    fi
+    wait_s 20
+    if wait_text ngage2_1_started 60 "demo mode" "press any key" "accept"; then
+        check PASS "N-Gage 2.0: Snakes reaches its own game screen"
+    else
+        check FAIL "N-Gage 2.0: Snakes reaches its own game screen"
+        ocr_evidence
+    fi
+    assert_no_crash "N-Gage 2.0"
+    if api DELETE /session | jq -e '.screenVisible == false and (.state == "closed" or .state == "exited")' >/dev/null; then
+        check PASS "N-Gage 2.0: API closes Games and the launched game"
+    else
+        check FAIL "N-Gage 2.0: API closes Games and the launched game"
+    fi
 }
 
 test_calculator() {
@@ -915,9 +959,10 @@ case "$SUITE" in
     n95calc)    test_n95calc ;;
     angrybirds|ab) test_angrybirds ;;
     asphalt6|asphalt|a6) test_asphalt6 ;;
+    ngage2)     test_ngage2 ;;
     strings)    test_strings ;;
     all|"")     test_fbattle; test_calculator; test_n95calc; test_strings ;;
-    *) die "unknown suite: $SUITE (use fbattle|calculator|n95calc|angrybirds|asphalt6|strings|all)" ;;
+    *) die "unknown suite: $SUITE (use fbattle|calculator|n95calc|angrybirds|asphalt6|ngage2|strings|all)" ;;
 esac
 
 echo

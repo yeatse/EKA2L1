@@ -36,11 +36,11 @@ so the screen factory and its derived tables must also be checked.
 | Nokia 9500 / RA-2 | 7.0s | `5014bfcc`, `5014bfd0`, `5014bfc8`: each `bx lr` | Scanout |
 | Nokia 9300i / RA-8 | 7.0s | `50144fcc`, `50144fd0`, `50144fc8`: each `bx lr` | Scanout |
 | Nokia 7710 / RM-12 | 7.0s | `5010f8fc`, `5010f900`, `5010f8f8`: each `bx lr` | Scanout |
-| Nokia 3650 prototype / NHL-8 | 6.x | Screen overrides submit through `5042ddec` | Explicit submission |
+| Nokia 3650 prototype / NHL-8 | 6.x | Screen overrides submit through `5042ddec` | Scanout (see below) |
 | Nokia 6680 / RM-36 | 8.0 | Screen overrides forward to helper `5005ad78` | Explicit submission |
 | Nokia N70 / RM-84 | 8.1a | Screen overrides forward to helper `5005c7d4` | Explicit submission |
-| Nokia N-Gage QD / RH-29 | 6.x | Screen overrides forward to helper `504127b8` | Explicit submission |
-| Nokia N-Gage / NEM-4 | 6.x | Screen overrides forward to helper `50415928` | Explicit submission |
+| Nokia N-Gage QD / RH-29 | 6.x | Screen overrides forward to helper `504127b8` | Scanout (see below) |
+| Nokia N-Gage / NEM-4 | 6.x | Screen overrides forward to helper `50415928` | Scanout (see below) |
 
 The P900 image has 12 draw-device tables; all share the empty update entries.
 The four Series 80/90 images each have 17 and likewise share empty entries.
@@ -50,16 +50,24 @@ firmwares; they are not constants used by the emulator.
 
 ## Refresh policy follows the observed OS boundary
 
-Every inspected scanout ROM belongs to OS 7.0 or 7.0s. The 6.x, 8.0 and 8.1a
-controls implement explicit updates. The window server therefore starts its
-polling timer only for `epoc70` and `epoc7`, keeping the policy independent of
-firmware names and application call order. It still records framebuffer
+Every ROM with empty update methods belongs to OS 7.0 or 7.0s, and the 8.0 and
+8.1a controls implement explicit updates. The 6.x screen drivers also track
+dirty rows and forward them, but that is not the whole contract there:
+MiniBlaster (0x08180318) takes the panel address from `UserSvr::ScreenInfo`
+and then only writes that memory during play. Its game thread makes no window
+server, HAL, raw-event or draw-device call per frame, so on a 6.x phone the
+mapped memory itself reaches the panel. Limiting the polling to OS 7 left that
+game on a white screen once it entered a level.
+
+The window server therefore starts its polling timer up to and including
+`epoc7`, keeping the policy independent of firmware names and application
+call order. It still records framebuffer
 mappings for change tracking on every supported path. Explicit scdv updates
 and the LCD driver's `lcd_driver_submit_queue` retain their existing
 presentation paths.
 
 A client calling `Update()` cannot disable polling on OS 7, and another
-process querying or remapping framebuffer memory cannot enable it on other
+process querying or remapping framebuffer memory cannot enable it on later
 versions. This avoids a runtime guess based on whichever client most
 recently mapped memory or submitted an update.
 

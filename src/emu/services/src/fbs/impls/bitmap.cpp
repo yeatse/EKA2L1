@@ -1163,8 +1163,7 @@ namespace eka2l1 {
         bmp_specs_legacy specs;
 
         const bool use_spec_legacy = ctx->get_argument_data_size(0) >= sizeof(bmp_specs_legacy);
-        const bool use_bmp_handles_writeback = (server<fbs_server>()->get_system()->get_symbian_version_use()
-            >= epocver::epoc10);
+        const bool use_bmp_handles_writeback = !use_spec_legacy && (ctx->get_argument_data_size(0) >= sizeof(bmp_specs_v2));
 
         std::uint32_t assign_uid = epoc::NORMAL_BITMAP_UID_REV2;
         std::uint32_t force_size = 0;
@@ -1375,15 +1374,18 @@ namespace eka2l1 {
             // Own a reference to the clean bitmap, until it is removed
             new_bmp->ref();
 
-            bmp_handles handle_info;
+            // Clients without a handle buffer keep the dirty bitmap and swap to the clean one later.
+            if (ctx->get_argument_max_data_size(3) >= sizeof(bmp_handles)) {
+                bmp_handles handle_info;
 
-            // Add this object to the object table!
-            handle_info.handle = obj_table_.add(new_bmp);
-            handle_info.server_handle = new_bmp->id;
-            handle_info.address_offset = server<fbs_server>()->host_ptr_to_guest_shared_offset(new_bmp->bitmap_);
+                // Add this object to the object table!
+                handle_info.handle = obj_table_.add(new_bmp);
+                handle_info.server_handle = new_bmp->id;
+                handle_info.address_offset = server<fbs_server>()->host_ptr_to_guest_shared_offset(new_bmp->bitmap_);
 
-            ctx->write_data_to_descriptor_argument(3, handle_info);
-            obj_table_.remove(handle);
+                ctx->write_data_to_descriptor_argument(3, handle_info);
+                obj_table_.remove(handle);
+            }
 
             // Notify dirty
             if (fbss->compressor)
@@ -1935,7 +1937,10 @@ namespace eka2l1 {
 
             for (std::size_t i = 0; i < width * height; i++) {
                 const auto *pixel = mask_rgba + i * 4;
-                if (composition == icon_mask_composition::alf_canvas) {
+                if (composition == icon_mask_composition::uiq) {
+                    // UIQ draws app icons with a non-inverted mask: white is opaque at every depth.
+                    icon_rgba[i * 4 + 3] = static_cast<std::uint8_t>((2 * pixel[0] + 5 * pixel[1] + pixel[2]) >> 3);
+                } else if (composition == icon_mask_composition::alf_canvas) {
                     // ALF Canvas inverts EGray2 before ReplaceAlphaChannelL converts to Gray256.
                     const std::uint8_t alpha = (2 * pixel[0] + 5 * pixel[1] + pixel[2]) >> 3;
                     icon_rgba[i * 4 + 3] = mask_mode == epoc::display_mode::gray2 ? 255 - alpha : alpha;

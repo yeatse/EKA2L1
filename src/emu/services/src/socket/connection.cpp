@@ -31,6 +31,26 @@
 #include <iterator>
 
 namespace eka2l1::epoc::socket {
+    namespace {
+        const central_repo_entry *find_iap_field(service::ipc_context *ctx, std::uint32_t field, std::uint32_t iap) {
+            auto *cenrep = reinterpret_cast<central_repo_server *>(ctx->sys->get_kernel_system()
+                ->get_by_name<service::server>(CENTRAL_REPO_SERVER_NAME));
+            auto *repo = cenrep ? cenrep->load_repo_with_lookup(ctx->sys->get_io_system(),
+                ctx->sys->get_device_manager(), 0xCCCCCC00) : nullptr;
+            if (!repo) {
+                return nullptr;
+            }
+            repo->access_count--;
+            return repo->find_entry(field | (iap << 8));
+        }
+
+        // CommsDat hands IAP link fields to clients as plain record ids, whichever form is stored
+        // (TMDBRecordLinkVisitor::MaintainBCForLegacyLinks).
+        std::uint32_t link_record_id(std::uint32_t link) {
+            return (link > 255) ? ((link & 0xFF00) >> 8) : link;
+        }
+    }
+
     connection_state::~connection_state() {
         if (active) {
             advance(conn_progress_link_layer_closed);
@@ -39,6 +59,7 @@ namespace eka2l1::epoc::socket {
     }
 
     void connection_state::advance(std::int32_t new_stage) {
+        const bool was_active = active;
         stage = new_stage;
         active = new_stage == conn_progress_connection_opened || new_stage == conn_progress_link_layer_open;
         const auto callbacks = observers;
@@ -47,12 +68,30 @@ namespace eka2l1::epoc::socket {
                 callback(new_stage);
             }
         }
+        if (active != was_active) {
+            if (const auto listeners = interface_observers_.lock()) {
+                const interface_notification event{ info, active ? 0U : 1U };
+                for (const auto &listener : *listeners) {
+                    if (const auto callback = listener.lock()) {
+                        (*callback)(event);
+                    }
+                }
+            }
+        }
+    }
+
+    void connection_registry::observe_interfaces(const std::shared_ptr<interface_observer> &observer) {
+        auto &listeners = *interface_observers_;
+        listeners.erase(std::remove_if(listeners.begin(), listeners.end(),
+            [](const auto &listener) { return listener.expired(); }), listeners.end());
+        listeners.push_back(observer);
     }
 
     std::shared_ptr<connection_state> connection_registry::create() {
         states_.erase(std::remove_if(states_.begin(), states_.end(),
             [](const auto &state) { return state.expired(); }), states_.end());
         auto state = std::make_shared<connection_state>();
+        state->interface_observers_ = interface_observers_;
         states_.push_back(state);
         return state;
     }
@@ -156,6 +195,7 @@ namespace eka2l1::epoc::socket {
             state->observers.erase(this);
         }
         cancel_progress();
+        cancel_interface_notification();
     }
 
     void socket_connection_proxy::bind_state(const std::shared_ptr<connection_state> &state, bool monitor) {
@@ -248,6 +288,56 @@ namespace eka2l1::epoc::socket {
         }
     }
 
+    void socket_connection_proxy::request_interface_notification(service::ipc_context *ctx) {
+        if (interface_request_ || !observed_state_.expired()) {
+            ctx->complete(epoc::error_in_use);
+            return;
+        }
+        if (ctx->get_argument_max_data_size(0) < sizeof(interface_notification)
+            || ctx->msg->args.get_arg_type(0) != ipc_arg_type::des8) {
+            ctx->complete(epoc::error_argument);
+            return;
+        }
+        if (!interface_observer_) {
+            interface_observer_ = std::make_shared<interface_observer>([this](const interface_notification &event) {
+                constexpr std::size_t MAX_NOTIFICATIONS = 8;
+                if (interface_events_.size() == MAX_NOTIFICATIONS) {
+                    interface_events_.pop_front();
+                }
+                interface_events_.push_back(event);
+                complete_interface_notification();
+            });
+            parent_->server<socket_server>()->connections().observe_interfaces(interface_observer_);
+        }
+        interface_request_ = ctx->move_to_new();
+        complete_interface_notification();
+    }
+
+    void socket_connection_proxy::complete_interface_notification() {
+        if (!interface_request_ || interface_events_.empty()) {
+            return;
+        }
+        auto request = std::move(interface_request_);
+        if (request->sys->get_kernel_system()->is_thread_alive(request->msg->own_thr)) {
+            const bool written = request->write_data_to_descriptor_argument(0, interface_events_.front());
+            if (written) {
+                interface_events_.pop_front();
+            }
+            request->complete(written ? epoc::error_none : epoc::error_bad_descriptor);
+        }
+    }
+
+    void socket_connection_proxy::cancel_interface_notification() {
+        interface_observer_.reset();
+        interface_events_.clear();
+        if (interface_request_) {
+            if (interface_request_->sys->get_kernel_system()->is_thread_alive(interface_request_->msg->own_thr)) {
+                interface_request_->complete(epoc::error_cancel);
+            }
+            interface_request_.reset();
+        }
+    }
+
     void socket_connection_proxy::set_progress(std::int32_t stage) {
         progress_ = {stage, 0};
         progress_reported_ = false;
@@ -318,7 +408,7 @@ namespace eka2l1::epoc::socket {
             ctx->complete(epoc::error_not_found);
             return;
         }
-        const connection_info info{1, iap, static_cast<std::uint32_t>(network->data.intd)};
+        const connection_info info{1, iap, link_record_id(static_cast<std::uint32_t>(network->data.intd))};
         auto &registry = parent_->server<socket_server>()->connections();
         auto state = registry.find(info);
         if (!state) {
@@ -357,6 +447,14 @@ namespace eka2l1::epoc::socket {
         } else if (name == u"IAP\\Id" || name == u"IAP\\IAPNetwork") {
             const auto value = name == u"IAP\\Id" ? state->info.iap_id : state->info.network_id;
             ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
+        } else if (name == u"IAP\\IAPService") {
+            const auto *entry = find_iap_field(ctx, 0x02840000, state->info.iap_id);
+            if (!entry || entry->data.etype != central_repo_entry_type::integer) {
+                ctx->complete(epoc::error_not_found);
+                return;
+            }
+            const auto value = link_record_id(static_cast<std::uint32_t>(entry->data.intd));
+            ctx->complete(ctx->write_data_to_descriptor_argument(1, value) ? epoc::error_none : epoc::error_argument);
         } else {
             ctx->complete(epoc::error_not_found);
         }
@@ -377,14 +475,7 @@ namespace eka2l1::epoc::socket {
         } else if (name == u"IAP\\IAPBearerType") {
             field = 0x02850000;
         }
-        auto *cenrep = reinterpret_cast<central_repo_server *>(ctx->sys->get_kernel_system()
-            ->get_by_name<service::server>(CENTRAL_REPO_SERVER_NAME));
-        auto *repo = field && cenrep ? cenrep->load_repo_with_lookup(ctx->sys->get_io_system(),
-            ctx->sys->get_device_manager(), 0xCCCCCC00) : nullptr;
-        if (repo) {
-            repo->access_count--;
-        }
-        const auto *entry = repo ? repo->find_entry(field | (state->info.iap_id << 8)) : nullptr;
+        const auto *entry = field ? find_iap_field(ctx, field, state->info.iap_id) : nullptr;
         if (!entry || entry->data.etype != central_repo_entry_type::string) {
             ctx->complete(epoc::error_not_found);
             return;
@@ -520,6 +611,15 @@ namespace eka2l1::epoc::socket {
 
                 case socket_cn_progress_notification:
                     progress_notify(ctx);
+                    break;
+
+                case socket_cn_all_interface_notification:
+                    request_interface_notification(ctx);
+                    break;
+
+                case socket_cn_cancel_all_interface_notification:
+                    cancel_interface_notification();
+                    ctx->complete(epoc::error_none);
                     break;
 
                 default:

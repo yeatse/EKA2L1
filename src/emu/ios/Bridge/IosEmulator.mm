@@ -39,6 +39,7 @@
 #include <common/version.h>
 #include <config/app_settings.h>
 #include <config/config.h>
+#include <control/ngage.h>
 #include <cpu/arm_factory.h>
 #include <dispatch/dispatcher.h>
 #include <drivers/audio/audio.h>
@@ -369,6 +370,7 @@ namespace eka2l1::ios {
         // kill that process when the frontend closes the emulator screen, and
         // cleared once the process exits (so closeRunningApp no-ops afterwards).
         eka2l1::kernel::uid running_thread_id = 0;
+        eka2l1::control::ngage_controller ngage;
 
         // Set once an app has exited / been killed in this booted session. The
         // window + view servers don't fully reset between app instances (the
@@ -624,8 +626,10 @@ namespace eka2l1::ios {
 
             std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4);
             CGColorSpaceRef color_space = CGColorSpaceCreateDeviceRGB();
+            const CGBitmapInfo bitmap_info = static_cast<CGBitmapInfo>(kCGImageAlphaPremultipliedLast)
+                | kCGBitmapByteOrder32Big;
             CGContextRef context = CGBitmapContextCreate(pixels.data(), width, height, 8, width * 4,
-                color_space, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+                color_space, bitmap_info);
             CGColorSpaceRelease(color_space);
             if (!context) {
                 return {};
@@ -929,13 +933,6 @@ namespace eka2l1::ios {
         submit_screen_frame(state, scr);
     }
 
-    // Qt applications decode their images through image format plugins, and the
-    // ROM's JPEG plugin runs libjpeg under emulation - by far the largest guest
-    // CPU consumer in a title that animates from a JPEG sequence. A replacement
-    // that hands the data to the host decoder is installed on the C drive rather
-    // than over the ROM copy: Qt scans the writable drives first but falls back
-    // to the ROM plugin if it rejects ours (a build key or Qt version this ROM
-    // will not load), so a device we cannot serve keeps working untouched.
     static void install_required_rom_patches(emulator *state) {
         if (!state || !state->symsys) {
             return;
@@ -973,7 +970,6 @@ namespace eka2l1::ios {
             }
             common::copy_file(source, dest, true);
         }
-
     }
 }
 
@@ -1189,6 +1185,7 @@ namespace eka2l1::ios {
     }
 
     auto comp = eka2l1::ios::make_system_components(_state.get());
+    _state->ngage.clear();
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     _state->window = std::make_unique<eka2l1::drivers::emu_window_ios>();
 
@@ -1261,12 +1258,16 @@ namespace eka2l1::ios {
             }
             try {
                 std::lock_guard<std::mutex> loop_lock(state->loop_mutex);
-                state->symsys->loop();
+                if (!state->paused && state->mounted && state->symsys->get_graphics_driver()) {
+                    state->symsys->loop();
+                    continue;
+                }
             } catch (std::exception &exc) {
                 LOG_ERROR(eka2l1::FRONTEND_CMDLINE, "Emu loop exception: {}", exc.what());
                 state->running = false;
                 break;
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
     });
 
@@ -1349,6 +1350,7 @@ namespace eka2l1::ios {
     _state->graphics_driver.reset();
     _state->background_texture = 0;
     _state->background_dirty = true;
+    _state->ngage.clear();
     _state->symsys.reset();
     _state->audio_driver.reset();
     _state->sensor_driver.reset();
@@ -1617,6 +1619,7 @@ namespace eka2l1::ios {
     _state->conf.current_mmc_id = _state->conf.mmc_id;
 
     auto comp = eka2l1::ios::make_system_components(_state.get());
+    _state->ngage.clear();
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     auto *sys = _state->symsys.get();
 
@@ -1844,6 +1847,7 @@ namespace eka2l1::ios {
     _state->present_slot = 0;
 
     auto comp = eka2l1::ios::make_system_components(_state.get());
+    _state->ngage.clear();
     _state->symsys = std::make_unique<eka2l1::system>(comp);
     _state->symsys->startup();
 
@@ -1901,6 +1905,34 @@ namespace eka2l1::ios {
     }
     _lastAppList = out;
     return out;
+}
+
+- (void)ngageControl:(NSString *)command completion:(void (^)(NSData *, NSInteger))completion {
+    dispatch_async(eka2l1::ios::emulator_control_queue(), ^{
+        std::lock_guard<std::recursive_mutex> session_lock(_state->session_mutex);
+        eka2l1::control::response response;
+        try {
+            if (!_state->symsys) {
+                response = eka2l1::control::response::error(409, "no_device", "no device is booted");
+            } else {
+                if ([command hasPrefix:@"cancel "]) {
+                    _state->ngage.cancel(*_state->symsys);
+                    response = eka2l1::control::response::from_json(eka2l1::control::json::object{});
+                } else {
+                    const bool poll = [command hasPrefix:@"poll "];
+                    NSString *operation = poll ? [command substringFromIndex:5] : command;
+                    response = _state->ngage.request(*_state->symsys, operation.UTF8String, poll);
+                }
+            }
+        } catch (const eka2l1::control::api_error &error) {
+            response = eka2l1::control::response::error(error.status, error.code, error.what());
+        } catch (const std::exception &error) {
+            response = eka2l1::control::response::error(500, "internal", error.what());
+        }
+        NSData *data = [NSData dataWithBytes:response.body.data() length:response.body.size()];
+        const NSInteger status = response.status;
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(data, status); });
+    });
 }
 
 - (void)confirmDeviceBoot {
@@ -1963,7 +1995,12 @@ namespace eka2l1::ios {
         }
     }
 
-    eka2l1::ios::bind_graphics_driver(_state.get());
+    if (!_state->symsys->get_graphics_driver()) {
+        const std::lock_guard<std::mutex> loop_lock(_state->loop_mutex);
+        if (!eka2l1::ios::bind_graphics_driver(_state.get())) {
+            return NO;
+        }
+    }
 
     auto *kern = _state->symsys->get_kernel_system();
     auto *alserv = eka2l1::ios::get_applist_server(kern);
@@ -2087,6 +2124,7 @@ namespace eka2l1::ios {
     // mutate kernel state. The process logon still fires
     // (handleRunningAppExited); callers tearing down the screen clear
     // appExitHandler first so that bounce is a no-op.
+    _state->ngage.reset(*_state->symsys);
     kern->lock();
     auto *thr = kern->get_by_id<eka2l1::kernel::thread>(tid);
     eka2l1::kernel::process *pr = thr ? thr->owning_process() : nullptr;
@@ -2111,9 +2149,7 @@ namespace eka2l1::ios {
         return NO;
     }
     std::u16string upath = eka2l1::common::utf8_to_ucs2(sisPath.UTF8String);
-    drive_number install_drive = _state->symsys->is_s80_device_active()
-        ? drive_number::drive_d
-        : drive_number::drive_e;
+    const drive_number install_drive = _state->symsys->get_default_install_drive();
     auto result = static_cast<eka2l1::package::installation_result>(
         _state->symsys->install_package(upath, install_drive));
     return result == eka2l1::package::installation_result_success ? YES : NO;
@@ -2730,7 +2766,9 @@ namespace eka2l1::ios {
         if (eka2l1::epoc::screen *screen = _state->winserv->get_current_focus_screen()) {
             current = screen->crr_mode;
             for (int mode = 0; mode < screen->total_screen_mode(); ++mode) {
-                [modes addObject:@(mode)];
+                if (screen->mode_info(mode)->defined) {
+                    [modes addObject:@(mode)];
+                }
             }
             size = screen->current_mode().size;
             if ((screen->ui_rotation % 180) != 0) {
@@ -2753,7 +2791,8 @@ namespace eka2l1::ios {
             std::lock_guard<std::recursive_mutex> session_lock(self->_state->session_mutex);
             if (self->_state->winserv && self->_state->graphics_driver) {
                 eka2l1::epoc::screen *screen = self->_state->winserv->get_current_focus_screen();
-                if (screen && mode >= 0 && mode < screen->total_screen_mode()) {
+                if (screen && mode >= 0 && mode < screen->total_screen_mode()
+                    && screen->mode_info(static_cast<int>(mode))->defined) {
                     selected_mode = mode;
                     screen->ui_rotation = 0;
                     screen->set_screen_mode(self->_state->winserv,

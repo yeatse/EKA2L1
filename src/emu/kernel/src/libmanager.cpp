@@ -152,7 +152,7 @@ namespace eka2l1::hle {
             cs = mngr.load(dll_name);
 
             if (!cs) {
-                LOG_TRACE(KERNEL, "Can't find {}", dll_name8);
+                LOG_ERROR(KERNEL, "Can't load {}: imported DLL {} not found", parent_cs->name(), dll_name8);
                 return false;
             }
         }
@@ -1206,6 +1206,25 @@ namespace eka2l1::hle {
         return open_and_get(lib_path);
     }
 
+    bool lib_manager::is_dll_tls_keyed_by_uid() {
+        if (!dll_tls_keyed_by_uid_.has_value()) {
+            // EUSER ordinal of UserSvr::DllSetTls(TInt, TInt, TAny*), which only exists with the UID-keyed executive.
+            static constexpr std::uint32_t DLL_SET_TLS_WITH_UID_ORDINAL = 2177;
+
+            if (kern_->get_epoc_version() != epocver::epoc91) {
+                return true;
+            }
+
+            codeseg_ptr euser = load(u"Z:\\sys\\bin\\euser.dll");
+            if (!euser) {
+                return false;
+            }
+            dll_tls_keyed_by_uid_ = euser->lookup_no_relocate(DLL_SET_TLS_WITH_UID_ORDINAL) != 0;
+        }
+
+        return dll_tls_keyed_by_uid_.value();
+    }
+
     codeseg_ptr lib_manager::load(const std::u16string &name) {
         bool is_driver_lib = false;
 
@@ -1600,6 +1619,7 @@ namespace eka2l1::hle {
             epoc::register_epocv93(*this);
             break;
 
+        case epocver::epoc95:
         case epocver::epoc10:
             epoc::register_epocv10(*this);
             break;

@@ -18,6 +18,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <services/window/io.h>
 #include <services/window/op.h>
 #include <services/window/window.h>
@@ -565,7 +566,7 @@ namespace eka2l1::epoc {
 
     void window_server_client::send_event_to_all_window_groups(service::ipc_context &ctx, ws_cmd &cmd) {
         ws_cmd_send_event_to_window_group evt = *reinterpret_cast<ws_cmd_send_event_to_window_group *>(cmd.data_ptr);
-        get_ws().send_event_to_window_groups(evt.evt);
+        get_ws().send_event_to_window_groups(evt.evt, cmd.header.op == ws_cl_op_send_event_to_one_window_group_per_cli);
 
         ctx.complete(epoc::error_none);
     }
@@ -1035,6 +1036,12 @@ namespace eka2l1::epoc {
     }
 
     void window_server_client::add_raw_event(service::ipc_context &ctx, ws_cmd &cmd) {
+        static epoc::security_policy policy({ epoc::cap_sw_event });
+        if (!ctx.satisfy(policy)) {
+            ctx.complete(epoc::error_permission_denied);
+            return;
+        }
+
         epoc::raw_event evt;
 
         if (cmd.header.cmd_len > sizeof(epoc::raw_event_eka1)) {
@@ -1046,7 +1053,22 @@ namespace eka2l1::epoc {
             evt.from_eka1_event(evt_eka1);
         }
 
-        LOG_TRACE(SERVICE_WINDOW, "Add raw event stubbed, event type {}", evt.type_);
+        switch (evt.type_) {
+        case epoc::raw_event_type_key_down:
+        case epoc::raw_event_type_key_up: {
+            epoc::event key_evt{};
+            key_evt.type = (evt.type_ == epoc::raw_event_type_key_down) ? epoc::event_code::key_down : epoc::event_code::key_up;
+            key_evt.time = get_ws().get_kernel_system()->universal_time();
+            key_evt.key_evt_.scancode = evt.data_.key_data_.scancode_;
+            get_ws().key_shipper.ship(key_evt);
+            break;
+        }
+
+        default:
+            LOG_TRACE(SERVICE_WINDOW, "Add raw event stubbed, event type {}", evt.type_);
+            break;
+        }
+
         ctx.complete(epoc::error_none);
     }
 
@@ -1168,7 +1190,8 @@ namespace eka2l1::epoc {
             break;
         }
 
-        case ws_cl_op_send_event_to_all_window_groups: {
+        case ws_cl_op_send_event_to_all_window_groups:
+        case ws_cl_op_send_event_to_one_window_group_per_cli: {
             send_event_to_all_window_groups(ctx, cmd);
             break;
         }
@@ -1381,12 +1404,25 @@ namespace eka2l1::epoc {
             ctx.complete(epoc::error_none);
             break;
 
+        case ws_cl_op_set_background_color:
+            // The window server draws no background behind the windows: nothing to change,
+            // but the client waits for the answer
+            ctx.complete(epoc::error_none);
+            break;
+
         case ws_cl_op_get_double_click_settings:
             get_double_click_settings(ctx, cmd);
             break;
 
+        case ws_cl_op_clear_hot_keys:
+        case ws_cl_op_set_double_click:
+        case ws_cl_op_set_default_fading_params:
+            ctx.complete(epoc::error_none);
+            break;
+
         default:
             LOG_INFO(SERVICE_WINDOW, "Unimplemented ClOp: 0x{:x}", cmd.header.op);
+            ctx.complete(epoc::error_not_supported);
             break;
         }
     }
@@ -1625,6 +1661,17 @@ namespace eka2l1 {
             int total_mode = 0;
             bool one_mode_only = false;
 
+            // NUMSCREENMODES lets the table skip indices; WSERV keeps those as empty slots.
+            std::uint32_t sparse_mode_count = 0;
+            common::ini_node_ptr num_modes_node = screen_node->get_as<common::ini_section>()->find("NUMSCREENMODES");
+            if (num_modes_node && common::ini_pair::is_my_type(num_modes_node)) {
+                num_modes_node->get_as<common::ini_pair>()->get(&sparse_mode_count, 1, 0);
+            }
+
+            if (sparse_mode_count > 256) {
+                sparse_mode_count = 0;
+            }
+
             do {
                 std::string current_mode_str = std::to_string(total_mode + 1);
                 std::string screen_mode_width_key = "SCR_WIDTH";
@@ -1639,9 +1686,16 @@ namespace eka2l1 {
 
                 total_mode++;
 
-                epoc::config::screen_mode scr_mode;
+                epoc::config::screen_mode scr_mode{};
                 scr_mode.screen_number = total_screen - 1;
                 scr_mode.mode_number = total_mode;
+
+                if ((!mode_width || !mode_height) && (static_cast<std::uint32_t>(total_mode) <= sparse_mode_count)) {
+                    scr_mode.defined = false;
+                    scr.modes.push_back(scr_mode);
+
+                    continue;
+                }
 
                 if (mode_width) {
                     mode_width->get_as<common::ini_pair>()->get(reinterpret_cast<std::uint32_t *>(&scr_mode.size.x),
@@ -1682,7 +1736,7 @@ namespace eka2l1 {
                 }
 
                 // NGA render stages expose 32-bit targets as EColor16MA.
-                if ((kern->get_epoc_version() >= epocver::epoc10)
+                if ((kern->get_epoc_version() >= epocver::epoc95)
                     && (epoc::get_bpp_from_display_mode(scr_mode.disp_mode) == 32)) {
                     scr_mode.disp_mode = epoc::display_mode::color16ma;
                 }
@@ -1723,6 +1777,30 @@ namespace eka2l1 {
                 scr.modes.push_back(scr_mode);
             } while (!one_mode_only);
 
+            auto first_defined = std::find_if(scr.modes.begin(), scr.modes.end(),
+                [](const epoc::config::screen_mode &mode) { return mode.defined; });
+
+            if (first_defined == scr.modes.end()) {
+                first_defined = scr.modes.begin();
+
+                first_defined->defined = true;
+                first_defined->size = default_screen_size;
+                first_defined->rotation = 0;
+                first_defined->disp_mode = scr_mode_global;
+                first_defined->dsa_disp_mode = scr_mode_global;
+            }
+
+            const epoc::config::screen_mode mirrored = *first_defined;
+            for (epoc::config::screen_mode &mode : scr.modes) {
+                if (!mode.defined) {
+                    const int mode_number = mode.mode_number;
+
+                    mode = mirrored;
+                    mode.mode_number = mode_number;
+                    mode.defined = false;
+                }
+            }
+
             int total_hardware_state = 0;
 
             do {
@@ -1762,8 +1840,8 @@ namespace eka2l1 {
                 epoc::config::hardware_state only_state;
 
                 only_state.state_number = 0;
-                only_state.mode_normal = scr.modes[0].mode_number;
-                only_state.mode_alternative = scr.modes[0].mode_number;
+                only_state.mode_normal = mirrored.mode_number;
+                only_state.mode_alternative = mirrored.mode_number;
 
                 scr.hardware_states.push_back(only_state);
             }
@@ -1851,12 +1929,54 @@ namespace eka2l1 {
         return scancode;
     }
 
-    bool window_server::is_uiq_2_device() {
-        if (!uiq_2_device_) {
-            uiq_2_device_ = get_system()->is_uiq_2_device_active();
+    // UIQ 3 navigates with a four-way controller and its action key (DeviceKeys.h); the S60 OK key becomes the action key.
+    static std::int32_t uiq_3_scancode(const std::int32_t scancode) {
+        switch (scancode) {
+        case epoc::std_key_up_arrow:
+            return epoc::std_key_device_4;
+
+        case epoc::std_key_down_arrow:
+            return epoc::std_key_device_5;
+
+        case epoc::std_key_left_arrow:
+            return epoc::std_key_device_6;
+
+        case epoc::std_key_right_arrow:
+            return epoc::std_key_device_7;
+
+        case epoc::std_key_device_3:
+            return epoc::std_key_device_8;
+
+        default:
+            break;
         }
 
-        return uiq_2_device_.value();
+        return scancode;
+    }
+
+    static bool is_sony_ericsson_p1i(system *sys) {
+        const auto *device = sys->get_device_manager()->get_current();
+        return sys->is_uiq_3_device_active() && device && (device->machine_uid == 0x20002E69);
+    }
+
+    std::int32_t window_server::uiq_scancode(const std::int32_t scancode) {
+        if (!uiq_version_) {
+            system *sys = get_system();
+            uiq_version_ = sys->is_uiq_2_device_active() ? 2 : (sys->is_uiq_3_device_active() ? 3 : 0);
+        }
+
+        switch (uiq_version_.value()) {
+        case 2:
+            return uiq_2_scancode(scancode);
+
+        case 3:
+            return uiq_3_scancode(scancode);
+
+        default:
+            break;
+        }
+
+        return scancode;
     }
 
     static constexpr std::uint64_t DIRECT_FRAMEBUFFER_REFRESH_INTERVAL_US = 1000000 / 60;
@@ -1866,9 +1986,10 @@ namespace eka2l1 {
             return;
         }
         scr->mark_direct_framebuffer_mapped();
-        // The OS 7.0/7.0s ROM screen drivers leave Update() empty and rely on scanout.
-        const epocver ver = kern->get_epoc_version();
-        if ((ver != epocver::epoc70 && ver != epocver::epoc7) || direct_framebuffer_refresh_evt_ >= 0) {
+        // Panels up to OS 7.0s, and the P1i's (LCDSonyACX522/562Drv), scan out this memory;
+        // clients need not call Update().
+        if (((kern->get_epoc_version() > epocver::epoc7) && !is_sony_ericsson_p1i(get_system()))
+            || direct_framebuffer_refresh_evt_ >= 0) {
             return;
         }
 
@@ -2085,8 +2206,8 @@ namespace eka2l1 {
                     } else if (scancode == '5') {
                         guest_event.key_evt_.scancode = epoc::std_key_space;
                     }
-                } else if (is_uiq_2_device()) {
-                    guest_event.key_evt_.scancode = uiq_2_scancode(guest_event.key_evt_.scancode);
+                } else {
+                    guest_event.key_evt_.scancode = uiq_scancode(guest_event.key_evt_.scancode);
                 }
 
                 key_shipper.add_new_event(guest_event);
@@ -2099,9 +2220,7 @@ namespace eka2l1 {
 
         case drivers::input_event_type::button:
             if (make_button_event(input_mapping.button_input_map, input_event, guest_event)) {
-                if (is_uiq_2_device()) {
-                    guest_event.key_evt_.scancode = uiq_2_scancode(guest_event.key_evt_.scancode);
-                }
+                guest_event.key_evt_.scancode = uiq_scancode(guest_event.key_evt_.scancode);
                 key_shipper.add_new_event(guest_event);
                 key_shipper.start_shipping();
 
@@ -2208,11 +2327,16 @@ namespace eka2l1 {
 
     void window_server::init_screens() {
         kernel_system *kern = get_kernel_system();
-        const bool is_screenplay = (kern->get_epoc_version() >= epocver::epoc10);
+        const bool is_screenplay = (kern->get_epoc_version() >= epocver::epoc95);
+
+        // Sony Ericsson's UIQ 3 LCD drivers fix the line length at 256 pixels (0x400 bytes
+        // at 32bpp); games that write the HAL screen address rely on that pitch.
+        const std::uint32_t min_row_pixels = is_sony_ericsson_p1i(get_system()) ? 256 : 0;
 
         // Create first screen
         screens = new epoc::screen(0, get_screen_config(0), kern->is_eka1());
         screens->set_is_screenplay_architecture(is_screenplay);
+        screens->set_min_row_pixels(min_row_pixels);
 
         epoc::screen *crr = screens;
         create_screen_buffer_for_dsa(kern, crr);
@@ -2221,6 +2345,7 @@ namespace eka2l1 {
         for (std::size_t i = 0; i < screen_configs.size() - 1; i++) {
             crr->next = new epoc::screen(1, get_screen_config(1), kern->is_eka1());
             crr->next->set_is_screenplay_architecture(is_screenplay);
+            crr->next->set_min_row_pixels(min_row_pixels);
 
             crr = crr->next;
 
@@ -2240,7 +2365,7 @@ namespace eka2l1 {
     }
 
     epoc::screen *window_server::get_screen(const int number) {
-        if (!screens) {
+        if (!loaded) {
             do_base_init();
         }
 
@@ -2411,6 +2536,11 @@ namespace eka2l1 {
     }
 
     void window_server::do_base_init() {
+        const std::lock_guard<std::mutex> guard(base_init_lock_);
+        if (loaded) {
+            return;
+        }
+
         load_wsini();
         parse_wsini();
         init_screens();
@@ -2737,13 +2867,21 @@ namespace eka2l1 {
         cli->queue_event(evt_copy);
     }
 
-    void window_server::send_event_to_window_groups(const epoc::event &evt) {
+    void window_server::send_event_to_window_groups(const epoc::event &evt, const bool one_per_client) {
         epoc::screen *scr = get_screens();
-
         while (scr) {
+            std::vector<epoc::window_server_client *> served;
             epoc::window_group *group = scr->get_group_chain();
             while (group) {
-                send_event_to_window_group(group, evt);
+                // The chain is in ordinal order, so the first group met is the client's frontmost.
+                if (group->client && (!one_per_client || (std::find(served.begin(), served.end(), group->client) == served.end()))) {
+                    send_event_to_window_group(group, evt);
+
+                    if (one_per_client) {
+                        served.push_back(group->client);
+                    }
+                }
+
                 group = reinterpret_cast<epoc::window_group *>(group->sibling);
             }
 

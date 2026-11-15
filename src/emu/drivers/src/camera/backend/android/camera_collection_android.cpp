@@ -29,7 +29,12 @@ namespace eka2l1::drivers::camera {
     }
 
     std::unique_ptr<instance> collection_android::make_camera(const std::uint32_t camera_index) {
-        return std::make_unique<instance_android>(this, static_cast<int>(camera_index));
+        auto camera = std::make_unique<instance_android>(this, static_cast<int>(camera_index));
+        if (camera->managed_handle() < 0) {
+            return nullptr;
+        }
+
+        return camera;
     }
 
     void collection_android::handle_image_capture_delivered(int index, const void *bytes, const std::size_t size, const int error) {
@@ -64,6 +69,9 @@ namespace eka2l1::drivers::camera {
             if ((ite != current_reserved_.end()) && (ite->second != nullptr)) {
                 const std::lock_guard<std::mutex> callback_guard(ite->second->callback_lock_);
                 callback = ite->second->active_frame_viewfinder_callback_;
+                if (error < 0) {
+                    ite->second->active_frame_viewfinder_callback_ = nullptr;
+                }
             } else {
                 LOG_TRACE(DRIVER_CAM, "Unable to find active reserved camera with index {} for returning capture bytes", index);
             }

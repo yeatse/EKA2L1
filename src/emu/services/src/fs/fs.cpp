@@ -515,6 +515,9 @@ namespace eka2l1 {
             if (io->get_drive_entry(drive_c)) {
                 io->create_directories(u"C:\\Nokia\\Sounds\\Simple\\");
             }
+        } else if (io_system *io = sys->get_io_system(); io->get_drive_entry(drive_c)) {
+            // PathInfo::OthersPath() normally exists in the factory C: image.
+            io->create_directories(u"C:\\Data\\Others\\");
         }
 
         std::u16string temp_data_dir = u"?:\\System\\Temp\\";

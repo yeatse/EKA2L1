@@ -44,9 +44,8 @@
 #   distribution certificate; App Manager is enough afterwards.
 # - The bundle id (com.eka2l1.emulator) must already exist as an app record
 #   in App Store Connect.
-# - CFBundleVersion is hardcoded in Info.plist; manageAppVersionAndBuildNumber
-#   in the export options lets Xcode bump the build number to the next valid
-#   value during upload, so pushes don't collide on TestFlight build numbers.
+# - CFBundleVersion uses the workflow run number; export preserves it.
+#   CFBundleShortVersionString stays at the version declared in Info.plist.
 # - When the secrets are not configured (e.g. forks), the job logs a warning
 #   and skips instead of failing.
 
@@ -174,6 +173,8 @@ jobs:
           set -euo pipefail
           export EKA2L1_ASC_KEY_PATH="${RUNNER_TEMP}/asc_key.p8"
           export EKA2L1_IOS_ARCHIVE_PATH="${ARCHIVE_PATH}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" \
+            src/emu/ios/Resources/Info.plist
           scripts/build_ios.sh archive
 
       - name: Upload to TestFlight
@@ -201,7 +202,7 @@ jobs:
               <key>uploadSymbols</key>
               <true/>
               <key>manageAppVersionAndBuildNumber</key>
-              <true/>
+              <false/>
           </dict>
           </plist>
           EOF

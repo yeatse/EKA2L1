@@ -22,13 +22,13 @@
 #include <common/platform.h>
 
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <vector>
 
 #include <drivers/graphics/backend/graphics_driver_shared.h>
 #include <drivers/graphics/buffer.h>
 #include <drivers/graphics/shader.h>
+#include <drivers/graphics/texture_upload.h>
 
 #if !EKA2L1_PLATFORM(IOS)
 #include <glad/glad.h>
@@ -142,13 +142,12 @@ namespace eka2l1::drivers {
         return texture;
     }
 
-    static texture_ptr instantiate_bitmap_depth_stencil_texture(graphics_driver *driver, const eka2l1::vec2 &size, const std::uint32_t depth_bits) {
+    // 16-bit depth configs stay backed by 24-bit depth, as every surface was before they were exposed:
+    // games separate depths one GLfixed step apart (e.g. sky just in front of the clear depth), which D16 rounds together.
+    static texture_ptr instantiate_bitmap_depth_stencil_texture(graphics_driver *driver, const eka2l1::vec2 &size) {
         auto ds_tex = make_texture(driver);
-        ds_tex->create(driver, 2, 0, eka2l1::vec3(size.x, size.y, 0),
-            depth_bits == 16 ? texture_format::depth16 : texture_format::depth24_stencil8,
-            depth_bits == 16 ? texture_format::depth_component : texture_format::depth_stencil,
-            depth_bits == 16 ? texture_data_type::ushort : texture_data_type::uint_24_8,
-            nullptr, 0);
+        ds_tex->create(driver, 2, 0, eka2l1::vec3(size.x, size.y, 0), texture_format::depth24_stencil8,
+            texture_format::depth_stencil, texture_data_type::uint_24_8, nullptr, 0);
 
         return ds_tex;
     }
@@ -168,7 +167,7 @@ namespace eka2l1::drivers {
 
     void bitmap::resize(graphics_driver *driver, const eka2l1::vec2 &new_size) {
         auto tex_to_replace = std::move(instantiate_suit_color_bitmap_texture(driver, new_size, bpp));
-        auto ds_tex_to_replace = std::move(instantiate_bitmap_depth_stencil_texture(driver, new_size, depth_bits));
+        auto ds_tex_to_replace = std::move(instantiate_bitmap_depth_stencil_texture(driver, new_size));
 
         if (fb) {
             auto new_fb = make_framebuffer(driver, { tex_to_replace.get() }, { 0 }, ds_tex_to_replace.get(), 0,
@@ -198,7 +197,7 @@ namespace eka2l1::drivers {
     }
 
     void bitmap::init_fb(graphics_driver *driver) {
-        ds_tex = std::move(instantiate_bitmap_depth_stencil_texture(driver, tex->get_size(), depth_bits));
+        ds_tex = std::move(instantiate_bitmap_depth_stencil_texture(driver, tex->get_size()));
         fb = make_framebuffer(driver, { tex.get() }, { 0 }, ds_tex.get(), 0, depth_bits == 16 ? nullptr : ds_tex.get(), 0);
     }
 
@@ -331,38 +330,23 @@ namespace eka2l1::drivers {
                 texture_format::rgba, texture_data_type::ubyte, expanded_rgba.data(), 0, 4);
         } else
 #else
-        // 12bpp Symbian pixels are 0x0RGB, which GL reads as R=0, G=R, B=G, A=B; a channel swizzle
-        // undoes that, but some drivers ignore it on RGBA4 textures (Mesa freedreno on Adreno 6xx shows
-        // every 4096-colour game shifted to green and blue). Repack them as 0xRGBF instead, GL's own
-        // RGBA4444 order, so no swizzle is needed.
+        // Repack 0x0RGB to RGBA4444 because some drivers ignore RGBA4 channel swizzles.
         if ((bmp->bpp == 12) && data && (dim.x > 0) && (dim.y > 0)) {
-            const std::size_t src_pixels_per_line = (pixels_per_line != 0) ? pixels_per_line : static_cast<std::size_t>(dim.x);
-            const std::size_t src_row_bytes = ((src_pixels_per_line * 2) + 3) & ~std::size_t(3);
-            const std::size_t dst_pixels_per_line = (static_cast<std::size_t>(dim.x) + 1) & ~std::size_t(1);
-            const std::size_t source_end = (static_cast<std::size_t>(dim.y) - 1) * src_row_bytes + static_cast<std::size_t>(dim.x) * 2;
-
-            if (!size || (source_end <= size)) {
-                const std::uint8_t *src = reinterpret_cast<const std::uint8_t *>(data);
-                std::vector<std::uint16_t> repacked(dst_pixels_per_line * static_cast<std::size_t>(dim.y));
-
-                for (int y = 0; y < dim.y; y++) {
-                    for (int x = 0; x < dim.x; x++) {
-                        std::uint16_t pixel = 0;
-                        std::memcpy(&pixel, src + static_cast<std::size_t>(y) * src_row_bytes + static_cast<std::size_t>(x) * 2, 2);
-                        repacked[static_cast<std::size_t>(y) * dst_pixels_per_line + x] = static_cast<std::uint16_t>((pixel << 4) | 0xF);
-                    }
-                }
-
-                bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), dst_pixels_per_line,
-                    data_format, data_type, repacked.data(), 0, 4);
-                bmp->tex->set_channel_swizzle({ channel_swizzle::red, channel_swizzle::green,
-                    channel_swizzle::blue, channel_swizzle::alpha });
+            std::vector<std::uint16_t> repacked;
+            if (!rgb444_to_rgba4444(repacked, data, size, dim.x, dim.y, pixels_per_line)) {
+                LOG_ERROR(DRIVER_GRAPHICS, "Invalid RGB444 bitmap upload");
                 return;
             }
+            const std::size_t dst_pixels_per_line = repacked.size() / dim.y;
+            bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), dst_pixels_per_line,
+                data_format, data_type, repacked.data(), repacked.size() * sizeof(std::uint16_t), 4);
+            bmp->tex->set_channel_swizzle({ channel_swizzle::red, channel_swizzle::green,
+                channel_swizzle::blue, channel_swizzle::alpha });
+            return;
         }
 #endif
         bmp->tex->update_data(this, 0, eka2l1::vec3(offset.x, offset.y, 0), eka2l1::vec3(dim.x, dim.y, 0), pixels_per_line,
-            data_format, data_type, data, 0, 4);
+            data_format, data_type, data, size, 4);
 
         if (bmp->bpp == 12) {
             bmp->tex->set_channel_swizzle({ channel_swizzle::green, channel_swizzle::blue,

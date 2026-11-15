@@ -95,11 +95,10 @@ namespace eka2l1::common {
         }
 
         iterator begin() {
-            auto ite = data_.begin();
-            while (ite != data_.end() && check_(*ite)) {
-                ++ite;
-            }
-            return iterator(this, ite);
+            auto first = std::find_if(data_.begin(), data_.end(), [this](T &elem) {
+                return !check_(elem);
+            });
+            return iterator(this, first);
         }
 
         iterator end() {
