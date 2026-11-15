@@ -27,6 +27,21 @@ namespace eka2l1::epoc {
     static constexpr std::uint32_t FEP_FRAMEWORK_REPO_UID = 0x10272618;
     static constexpr std::uint32_t FEP_RESOURCE_ID = 0x008; /*19BD6008*/
 
+    // KCRUidAvkon is both a repository and a P&S category (AvkonInternalCRKeys.h).
+    static constexpr std::uint32_t AVKON_REPO_UID = 0x101F876E;
+    static constexpr std::uint32_t AVKON_QWERTY_INPUT_MODE_ACTIVE_KEY = 0x4;
+    static constexpr std::uint32_t AVKON_KEYBOARD_LAYOUT_KEY = 0xB;
+
+    // TPtiKeyboardType
+    enum pti_keyboard_type {
+        pti_keyboard_12_key = 1,
+        pti_keyboard_qwerty_4x12 = 2,
+        pti_keyboard_qwerty_4x10 = 3,
+        pti_keyboard_qwerty_3x11 = 4,
+        pti_keyboard_half_qwerty = 5,
+        pti_keyboard_custom_qwerty = 6
+    };
+
     enum fep_framework_repo_key {
         fep_framework_repo_keymask_default_setting = 0x1000,
         fep_framework_repo_keymask_dynamic_setting = 0x2000,

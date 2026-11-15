@@ -47,6 +47,9 @@ namespace eka2l1::epoc::cap {
     static constexpr std::uint32_t UIK_CURRENT_HARDWARE_LAYOUT_STATE = 8;
     static constexpr std::uint32_t UIK_PREFERRED_ORIENTATION_KEY = 9;
 
+    // Guest servers such as AknIconServer may define these keys before the HLE servers are set up.
+    service::property *get_or_define_int_prop(kernel_system *kern, const epoc::uid category, const std::uint32_t key);
+
     //  System Graphics Coordination
     class sgc_server {
     public:

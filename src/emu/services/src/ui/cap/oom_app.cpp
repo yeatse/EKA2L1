@@ -35,6 +35,7 @@
 #include <utils/err.h>
 
 #include <kernel/kernel.h>
+#include <kernel/property.h>
 #include <system/epoc.h>
 #include <vfs/vfs.h>
 
@@ -279,6 +280,29 @@ namespace eka2l1 {
         ctx.complete(epoc::error_none);
     }
 
+    // AknCapServer's key filter publishes the keyboard layout from the Avkon repository and whether it is a
+    // QWERTY layout (CAknServKeyFilter::ConstructL). PtiEngine and FEP clients choose their input modes from it.
+    static void publish_keyboard_layout(kernel_system *kern, central_repo_server *cenrep, io_system *io,
+        device_manager *mngr) {
+        central_repo *avkon = cenrep->load_repo_with_lookup(io, mngr, epoc::AVKON_REPO_UID);
+        central_repo_entry *entry = avkon ? avkon->find_entry(epoc::AVKON_KEYBOARD_LAYOUT_KEY) : nullptr;
+
+        if (!entry || (entry->data.etype != central_repo_entry_type::integer)) {
+            return;
+        }
+
+        const std::int32_t layout = static_cast<std::int32_t>(entry->data.intd);
+        const bool qwerty = (layout >= epoc::pti_keyboard_qwerty_4x12) && (layout <= epoc::pti_keyboard_custom_qwerty);
+
+        if (service::property *prop = epoc::cap::get_or_define_int_prop(kern, epoc::AVKON_REPO_UID, epoc::AVKON_KEYBOARD_LAYOUT_KEY)) {
+            prop->set_int(layout);
+        }
+
+        if (service::property *prop = epoc::cap::get_or_define_int_prop(kern, epoc::AVKON_REPO_UID, epoc::AVKON_QWERTY_INPUT_MODE_ACTIVE_KEY)) {
+            prop->set_int(qwerty ? 1 : 0);
+        }
+    }
+
     void oom_ui_app_server::init(kernel_system *kern, io_system *io, device_manager *mngr) {
         const std::lock_guard<std::mutex> guard(lock);
 
@@ -308,6 +332,10 @@ namespace eka2l1 {
 
                 coe_storage->default_fep(dll_filename_fep);
                 coe_storage->serialize();
+            }
+
+            if (sys->get_symbian_version_use() >= epocver::epoc94) {
+                publish_keyboard_layout(kern, cenrep, io, mngr);
             }
         }
 

@@ -108,8 +108,7 @@ namespace eka2l1::epoc::cap {
         reinterpret_cast<sgc_server *>(userdata)->sync_hardware_layout_state(scr);
     }
 
-    // Guest servers such as AknIconServer may define these keys before this server is set up.
-    static service::property *get_or_define_int_prop(kernel_system *kern, const epoc::uid category, const std::uint32_t key) {
+    service::property *get_or_define_int_prop(kernel_system *kern, const epoc::uid category, const std::uint32_t key) {
         service::property *prop = kern->get_prop(category, key);
         if (!prop) {
             prop = kern->create<service::property>();
