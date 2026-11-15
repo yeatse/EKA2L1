@@ -337,8 +337,19 @@ namespace eka2l1::control {
                 if (!guard.owns_lock())
                     throw api_error(409, "busy", "another Games request is in flight");
                 auto session = json::parse(checked({ "GET", { "v1", "session" }, {}, {}, {} }).body);
-                if (session["uid"].string() != "0x20003B78" || session["state"].string() != "running" || !session["screenVisible"].boolean()) {
-                    auto launched = route({ "POST", { "v1", "apps", "0x20003B78", "launch" }, {}, {}, {} });
+                // The N97 client's Games (0x20007B39) is PlayServer, which starts the Games UI (0x20003B78)
+                // itself; started alone, the UI brings PlayServer up with "noPlayUi". Older clients only have
+                // the UI.
+                const std::string uid = session["uid"].string();
+                if ((uid != "0x20007B39" && uid != "0x20003B78") || session["state"].string() != "running"
+                    || !session["screenVisible"].boolean()) {
+                    std::string games = "0x20003B78";
+                    const auto apps = json::parse(checked({ "GET", { "v1", "apps" }, {}, {}, {} }).body);
+                    for (const auto &app : apps["apps"].items()) {
+                        if (app["uid"].string() == "0x20007B39")
+                            games = "0x20007B39";
+                    }
+                    auto launched = route({ "POST", { "v1", "apps", games, "launch" }, {}, {}, {} });
                     if (launched.status >= 400)
                         return launched;
                     session = json::parse(launched.body);
