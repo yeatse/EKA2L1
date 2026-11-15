@@ -1089,20 +1089,10 @@ namespace eka2l1::epoc {
         evt.key_evt_ = *reinterpret_cast<const epoc::key_event *>(cmd.data_ptr);
         evt.key_evt_.repeats = 0;
 
-        epoc::window_group *target = get_ws().get_focus();
-        const auto captures = get_ws().key_capture_requests.find(evt.key_evt_.code);
-        if (captures != get_ws().key_capture_requests.end()) {
-            const epoc::event_capture_key_notifier *capture = nullptr;
-            for (const auto &request : captures->second) {
-                if (request.type_ == epoc::event_key_capture_type::normal
-                    && (evt.key_evt_.modifiers & request.modifiers_mask_) == request.modifiers_
-                    && (!capture || request.pri_ > capture->pri_)) {
-                    capture = &request;
-                }
-            }
-            if (capture) {
-                target = static_cast<epoc::window_group *>(capture->user);
-            }
+        epoc::window_group *target = get_ws().find_key_capture(evt.key_evt_.code, epoc::event_key_capture_type::normal,
+            evt.key_evt_.modifiers);
+        if (!target) {
+            target = get_ws().get_focus();
         }
         if (target) {
             get_ws().send_event_to_window_group(target, evt);
@@ -2024,6 +2014,24 @@ namespace eka2l1 {
         return get_system()->get_kernel_system();
     }
 
+    epoc::window_group *window_server::find_key_capture(const std::uint32_t key, const epoc::event_key_capture_type type,
+        const std::uint32_t modifiers) {
+        const auto captures = key_capture_requests.find(key);
+        if (captures == key_capture_requests.end()) {
+            return nullptr;
+        }
+
+        const epoc::event_capture_key_notifier *capture = nullptr;
+        for (const auto &request : captures->second) {
+            if ((request.type_ == type) && ((modifiers & request.modifiers_mask_) == request.modifiers_)
+                && (!capture || (request.pri_ > capture->pri_))) {
+                capture = &request;
+            }
+        }
+
+        return capture ? static_cast<epoc::window_group *>(capture->user) : nullptr;
+    }
+
     constexpr std::int64_t input_update_us = 100;
 
     bool make_key_event(epoc::key_map &map, drivers::input_event &driver_evt_, epoc::event &guest_evt_) {
@@ -2564,10 +2572,16 @@ namespace eka2l1 {
 
                 kern->lock();
 
-                if (get_focus()) {
+                epoc::window_group *target = find_key_capture(code, epoc::event_key_capture_type::normal,
+                    epoc::event_modifier_repeatable | key_shipper.translator_.modifiers());
+                if (!target) {
+                    target = get_focus();
+                }
+
+                if (target) {
                     repeatable_evt.type = epoc::event_code::key;
 
-                    repeatable_evt.handle = get_focus()->client_handle;
+                    repeatable_evt.handle = target->client_handle;
                     repeatable_evt.time = kern->universal_time();
                     repeatable_evt.key_evt_.code = code;
                     repeatable_evt.key_evt_.scancode = scancode;
@@ -2580,7 +2594,7 @@ namespace eka2l1 {
                     // TODO: When we queued this the event up event may already been queued.
                     // We have to make sure it's queued before event up, if there's something
                     // wrong popping up...
-                    get_focus()->queue_event(repeatable_evt);
+                    target->queue_event(repeatable_evt);
                 }
 
                 if (cancel_repeatable_list.find(data) != cancel_repeatable_list.end()) {

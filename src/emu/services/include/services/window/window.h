@@ -402,6 +402,11 @@ namespace eka2l1 {
 
         std::unordered_map<epoc::ws::uid, key_capture_request_queue> key_capture_requests;
 
+        // A captured key goes only to its highest priority capturer: CaptureKey matches the key code of
+        // key events, CaptureKeyUpAndDowns the scan code of up and down events.
+        epoc::window_group *find_key_capture(const std::uint32_t key, const epoc::event_key_capture_type type,
+            const std::uint32_t modifiers);
+
         epoc::screen *focus_screen_{ nullptr };
         epoc::pointer_cursor_mode cursor_mode_{ epoc::pointer_cursor_mode::fixed };
 

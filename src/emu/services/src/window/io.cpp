@@ -237,54 +237,34 @@ namespace eka2l1::epoc {
                 serv_->cancel_repeatable_list.insert(data_for_repeatable);
             }
         }
-        if (!focus) {
+
+        epoc::window_group *down_target = serv_->find_key_capture(evt.key_evt_.scancode,
+            epoc::event_key_capture_type::up_and_downs, translator_.modifiers());
+        if (!down_target) {
+            down_target = focus;
+        }
+
+        if (down_target) {
+            evt.handle = down_target->get_client_handle();
+            down_target->queue_event(evt);
+        }
+
+        if (dont_send_extra_key_event) {
             return;
         }
 
-        evt.handle = focus->get_client_handle();
-        extra_event.handle = focus->get_client_handle();
+        epoc::window_group *key_target = serv_->find_key_capture(extra_event.key_evt_.code,
+            epoc::event_key_capture_type::normal, extra_event.key_evt_.modifiers);
+        if (!key_target) {
+            key_target = focus;
+        }
 
-        focus->queue_event(evt);
-
-        if (!dont_send_extra_key_event) {
-            // Give it a single key event also
-            focus->queue_event(extra_event);
+        if (key_target) {
+            extra_event.handle = key_target->get_client_handle();
+            key_target->queue_event(extra_event);
 
             if ((evt.type == epoc::event_code::key_down) && repeatable) {
                 timing->schedule_event(serv_->initial_repeat_delay_, serv_->repeatable_event_, data_for_repeatable);
-            }
-        }
-
-        // Iterates through key capture requests and deliver those in needs.key_capture_request_queue &rqueue = key_capture_requests[extra_key_evt.key_evt_.code];
-        window_server::key_capture_request_queue &rqueue = serv_->key_capture_requests[evt.key_evt_.code];
-
-        for (auto ite = rqueue.end(); ite != rqueue.begin();) {
-            --ite;
-            // No need to deliver twice.
-            if (ite->user->id == focus->id) {
-                break;
-            }
-
-            switch (ite->type_) {
-            case epoc::event_key_capture_type::normal:
-                if (dont_send_extra_key_event) {
-                    break;
-                }
-                extra_event.handle = ite->user->get_client_handle();
-
-                ite->user->queue_event(extra_event);
-
-                break;
-
-            case epoc::event_key_capture_type::up_and_downs:
-                evt.handle = ite->user->get_client_handle();
-
-                ite->user->queue_event(evt);
-
-                break;
-
-            default:
-                break;
             }
         }
     }
