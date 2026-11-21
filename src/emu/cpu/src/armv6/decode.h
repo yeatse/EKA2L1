@@ -181,11 +181,12 @@ namespace eka2l1::arm::armv6 {
     };
     struct arm_op {
         arm_code code {};
+        opcode generic {};
         std::uint8_t d {}, a {}, b {}, shift {}, flags {}, cond {};
         std::uint32_t value {};
     };
-    inline arm_op decode_arm_page(std::uint32_t bits) {
-        auto ins = decode(bits, false);
+    inline arm_op specialize_arm(instruction ins) {
+        const auto bits = ins.bits;
         arm_op op;
         op.a = (bits >> 16) & 15;
         op.b = bits & 15;
@@ -249,4 +250,14 @@ namespace eka2l1::arm::armv6 {
         }
         return op;
     }
+    inline arm_op decode_arm_page(std::uint32_t bits) {
+        const auto ins = decode(bits, false);
+        auto op = specialize_arm(ins);
+        if (op.code == arm_code::other) {
+            op.generic = ins.op;
+            op.value = bits;
+        }
+        return op;
+    }
+
 }

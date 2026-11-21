@@ -211,12 +211,13 @@ namespace eka2l1::arm {
                     const auto pc = state_.get_pc() & (thumb ? ~1u : ~3u);
                     state_.set_pc(pc);
                     if (!(state_.cpsr & 0x200)) {
-                        auto limit = retired_ + std::min(budget - retired_, 256u);
+                        const auto before = retired_;
+                        const auto limit = before + std::min(budget - before, 256u);
                         if (thumb)
                             run_thumb_page(limit);
                         else
                             run_arm_page(limit);
-                        if (retired_ == budget || stopped_ || state_.get_pc() != pc || bool(state_.cpsr & T) != thumb)
+                        if (retired_ != before || stopped_)
                             continue;
                     }
                     auto op = fetch(pc, thumb);
@@ -368,8 +369,14 @@ namespace eka2l1::arm {
                 if (op.cond < 14 && !passes(op.cond, flags))
                     goto advance_arm;
                 switch (op.code) {
-                case other:
-                    goto done;
+                case other: {
+                    const auto pc = base + 4 * index;
+                    retired_ = budget - remaining + 1;
+                    state_.cpsr = flags;
+                    state_.set_pc(pc);
+                    execute({ op.value, op.generic, op.cond }, pc, 4);
+                    return;
+                }
                 case add_i:
                     d = a + op.value;
                     break;
