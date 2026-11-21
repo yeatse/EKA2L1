@@ -2200,21 +2200,23 @@ std::uint32_t suite_vfp(backend_env &dc, backend_env &da, std::uint32_t base_see
     return failures;
 }
 
-bool check_thumb_memory_fault(bool store, bool retry) {
+bool check_thumb_memory_fault(bool store, bool retry, bool writeback) {
     auto env = make_dyncom_env(true);
     program p;
     p.thumb = true;
     p.budget = 5;
     p.init[1] = PROG_DATA_PTR;
     // MOVS, SUBS set N and clear C. The transfer must not change those flags.
-    for (std::uint16_t hw : { 0x2000, 0x3801, store ? 0x6008 : 0x6808, 0x2201, 0x2302, 0xe7fe })
+    const int transfer = writeback ? (store ? 0xc101 : 0xc901) : (store ? 0x6008 : 0x6808);
+    for (std::uint16_t hw : { 0x2000, 0x3801, transfer, 0x2201, 0x2302, 0xe7fe })
         push16(p.code, hw);
     install(*env, p);
     unsigned accesses = 0, faults = 0;
     bool valid = true;
     const auto access = [&](address addr, std::uint32_t *value) {
         ++accesses;
-        valid &= addr == PROG_DATA_PTR && env->cpu->get_pc() == p.addr + 4;
+        valid &= addr == PROG_DATA_PTR && env->cpu->get_pc() == p.addr + 4
+            && env->cpu->get_reg(1) == PROG_DATA_PTR + (writeback ? 4 : 0);
         if (store)
             valid &= *value == 0xffffffffu;
         else if (accesses == 2)
@@ -2474,17 +2476,36 @@ int main(int argc, char **argv) {
     transfers.init[2] = 4;
     transfers.init[13] = PROG_DATA_PTR + 64;
     for (std::uint16_t hw : { 0x5088, 0x588b, 0x5288, 0x5a8c, 0x6048, 0x684d,
-             0x8088, 0x888e, 0x90ff, 0x9fff, 0x46be, 0x4477, 0xe7fe })
+             0x8088, 0x888e, 0x90ff, 0x9fff, 0x46be, 0x4477, 0xc101, 0xc908, 0x4800, 0x4b01, 0xe7fe })
         push16(transfers.code, hw);
     for (unsigned budget = 1; budget <= transfers.code.size() / 2; ++budget) {
         transfers.budget = budget;
         if (!run_pair("thumb-transfers", *span_core, *da, transfers, base_seed, true, cov, true))
             ++failures;
     }
+    program pairs;
+    pairs.thumb = true;
+    pairs.init[0] = 0x80000001;
+    pairs.init[1] = 0xffffffff;
+    pairs.init[2] = 3;
+    // Stop immediately before, between, and after the two operations.
+    for (const std::uint16_t first : { 0x0800, 0x0840, 0x0040, 0x4348, 0x1a40, 0x1840, 0x4008 }) {
+        for (const std::uint16_t second : { 0x4008, 0x4048, 0x0802, 0x0840, 0x4348 }) {
+            pairs.code.clear();
+            for (auto hw : { std::uint16_t(0x2300), first, second, std::uint16_t(0xe7fe) })
+                push16(pairs.code, hw);
+            for (unsigned budget = 1; budget <= 4; ++budget) {
+                pairs.budget = budget;
+                if (!run_pair("thumb-pairs", *span_core, *da, pairs, base_seed, true, cov, true))
+                    ++failures;
+            }
+        }
+    }
     for (bool store : { false, true })
         for (bool retry : { false, true })
-            if (!check_thumb_memory_fault(store, retry))
-                ++failures;
+            for (bool writeback : { false, true })
+                if (!check_thumb_memory_fault(store, retry, writeback))
+                    ++failures;
     const auto executed = thumb_block_instructions_for_test() - previous;
     std::printf("  compact Thumb instructions in boundary cases: %llu\n", static_cast<unsigned long long>(executed));
     if (!executed) ++failures;

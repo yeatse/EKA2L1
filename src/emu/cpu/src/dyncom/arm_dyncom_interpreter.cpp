@@ -1894,6 +1894,7 @@ static unsigned translate_thumb_span(ARMul_State *cpu, std::uint32_t pc, ARM_INS
     if (count < 3)
         return 0;
 
+    fuse(ops, count);
     inst = reinterpret_cast<arm_inst *>(&cpu->trans_cache_buf[cpu->trans_cache_buf_top]);
     inst->idx = THUMB_BLOCK_IDX;
     inst->cond = ConditionCode::AL;

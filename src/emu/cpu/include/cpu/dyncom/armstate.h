@@ -172,13 +172,23 @@ public:
         return ReadMemory8Slow(address);
     }
     std::uint16_t ReadMemory16(std::uint32_t address) const {
+        return ReadMemory16(address, [] {});
+    }
+    template <typename BeforeMiss>
+    std::uint16_t ReadMemory16(std::uint32_t address, BeforeMiss before_miss) const {
         if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(mem_cache_->lookup(address)))
             return *ptr;
+        before_miss();
         return ReadMemory16Slow(address);
     }
     std::uint32_t ReadMemory32(std::uint32_t address) const {
+        return ReadMemory32(address, [] {});
+    }
+    template <typename BeforeMiss>
+    std::uint32_t ReadMemory32(std::uint32_t address, BeforeMiss before_miss) const {
         if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(mem_cache_->lookup(address)))
             return *ptr;
+        before_miss();
         return ReadMemory32Slow(address);
     }
     std::uint64_t ReadMemory64(std::uint32_t address) const {
@@ -195,21 +205,31 @@ public:
         WriteMemory8Slow(address, data);
     }
     void WriteMemory16(std::uint32_t address, std::uint16_t data) {
+        WriteMemory16(address, data, [] {});
+    }
+    template <typename BeforeMiss>
+    void WriteMemory16(std::uint32_t address, std::uint16_t data, BeforeMiss before_miss) {
         if (InBigEndianMode())
             data = eka2l1::common::byte_swap(data);
         if (std::uint16_t *ptr = reinterpret_cast<std::uint16_t *>(mem_cache_->lookup(address))) {
             *ptr = data;
             return;
         }
+        before_miss();
         WriteMemory16Slow(address, data);
     }
     void WriteMemory32(std::uint32_t address, std::uint32_t data) {
+        WriteMemory32(address, data, [] {});
+    }
+    template <typename BeforeMiss>
+    void WriteMemory32(std::uint32_t address, std::uint32_t data, BeforeMiss before_miss) {
         if (InBigEndianMode())
             data = eka2l1::common::byte_swap(data);
         if (std::uint32_t *ptr = reinterpret_cast<std::uint32_t *>(mem_cache_->lookup(address))) {
             *ptr = data;
             return;
         }
+        before_miss();
         WriteMemory32Slow(address, data);
     }
     void WriteMemory64(std::uint32_t address, std::uint64_t data) {
