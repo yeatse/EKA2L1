@@ -2483,6 +2483,22 @@ int main(int argc, char **argv) {
         if (!run_pair("thumb-transfers", *span_core, *da, transfers, base_seed, true, cov, true))
             ++failures;
     }
+    program arithmetic;
+    arithmetic.thumb = true;
+    arithmetic.init[1] = 1;
+    arithmetic.budget = 3;
+    for (const auto lhs : { 0u, 0x7fffffffu, 0x80000000u, 0xffffffffu }) {
+        arithmetic.init[0] = lhs;
+        for (const std::uint16_t hw : { 0x1840, 0x1a40, 0x3001, 0x3801, 0x2801 }) {
+            arithmetic.code.clear();
+            push16(arithmetic.code, 0x2200); // MOVS r2, #0
+            push16(arithmetic.code, 0x2a00); // CMP r2, #0
+            push16(arithmetic.code, hw);
+            push16(arithmetic.code, 0xe7fe);
+            if (!run_pair("thumb-arithmetic-flags", *span_core, *da, arithmetic, base_seed, true, cov, true))
+                ++failures;
+        }
+    }
     program pairs;
     pairs.thumb = true;
     pairs.init[0] = 0x80000001;

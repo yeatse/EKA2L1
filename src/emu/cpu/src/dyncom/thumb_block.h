@@ -101,6 +101,29 @@ namespace eka2l1::arm::thumb_block {
         }
     }
 
+    template <bool subtract>
+    inline std::uint32_t arithmetic(ARMul_State &cpu, std::uint32_t lhs, std::uint32_t rhs) {
+        bool carry, overflow;
+#if defined(__GNUC__) || defined(__clang__)
+        std::uint32_t result;
+        std::int32_t signed_result;
+        if constexpr (subtract) {
+            carry = !__builtin_sub_overflow(lhs, rhs, &result);
+            overflow = __builtin_sub_overflow(static_cast<std::int32_t>(lhs),
+                static_cast<std::int32_t>(rhs), &signed_result);
+        } else {
+            carry = __builtin_add_overflow(lhs, rhs, &result);
+            overflow = __builtin_add_overflow(static_cast<std::int32_t>(lhs),
+                static_cast<std::int32_t>(rhs), &signed_result);
+        }
+#else
+        const auto result = AddWithCarry(lhs, subtract ? ~rhs : rhs, subtract, &carry, &overflow);
+#endif
+        cpu.CFlag = carry;
+        cpu.VFlag = overflow;
+        return result;
+    }
+
     template <opcode kind>
     inline std::uint32_t binary(ARMul_State &cpu, const operation &op) {
         const auto lhs = cpu.Reg[op.lhs];
@@ -117,12 +140,7 @@ namespace eka2l1::arm::thumb_block {
             return lhs * cpu.Reg[rhs];
         } else {
             static_assert(kind == opcode::add || kind == opcode::sub);
-            bool carry, overflow;
-            const auto result = AddWithCarry(lhs, kind == opcode::add ? cpu.Reg[rhs] : ~cpu.Reg[rhs],
-                kind == opcode::sub, &carry, &overflow);
-            cpu.CFlag = carry;
-            cpu.VFlag = overflow;
-            return result;
+            return arithmetic<kind == opcode::sub>(cpu, lhs, cpu.Reg[rhs]);
         }
     }
 
@@ -158,7 +176,6 @@ namespace eka2l1::arm::thumb_block {
             const auto rhs = op.rhs;
             // A TLB miss can enter a callback that observes the faulting instruction.
             auto before_miss = [&] { synchronize(i - 1); };
-            bool carry, overflow;
             switch (op.code) {
             case opcode::lsr_and:
                 result = execute_pair<opcode::lsr, opcode::bit_and>(cpu, ops, i, retired);
@@ -192,16 +209,12 @@ namespace eka2l1::arm::thumb_block {
                 break;
             case opcode::add: result = binary<opcode::add>(cpu, op); break;
             case opcode::add_imm:
-                result = AddWithCarry(lhs, rhs, 0, &carry, &overflow);
-                cpu.CFlag = carry;
-                cpu.VFlag = overflow;
+                result = arithmetic<false>(cpu, lhs, rhs);
                 break;
             case opcode::sub: result = binary<opcode::sub>(cpu, op); break;
             case opcode::sub_imm:
             case opcode::cmp_imm:
-                result = AddWithCarry(lhs, ~std::uint32_t(rhs), 1, &carry, &overflow);
-                cpu.CFlag = carry;
-                cpu.VFlag = overflow;
+                result = arithmetic<true>(cpu, lhs, rhs);
                 break;
             case opcode::constant: result = rhs; break;
             case opcode::bit_and: result = binary<opcode::bit_and>(cpu, op); break;
