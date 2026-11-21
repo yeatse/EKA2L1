@@ -23,6 +23,7 @@
  */
 
 #include <cpu/arm_dynarmic.h>
+#include <cpu/armv6.h>
 #include <cpu/dyncom/arm_dyncom.h>
 #include <cpu/dyncom/vfp/asm_vfp.h>
 #include <cpu/dyncom/vfp/vfp.h>
@@ -1113,11 +1114,14 @@ void wire_backend(backend_env &e) {
     cp->system_call_handler = [ep](const std::uint32_t) { ep->syscalls++; };
 }
 
-std::unique_ptr<backend_env> make_dyncom_env(bool thumb_blocks) {
+std::unique_ptr<backend_env> make_dyncom_env(bool thumb_blocks, bool armv6 = false) {
     auto e = std::make_unique<backend_env>();
-    e->name = "dyncom";
+    e->name = armv6 ? "armv6" : "dyncom";
     e->monitor = std::make_unique<r12l1::exclusive_monitor>(1);
-    e->cpu = std::make_unique<dyncom_core>(e->monitor.get(), PAGE_BITS, thumb_blocks);
+    if (armv6)
+        e->cpu = make_armv6_interpreter(e->monitor.get());
+    else
+        e->cpu = std::make_unique<dyncom_core>(e->monitor.get(), PAGE_BITS, thumb_blocks);
     wire_backend(*e);
     return e;
 }
@@ -1857,7 +1861,7 @@ std::uint32_t check_thumb_counted_word_loop(backend_env &dc, backend_env &da, co
             const auto iterations_before = cov.accel_bulk_iterations;
             if (!run_pair("counted-word-loop", dc, da, p, 0xc0123, true, cov, budget != 4096)) {
                 ++failures;
-            } else if ((cov.accel_bulk_iterations > iterations_before) != (budget != 35)) {
+            } else if (std::string_view(dc.name) == "dyncom" && (cov.accel_bulk_iterations > iterations_before) != (budget != 35)) {
                 std::printf("[HARNESS BUG] unexpected counted word loop batching\n");
                 ++failures;
             }
@@ -2417,7 +2421,8 @@ int main(int argc, char **argv) {
     std::printf("dyncom_difftest: phase 2 (dynarmic oracle, whole programs)\n");
 
     const bool thumb_blocks = argc > 3 && std::string_view(argv[3]) == "thumb-block";
-    auto dc = make_dyncom_env(thumb_blocks);
+    const bool armv6 = argc > 3 && std::string_view(argv[3]) == "armv6";
+    auto dc = make_dyncom_env(thumb_blocks, armv6);
     auto da = make_dynarmic_env();
     coverage cov;
 
@@ -2545,7 +2550,7 @@ int main(int argc, char **argv) {
     // Coverage assertions. Without these a suite that silently stopped
     // reaching its target would report a clean pass -- which is exactly how
     // the previous harness "verified" the loop accelerator it never ran.
-    if (cov.accel_attaches == 0) {
+    if (!armv6 && cov.accel_attaches == 0) {
         std::printf("[HARNESS BUG] the loop accelerator never attached; the loop "
                     "suite is not testing it\n");
         failures++;

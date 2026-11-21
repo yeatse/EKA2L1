@@ -20,6 +20,7 @@
 #include <common/log.h>
 #include <common/platform.h>
 #include <cpu/arm_factory.h>
+#include <cpu/armv6.h>
 
 #include <cpu/dyncom/arm_dyncom.h>
 
@@ -163,6 +164,9 @@ namespace eka2l1::arm {
             return std::make_unique<dynarmic_core>(monitor);
 #endif
 
+        case arm_emulator_type::armv6:
+            return make_armv6_interpreter(monitor);
+
         case arm_emulator_type::thumb_block:
             return std::make_unique<dyncom_core>(monitor, 12, true);
 
@@ -185,6 +189,7 @@ namespace eka2l1::arm {
         case arm_emulator_type::unicorn:
             return nullptr;
 
+        case arm_emulator_type::armv6:
         case arm_emulator_type::thumb_block:
         case arm_emulator_type::dyncom:
             return std::make_unique<r12l1::exclusive_monitor>(core_count);

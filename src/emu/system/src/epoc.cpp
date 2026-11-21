@@ -672,8 +672,9 @@ namespace eka2l1 {
         // (EKA2L1_IOS_DYNARMIC) let the user opt in, through ios_use_jit rather
         // than cpu_backend -- the latter defaults to "dynarmic" for desktop and
         // may already be persisted, which must not enable a JIT by itself.
-        cpu_type = arm::string_to_arm_emulator_type(conf_->cpu_backend) == arm_emulator_type::thumb_block
-            ? arm_emulator_type::thumb_block : arm_emulator_type::dyncom;
+        cpu_type = arm::string_to_arm_emulator_type(conf_->cpu_backend);
+        if (cpu_type != arm_emulator_type::thumb_block && cpu_type != arm_emulator_type::armv6)
+            cpu_type = arm_emulator_type::dyncom;
 #if EKA2L1_IOS_DYNARMIC
         if (conf_->ios_use_jit && arm::host_can_jit()) {
             cpu_type = arm_emulator_type::dynarmic;

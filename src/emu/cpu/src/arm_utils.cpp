@@ -51,6 +51,9 @@ namespace eka2l1::arm {
         case arm_emulator_type::unicorn:
             return unicorn_jit_backend_formal_name;
 
+        case arm_emulator_type::armv6:
+            return "armv6";
+
         case arm_emulator_type::thumb_block:
             return thumb_block_backend_name;
 
@@ -75,6 +78,9 @@ namespace eka2l1::arm {
 
         if (backend_lowered == dynarmic_jit_backend_name)
             return arm_emulator_type::dynarmic;
+
+        if (backend_lowered == "armv6")
+            return arm_emulator_type::armv6;
 
         if (backend_lowered == thumb_block_backend_name)
             return arm_emulator_type::thumb_block;
