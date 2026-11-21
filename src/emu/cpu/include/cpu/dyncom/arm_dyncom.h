@@ -16,6 +16,7 @@ namespace eka2l1::arm {
     // Test-only instrumentation for the translation-time loop accelerator. It
     // only ever attaches during block translation, so a harness must be able to
     // assert it was actually exercised rather than silently skipped.
+    std::uint64_t thumb_block_instructions_for_test();
     void dyncom_reset_loop_accel_counters_for_test();
     std::uint64_t dyncom_loop_accel_attaches_for_test();
     std::uint64_t dyncom_loop_accel_bulk_iterations_for_test();
@@ -36,7 +37,7 @@ namespace eka2l1::arm {
         bool asid_instruction_cache_ = false;
 
     public:
-        explicit dyncom_core(arm::exclusive_monitor *monitor, const std::size_t page_bits);
+        explicit dyncom_core(arm::exclusive_monitor *monitor, const std::size_t page_bits, bool thumb_blocks = false);
         ~dyncom_core() override;
 
         arm::exclusive_monitor *exmonitor() {

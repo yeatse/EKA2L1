@@ -337,6 +337,7 @@ public:
     std::uint32_t TFlag; // Thumb state
 
     unsigned long long NumInstrs; // The number of instructions executed
+    bool thumb_blocks_enabled = false;
     std::uint64_t NumInstrsToExecute;
 
     unsigned NresetSig; // Reset the processor

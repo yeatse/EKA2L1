@@ -112,7 +112,7 @@ namespace eka2l1::arm {
             resolved = arm_emulator_type::dyncom;
         }
 #else
-        // Three of the four enum values have no core on some desktop host: unicorn
+        // Some backend types have no core on a given desktop host: unicorn
         // support is gone everywhere, 12l1r needs a 32-bit ARM host, and dynarmic is
         // compiled out of dyncom-only builds. cpu_backend is free text out of
         // config.yml, so an unsupported name otherwise reaches create_core, which
@@ -163,6 +163,9 @@ namespace eka2l1::arm {
             return std::make_unique<dynarmic_core>(monitor);
 #endif
 
+        case arm_emulator_type::thumb_block:
+            return std::make_unique<dyncom_core>(monitor, 12, true);
+
         case arm_emulator_type::dyncom:
             return std::make_unique<dyncom_core>(monitor, 12);
 
@@ -182,6 +185,7 @@ namespace eka2l1::arm {
         case arm_emulator_type::unicorn:
             return nullptr;
 
+        case arm_emulator_type::thumb_block:
         case arm_emulator_type::dyncom:
             return std::make_unique<r12l1::exclusive_monitor>(core_count);
 

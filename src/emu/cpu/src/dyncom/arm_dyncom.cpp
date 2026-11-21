@@ -24,7 +24,7 @@
 #include <common/log.h>
 
 namespace eka2l1::arm {
-    dyncom_core::dyncom_core(arm::exclusive_monitor *monitor, const std::size_t page_bits)
+    dyncom_core::dyncom_core(arm::exclusive_monitor *monitor, const std::size_t page_bits, bool thumb_blocks)
         : monitor_(monitor)
         , state_(nullptr)
         , ticks_executed_(0)
@@ -33,6 +33,7 @@ namespace eka2l1::arm {
         // Cache the data TLB on the state so the inline memory accessors can hit
         // it without needing the full dyncom_core definition in armstate.h.
         state_->mem_cache_ = &mem_cache_;
+        state_->thumb_blocks_enabled = thumb_blocks;
     }
 
     dyncom_core::~dyncom_core() {

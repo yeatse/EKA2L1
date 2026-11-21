@@ -24,6 +24,8 @@
 
 #include <cpu/arm_interface.h>
 
+#include "thumb_block.h"
+
 #define RM BITS(sht_oper, 0, 3)
 #define RS BITS(sht_oper, 8, 11)
 
@@ -428,6 +430,10 @@ static std::uint64_t g_loop_accel_attaches = 0;
 static std::uint64_t g_loop_accel_bulk_iterations = 0;
 
 namespace eka2l1::arm {
+    static std::uint64_t thumb_block_instructions = 0;
+    std::uint64_t thumb_block_instructions_for_test() {
+        return thumb_block_instructions;
+    }
     void dyncom_reset_loop_accel_counters_for_test() {
         g_loop_accel_attaches = 0;
         g_loop_accel_bulk_iterations = 0;
@@ -1872,6 +1878,33 @@ static unsigned int InterpreterTranslateInstruction(ARMul_State *cpu, const std:
     return inst_size;
 }
 
+static constexpr unsigned THUMB_BLOCK_IDX = 210;
+
+static unsigned translate_thumb_span(ARMul_State *cpu, std::uint32_t pc, ARM_INST_PTR &inst) {
+    using namespace eka2l1::arm::thumb_block;
+    operation ops[max_length];
+    const unsigned limit = std::min<unsigned>(max_length, (0x1000 - (pc & 0xfff)) / 2);
+    unsigned count = 0;
+    for (; count < limit; ++count) {
+        const auto address = pc + 2 * count;
+        const auto word = cpu->ReadCode(address & ~3u);
+        if (!decode(static_cast<std::uint16_t>(word >> ((address & 2) * 8)), count == 0, ops[count]))
+            break;
+    }
+    if (count < 3)
+        return 0;
+
+    inst = reinterpret_cast<arm_inst *>(&cpu->trans_cache_buf[cpu->trans_cache_buf_top]);
+    inst->idx = THUMB_BLOCK_IDX;
+    inst->cond = ConditionCode::AL;
+    inst->br = TransExtData::NON_BRANCH;
+    const auto bytes = count * sizeof(operation);
+    std::memcpy(inst->component, &count, sizeof(count));
+    std::memcpy(inst->component + sizeof(count), ops, bytes);
+    cpu->trans_cache_buf_top += (sizeof(arm_inst) + sizeof(count) + bytes + 7) & ~std::size_t{7};
+    return count * 2;
+}
+
 static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, std::uint32_t addr) {
     // Decode instruction, get index
     // Allocate memory and init InsCream
@@ -1921,7 +1954,11 @@ static int InterpreterTranslateBlock(ARMul_State *cpu, std::size_t &bb_start, st
 
     ARM_INST_PTR prev_base = nullptr;
     while (ret == TransExtData::NON_BRANCH) {
-        unsigned int inst_size = InterpreterTranslateInstruction(cpu, phys_addr, inst_base);
+        unsigned int inst_size = 0;
+        if (cpu->thumb_blocks_enabled && cpu->TFlag)
+            inst_size = translate_thumb_span(cpu, phys_addr, inst_base);
+        if (!inst_size)
+            inst_size = InterpreterTranslateInstruction(cpu, phys_addr, inst_base);
 
         if (!inst_base) {
             return FETCH_EXCEPTION;
@@ -2479,6 +2516,8 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
         goto THUMB_COUNTED_LOOP_INST;          \
     case 209:                                  \
         goto THUMB_SHIFT_PAIR_INST;            \
+    case THUMB_BLOCK_IDX:                      \
+        goto THUMB_BLOCK_INST;                 \
     }
 #endif
 
@@ -2710,7 +2749,10 @@ unsigned InterpreterMainLoop(ARMul_State *cpu, std::uint32_t &num_instrs) {
         &&CMP_BBL_INST,
         &&CMP_B_COND_THUMB_INST,
         &&THUMB_COUNTED_LOOP_INST,
-        &&THUMB_SHIFT_PAIR_INST };
+        &&THUMB_SHIFT_PAIR_INST,
+        &&THUMB_BLOCK_INST,
+    };
+    assert(InstLabel[THUMB_BLOCK_IDX] == &&THUMB_BLOCK_INST);
     assert(InstLabel[CMP_IDX] == &&CMP_INST && InstLabel[BBL_IDX] == &&BBL_INST
         && InstLabel[B_COND_THUMB_IDX] == &&B_COND_THUMB && InstLabel[CMP_BBL_IDX] == &&CMP_BBL_INST
         && InstLabel[CMP_B_COND_THUMB_IDX] == &&CMP_B_COND_THUMB_INST
@@ -2826,6 +2868,23 @@ LOOP_ACCEL_INST : {
         }
     }
     INC_PC(sizeof(loop_accel_inst));
+    FETCH_INST;
+    GOTO_NEXT_INST;
+}
+THUMB_BLOCK_INST : {
+    using namespace eka2l1::arm::thumb_block;
+    unsigned count;
+    std::memcpy(&count, inst_base->component, sizeof(count));
+    const auto *ops = reinterpret_cast<const operation *>(inst_base->component + sizeof(count));
+    --num_instrs;
+    const auto executed = execute(*cpu, ops, count, num_instrs);
+#ifdef EKA2L1_DYNCOM_DIFFTEST
+    eka2l1::arm::thumb_block_instructions += executed;
+#endif
+    num_instrs += executed;
+    if (executed < count)
+        goto END;
+    INC_PC(sizeof(count) + count * sizeof(operation));
     FETCH_INST;
     GOTO_NEXT_INST;
 }

@@ -39,6 +39,7 @@
 #include <cstring>
 #include <memory>
 #include <random>
+#include <string_view>
 #include <vector>
 
 using namespace eka2l1;
@@ -1112,11 +1113,11 @@ void wire_backend(backend_env &e) {
     cp->system_call_handler = [ep](const std::uint32_t) { ep->syscalls++; };
 }
 
-std::unique_ptr<backend_env> make_dyncom_env() {
+std::unique_ptr<backend_env> make_dyncom_env(bool thumb_blocks) {
     auto e = std::make_unique<backend_env>();
     e->name = "dyncom";
     e->monitor = std::make_unique<r12l1::exclusive_monitor>(1);
-    e->cpu = std::make_unique<dyncom_core>(e->monitor.get(), PAGE_BITS);
+    e->cpu = std::make_unique<dyncom_core>(e->monitor.get(), PAGE_BITS, thumb_blocks);
     wire_backend(*e);
     return e;
 }
@@ -2324,7 +2325,8 @@ int main(int argc, char **argv) {
     // -----------------------------------------------------------------------
     std::printf("dyncom_difftest: phase 2 (dynarmic oracle, whole programs)\n");
 
-    auto dc = make_dyncom_env();
+    const bool thumb_blocks = argc > 3 && std::string_view(argv[3]) == "thumb-block";
+    auto dc = make_dyncom_env(thumb_blocks);
     auto da = make_dynarmic_env();
     coverage cov;
 
@@ -2355,6 +2357,30 @@ int main(int argc, char **argv) {
                 ++failures;
         }
     }
+    auto span_core = make_dyncom_env(true);
+    const auto previous = thumb_block_instructions_for_test();
+    for (const unsigned offset : { 0u, 0xff6u }) {
+        program span;
+        span.thumb = true;
+        span.addr = PROG_CODE_LO + offset;
+        span.kind = "thumb-block";
+        span.init[1] = PROG_DATA_PTR;
+        span.init[13] = PROG_DATA_PTR;
+        // LDR, immediate shifts (including #32), ADD/SUB, logical ops, MUL,
+        // CMP and a store outside the span; then load a halfword and a stack word.
+        for (std::uint16_t hw : { 0x6808, 0x0042, 0x0813, 0x1014, 0x18d5, 0x1ae6,
+                 0x1c77, 0x1ef6, 0x4032, 0x407a, 0x4332, 0x437a, 0x2a80, 0x600a,
+                 0x880b, 0x33ff, 0x3b80, 0x9c00, 0x2000, 0x0044, 0xe7fe })
+            push16(span.code, hw);
+        for (unsigned budget = 1; budget <= span.code.size() / 2; ++budget) {
+            span.budget = budget;
+            if (!run_pair("thumb-block", *span_core, *da, span, base_seed, true, cov, true))
+                ++failures;
+        }
+    }
+    const auto executed = thumb_block_instructions_for_test() - previous;
+    std::printf("  compact Thumb instructions in boundary cases: %llu\n", static_cast<unsigned long long>(executed));
+    if (!executed) ++failures;
     failures += check_thumb_counted_word_loop(*dc, *da, cov);
     failures += check_vfp_mac_cancellation(*dc, *da);
     failures += check_undefined_instructions(*dc);
