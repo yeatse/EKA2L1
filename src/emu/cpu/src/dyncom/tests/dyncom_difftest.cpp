@@ -2189,10 +2189,17 @@ std::uint32_t suite_vfp(backend_env &dc, backend_env &da, std::uint32_t base_see
         set_common_init(p, r);
         for (int v = 8; v < 16; v++) p.vfp_init[v] = random_normal_f32(r);
 
+        push32(p.code, 0xeef14a10u); // vmrs r4, fpscr
         const std::uint32_t len = 4 + r.range(12);
         for (std::uint32_t n = 0; n < len; n++) {
             push32(p.code, vfp_ops[r.range(sizeof(vfp_ops) / sizeof(vfp_ops[0]))]);
         }
+        push32(p.code, 0xee000a10u); // vmov s0, r0
+        push32(p.code, 0xeeb81bc0u); // vcvt.f64.s32 d1, s0
+        push32(p.code, 0xeeb82b40u); // vcvt.f64.u32 d2, s0
+        push32(p.code, 0xec532b11u); // vmov r2, r3, d1
+        push32(p.code, 0xed892b02u); // vstr d2, [r9, #8]
+        push32(p.code, 0xed993b02u); // vldr d3, [r9, #8]
         // Spill the bank so a divergence also shows up in memory.
         push32(p.code, 0xED894A00u); // vstr s8, [r9]
         push32(p.code, 0xEDC94A01u); // vstr s9, [r9, #4]

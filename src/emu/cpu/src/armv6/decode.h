@@ -25,7 +25,12 @@ namespace eka2l1::arm::armv6 {
         hint,
         read_status,
         write_flags,
-        long_multiply
+        long_multiply,
+        vfp_move,
+        vfp_status,
+        vfp_transfer,
+        vfp_move_double,
+        vfp_int_to_double
     };
 
     struct instruction {
@@ -58,6 +63,16 @@ namespace eka2l1::arm::armv6 {
         if (cond != 15) {
             if ((bits & 0x0ffffff0) == 0x012fff10 || (bits & 0x0ffffff0) == 0x012fff30)
                 op = opcode::exchange;
+            else if ((bits & 0x0fe00fd0) == 0x0c400b10 && ((bits >> 12) & 15) != 15 && ((bits >> 16) & 15) != 15)
+                op = opcode::vfp_move_double;
+            else if ((bits & 0x0fbf0f50) == 0x0eb80b40)
+                op = opcode::vfp_int_to_double;
+            else if ((bits & 0x0fe00f7f) == 0x0e000a10 && ((bits >> 12) & 15) != 15)
+                op = opcode::vfp_move;
+            else if ((bits & 0x0fef0fff) == 0x0ee10a10 && ((bits & (1u << 20)) || ((bits >> 12) & 15) != 15))
+                op = opcode::vfp_status;
+            else if ((bits & 0x0f200e00) == 0x0d000a00)
+                op = opcode::vfp_transfer;
             else if ((bits & 0x0f900fff) == 0x01900f9f && ((bits >> 12) & 15) != 15)
                 op = opcode::exclusive_read;
             else if ((bits & 0x0f900ff0) == 0x01800f90 && (bits & 15) != 15)

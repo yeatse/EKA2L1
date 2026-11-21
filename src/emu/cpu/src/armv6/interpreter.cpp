@@ -819,6 +819,63 @@ namespace eka2l1::arm {
                     flags = (flags & ~(N | Z)) | (regs[rn] & N) | (value ? 0 : Z);
                 break;
             }
+            case opcode::vfp_move_double: {
+                const unsigned first = 2 * rm + ((bits & 32) ? 32 : 0);
+                if (bits & (1u << 20)) {
+                    regs[rd] = state_.fpu_registers[first];
+                    regs[rn] = state_.fpu_registers[first + 1];
+                } else {
+                    state_.fpu_registers[first] = regs[rd];
+                    state_.fpu_registers[first + 1] = regs[rn];
+                }
+                break;
+            }
+            case opcode::vfp_int_to_double: {
+                if (state_.fpscr & (7u << 16)) {
+                    slow_step();
+                    return;
+                }
+                const auto raw = state_.fpu_registers[2 * rm + ((bits >> 5) & 1)];
+                // Every signed and unsigned 32-bit integer is exactly representable in binary64.
+                const double value = bits & 128 ? double(static_cast<std::int32_t>(raw)) : double(raw);
+                const auto pair = std::bit_cast<std::uint64_t>(value);
+                const unsigned first = 2 * rd + ((bits & (1u << 22)) ? 32 : 0);
+                state_.fpu_registers[first] = static_cast<std::uint32_t>(pair);
+                state_.fpu_registers[first + 1] = static_cast<std::uint32_t>(pair >> 32);
+                break;
+            }
+            case opcode::vfp_move: {
+                auto& single = state_.fpu_registers[2 * rn + ((bits >> 7) & 1)];
+                if (bits & (1u << 20))
+                    regs[rd] = single;
+                else
+                    single = regs[rd];
+                break;
+            }
+            case opcode::vfp_status:
+                if (!(bits & (1u << 20)))
+                    state_.fpscr = regs[rd];
+                else if (rd == 15)
+                    flags = (flags & 0x0fffffffu) | (state_.fpscr & 0xf0000000u);
+                else
+                    regs[rd] = state_.fpscr;
+                break;
+            case opcode::vfp_transfer: {
+                const bool load = bits & (1u << 20), wide = bits & (1u << 8);
+                const unsigned high = (bits >> 22) & 1;
+                const unsigned first = 2 * rd + (wide ? 32 * high : high);
+                const auto offset = (bits & 255) * 4;
+                const auto base = rn == 15 ? reg(rn) & ~3u : reg(rn);
+                const auto addr = bits & (1u << 23) ? base + offset : base - offset;
+                for (unsigned i = 0; i < (wide ? 2u : 1u); ++i) {
+                    auto& word = state_.fpu_registers[first + i];
+                    if (load)
+                        word = memory<std::uint32_t>(addr + 4 * i, true);
+                    else
+                        memory<std::uint32_t>(addr + 4 * i, false, word);
+                }
+                break;
+            }
             case opcode::clear_exclusive:
                 monitor_->clear_exclusive();
                 break;
