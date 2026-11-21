@@ -946,20 +946,35 @@ namespace eka2l1::arm {
                 else
                     regs[rd] = state_.fpscr;
                 break;
+            case opcode::vfp_multiple:
             case opcode::vfp_transfer: {
+                const bool multiple = op.op == opcode::vfp_multiple;
                 const bool load = bits & (1u << 20), wide = bits & (1u << 8);
                 const unsigned high = (bits >> 22) & 1;
                 const unsigned first = 2 * rd + (wide ? 32 * high : high);
                 const auto offset = (bits & 255) * 4;
                 const auto base = rn == 15 ? reg(rn) & ~3u : reg(rn);
-                const auto addr = bits & (1u << 23) ? base + offset : base - offset;
-                for (unsigned i = 0; i < (wide ? 2u : 1u); ++i) {
-                    auto& word = state_.fpu_registers[first + i];
+                const auto updated = bits & (1u << 23) ? base + offset : base - offset;
+                const auto addr = multiple && (bits & (1u << 23)) ? base : updated;
+                const auto count = multiple ? bits & 255 : wide ? 2u : 1u;
+                auto* words = state_.fpu_registers.data() + first;
+                const auto& entry = tlb_.entries[(addr >> 12) & r12l1::TLB_ENTRY_MASK];
+                if ((load ? entry.read_addr : entry.write_addr) == (addr & ~4095u) && (addr & 4095) + count * 4 <= 4096) {
+                    auto* host = entry.host_base + (addr & 4095);
                     if (load)
-                        word = memory<std::uint32_t>(addr + 4 * i, true);
+                        std::memcpy(words, host, 4 * count);
                     else
-                        memory<std::uint32_t>(addr + 4 * i, false, word);
+                        std::memcpy(host, words, 4 * count);
+                } else {
+                    for (unsigned i = 0; i < count; ++i) {
+                        if (load)
+                            words[i] = memory<std::uint32_t>(addr + 4 * i, true);
+                        else
+                            memory<std::uint32_t>(addr + 4 * i, false, words[i]);
+                    }
                 }
+                if (multiple && (bits & (1u << 21)))
+                    regs[rn] = updated;
                 break;
             }
             case opcode::clear_exclusive:

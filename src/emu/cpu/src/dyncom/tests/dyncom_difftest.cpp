@@ -2202,6 +2202,8 @@ std::uint32_t suite_vfp(backend_env &dc, backend_env &da, std::uint32_t base_see
         push32(p.code, 0xed993b02u); // vldr d3, [r9, #8]
         if (std::string_view(dc.name) == "armv6")
             push32(p.code, 0xeef14a10u); // Read cumulative exceptions after rounding.
+        push32(p.code, 0xeca92b04u); // vstmia r9!, {d2-d3}
+        push32(p.code, 0xed394b04u); // vldmdb r9!, {d4-d5}
         // Spill the bank so a divergence also shows up in memory.
         push32(p.code, 0xED894A00u); // vstr s8, [r9]
         push32(p.code, 0xEDC94A01u); // vstr s9, [r9, #4]

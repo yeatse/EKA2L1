@@ -31,7 +31,8 @@ namespace eka2l1::arm::armv6 {
         vfp_transfer,
         vfp_move_double,
         vfp_int_to_double,
-        vfp_arithmetic
+        vfp_arithmetic,
+        vfp_multiple
     };
 
     struct instruction {
@@ -39,6 +40,32 @@ namespace eka2l1::arm::armv6 {
         opcode op;
         std::uint8_t condition;
     };
+
+    constexpr bool vfp_arithmetic(std::uint32_t bits) {
+        if ((bits & 0x0f000e10) != 0x0e000a00)
+            return false;
+        const auto operation = (bits >> 20) & 11;
+        if (operation < 4 || (operation == 8 && !(bits & 64)))
+            return true;
+        if (operation != 11 || !(bits & 64))
+            return false;
+        const auto kind = ((bits >> 15) & 30) | ((bits >> 7) & 1);
+        return kind <= 3 || kind == 8 || kind == 9 || ((kind == 10 || kind == 11) && !(bits & 47))
+            || kind == 15 || kind == 16 || kind == 17 || (kind >= 24 && kind <= 27);
+    }
+
+    constexpr bool vfp_multiple(std::uint32_t bits) {
+        if ((bits & 0x0e000e00) != 0x0c000a00 || ((bits >> 16) & 15) == 15)
+            return false;
+        const bool up = bits & (1u << 23), pre = bits & (1u << 24), writeback = bits & (1u << 21);
+        if (pre == up || (pre && !writeback))
+            return false;
+        const bool wide = bits & 256;
+        const auto high = (bits >> 22) & 1;
+        const auto first = 2 * ((bits >> 12) & 15) + (wide ? 32 * high : high);
+        const auto words = bits & 255;
+        return words && (!wide || (!(words & 1) && words <= 32)) && first + words <= (wide ? 64 : 32);
+    }
 
     inline instruction decode(std::uint32_t bits, bool thumb) {
         if (thumb) {
@@ -68,9 +95,10 @@ namespace eka2l1::arm::armv6 {
                 op = opcode::vfp_move_double;
             else if ((bits & 0x0fbf0f50) == 0x0eb80b40)
                 op = opcode::vfp_int_to_double;
-            else if ((bits & 0x0f000e10) == 0x0e000a00
-                && (((bits >> 20) & 11) <= 3 || ((bits & 0x00b00040) == 0x00800000)))
+            else if (vfp_arithmetic(bits))
                 op = opcode::vfp_arithmetic;
+            else if (vfp_multiple(bits))
+                op = opcode::vfp_multiple;
             else if ((bits & 0x0fe00f7f) == 0x0e000a10 && ((bits >> 12) & 15) != 15)
                 op = opcode::vfp_move;
             else if ((bits & 0x0fef0fff) == 0x0ee10a10 && ((bits & (1u << 20)) || ((bits >> 12) & 15) != 15))
