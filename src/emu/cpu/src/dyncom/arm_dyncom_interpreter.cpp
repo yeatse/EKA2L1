@@ -1888,7 +1888,7 @@ static unsigned translate_thumb_span(ARMul_State *cpu, std::uint32_t pc, ARM_INS
     for (; count < limit; ++count) {
         const auto address = pc + 2 * count;
         const auto word = cpu->ReadCode(address & ~3u);
-        if (!decode(static_cast<std::uint16_t>(word >> ((address & 2) * 8)), count == 0, ops[count]))
+        if (!decode(static_cast<std::uint16_t>(word >> ((address & 2) * 8)), ops[count]))
             break;
     }
     if (count < 3)

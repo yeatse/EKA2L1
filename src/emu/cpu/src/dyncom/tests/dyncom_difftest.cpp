@@ -2200,6 +2200,92 @@ std::uint32_t suite_vfp(backend_env &dc, backend_env &da, std::uint32_t base_see
     return failures;
 }
 
+bool check_thumb_memory_fault(bool store, bool retry) {
+    auto env = make_dyncom_env(true);
+    program p;
+    p.thumb = true;
+    p.budget = 5;
+    p.init[1] = PROG_DATA_PTR;
+    // MOVS, SUBS set N and clear C. The transfer must not change those flags.
+    for (std::uint16_t hw : { 0x2000, 0x3801, store ? 0x6008 : 0x6808, 0x2201, 0x2302, 0xe7fe })
+        push16(p.code, hw);
+    install(*env, p);
+    unsigned accesses = 0, faults = 0;
+    bool valid = true;
+    const auto access = [&](address addr, std::uint32_t *value) {
+        ++accesses;
+        valid &= addr == PROG_DATA_PTR && env->cpu->get_pc() == p.addr + 4;
+        if (store)
+            valid &= *value == 0xffffffffu;
+        else if (accesses == 2)
+            *value = 0x56781234;
+        return accesses == 2;
+    };
+    env->cpu->read_32bit = access;
+    env->cpu->write_32bit = access;
+    env->cpu->exception_handler = [&](exception_type type, address addr) {
+        ++faults;
+        valid &= addr == PROG_DATA_PTR && env->cpu->get_pc() == p.addr + 4
+            && type == (store ? exception_type_access_violation_write : exception_type_access_violation_read);
+        env->cpu->stop();
+        return retry;
+    };
+    const auto state = execute(*env, p);
+    valid &= faults == 1 && accesses == (retry ? 2u : 1u) && state.reg[15] == p.addr + 6
+        && (state.cpsr >> 28) == 8 && state.reg[2] == 0 && state.reg[3] == 0
+        && state.reg[0] == (store ? 0xffffffffu : (retry ? 0x56781234u : 0u));
+    if (!valid)
+        std::printf("[FAIL] Thumb block fault store=%d retry=%d pc=%08x cpsr=%08x accesses=%u\n",
+            store, retry, state.reg[15], state.cpsr, accesses);
+    return valid;
+}
+
+// Replay a Thumb color-blending span with a back edge and fixed source and stack data.
+bool replay_thumb_blend() {
+    program p;
+    p.thumb = true;
+    p.init[0] = 0xb7;
+    p.init[1] = PROG_DATA_PTR;
+    p.init[5] = 0x00ff00ff;
+    p.init[13] = PROG_DATA_PTR + 64;
+    for (std::uint16_t hw : { 0x680e, 0x0037, 0x0a36, 0x402e, 0x46b6, 0x9e02,
+             0x402f, 0x1bf6, 0x4346, 0x0a36, 0x19f6, 0x402e, 0x9600, 0x9f01,
+             0x4676, 0x1bbe, 0x4370, 0x9e00, 0x0a00, 0x4470, 0x4028, 0x0200,
+             0x4330, 0xe7e7 })
+        push16(p.code, hw);
+    auto baseline = make_dyncom_env(false);
+    auto blocks = make_dyncom_env(true);
+    auto oracle = make_dynarmic_env();
+    coverage cov;
+    for (unsigned n = 1; n <= 49; ++n) {
+        p.budget = n;
+        if (!run_pair("blend", *blocks, *oracle, p, 1, true, cov, true))
+            return false;
+    }
+    full_state expected{};
+    p.budget = 24000000;
+    for (auto *env : { baseline.get(), blocks.get(), blocks.get(), baseline.get() }) {
+        install(*env, p);
+        seed_data_window(env->mem, 1);
+        const auto start = std::chrono::steady_clock::now();
+        const auto state = execute(*env, p);
+        const std::chrono::duration<double> elapsed = std::chrono::steady_clock::now() - start;
+        if (env == baseline.get()) {
+            expected = state;
+        } else if (!states_equal(state, expected)
+            || std::memcmp(env->mem.data() + PROG_DATA_LO, baseline->mem.data() + PROG_DATA_LO,
+                   PROG_DATA_HI - PROG_DATA_LO) != 0) {
+            std::puts("[FAIL] blend replay final state");
+            return false;
+        }
+        if (env->cpu->get_num_instruction_executed() != p.budget || env->exceptions)
+            return false;
+        std::printf("%s %.3f ns/guest instruction\n", env == blocks.get() ? "thumb-block" : "dyncom",
+            elapsed.count() * 1e9 / p.budget);
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -2211,6 +2297,9 @@ int main(int argc, char **argv) {
     // prints its own message when one of them fails.
     eka2l1::log::setup_log(nullptr);
     eka2l1::log::filterings->reset_all(spdlog::level::critical);
+
+    if (argc == 2 && std::string_view(argv[1]) == "thumb-replay")
+        return replay_thumb_blend() ? 0 : 1;
 
     std::uint32_t base_seed = 1;
     std::uint32_t count = 200000;
@@ -2378,6 +2467,24 @@ int main(int argc, char **argv) {
                 ++failures;
         }
     }
+    program transfers;
+    transfers.thumb = true;
+    transfers.init[0] = 0xffed1234;
+    transfers.init[1] = PROG_DATA_PTR;
+    transfers.init[2] = 4;
+    transfers.init[13] = PROG_DATA_PTR + 64;
+    for (std::uint16_t hw : { 0x5088, 0x588b, 0x5288, 0x5a8c, 0x6048, 0x684d,
+             0x8088, 0x888e, 0x90ff, 0x9fff, 0x46be, 0x4477, 0xe7fe })
+        push16(transfers.code, hw);
+    for (unsigned budget = 1; budget <= transfers.code.size() / 2; ++budget) {
+        transfers.budget = budget;
+        if (!run_pair("thumb-transfers", *span_core, *da, transfers, base_seed, true, cov, true))
+            ++failures;
+    }
+    for (bool store : { false, true })
+        for (bool retry : { false, true })
+            if (!check_thumb_memory_fault(store, retry))
+                ++failures;
     const auto executed = thumb_block_instructions_for_test() - previous;
     std::printf("  compact Thumb instructions in boundary cases: %llu\n", static_cast<unsigned long long>(executed));
     if (!executed) ++failures;
