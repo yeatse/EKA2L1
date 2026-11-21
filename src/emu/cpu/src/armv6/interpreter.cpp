@@ -7,7 +7,7 @@
 #include <cpu/12l1r/tlb.h>
 #include <cpu/armv6.h>
 #include <cpu/vfp.h>
-#include <cpu/dyncom/arm_dyncom.h>
+#include <common/bytes.h>
 #include <cstring>
 #include <unordered_map>
 
@@ -85,9 +85,8 @@ namespace eka2l1::arm {
             thread_context state_ {};
             r12l1::tlb tlb_ { 12 };
             exclusive_monitor* monitor_;
-            std::unique_ptr<dyncom_core> slow_;
             std::uint32_t asid_ {}, retired_ {};
-            bool tagged_ {}, in_slow_ {};
+            bool tagged_ {};
             std::atomic<bool> stopped_ {};
 
             void exchange(std::uint32_t target) {
@@ -114,13 +113,24 @@ namespace eka2l1::arm {
                 return value;
             }
 
+            template <typename U> U data_order(U value) const {
+                return state_.cpsr & 0x200 ? common::byte_swap(value) : value;
+            }
+
             template <typename U> U memory(address addr, bool load, U value = 0) {
-                if constexpr (sizeof(U) == 1)
+                if (load)
+                    value = 0;
+                if constexpr (sizeof(U) == 1) {
                     return access(addr, value, load ? read_8bit : write_8bit, !load);
-                else if constexpr (sizeof(U) == 2)
-                    return access(addr, value, load ? read_16bit : write_16bit, !load);
-                else
-                    return access(addr, value, load ? read_32bit : write_32bit, !load);
+                } else {
+                    if (!load)
+                        value = data_order(value);
+                    if constexpr (sizeof(U) == 2)
+                        value = access(addr, value, load ? read_16bit : write_16bit, !load);
+                    else
+                        value = access(addr, value, load ? read_32bit : write_32bit, !load);
+                    return load ? data_order(value) : value;
+                }
             }
 
             unsigned page_slot(std::uint32_t page, bool thumb) const {
@@ -163,38 +173,6 @@ namespace eka2l1::arm {
             void run_arm_page(std::uint32_t budget);
             void run_thumb_page(std::uint32_t budget);
 
-            void slow_step() {
-                if (!slow_) {
-                    slow_ = std::make_unique<dyncom_core>(monitor_, 12);
-                    slow_->set_asid(asid_);
-                    slow_->read_code = [this](auto... args) { return read_code(args...); };
-                    slow_->read_8bit = [this](auto... args) { return read_8bit(args...); };
-                    slow_->read_16bit = [this](auto... args) { return read_16bit(args...); };
-                    slow_->read_32bit = [this](auto... args) { return read_32bit(args...); };
-                    slow_->read_64bit = [this](auto... args) { return read_64bit(args...); };
-                    slow_->write_8bit = [this](auto... args) { return write_8bit(args...); };
-                    slow_->write_16bit = [this](auto... args) { return write_16bit(args...); };
-                    slow_->write_32bit = [this](auto... args) { return write_32bit(args...); };
-                    slow_->write_64bit = [this](auto... args) { return write_64bit(args...); };
-                    slow_->exclusive_write_8bit = [this](auto... args) { return exclusive_write_8bit(args...); };
-                    slow_->exclusive_write_16bit = [this](auto... args) { return exclusive_write_16bit(args...); };
-                    slow_->exclusive_write_32bit = [this](auto... args) { return exclusive_write_32bit(args...); };
-                    slow_->exclusive_write_64bit = [this](auto... args) { return exclusive_write_64bit(args...); };
-                    slow_->system_call_handler = [this](auto... args) { return system_call_handler(args...); };
-                    slow_->exception_handler = [this](exception_type type, address addr) {
-                        if (type == exception_type_undefined_inst)
-                            stop();
-                        return exception_handler(type, addr);
-                    };
-                }
-                slow_->set_core_number(core_number());
-                slow_->load_context(state_);
-                in_slow_ = true;
-                slow_->step();
-                slow_->save_context(state_);
-                in_slow_ = false;
-            }
-
             void execute(instruction op, std::uint32_t pc, unsigned size);
 
         public:
@@ -226,59 +204,30 @@ namespace eka2l1::arm {
                     ++retired_;
                     if (op.condition < 14 && !passes(op.condition, state_.cpsr))
                         state_.set_pc(pc + (thumb ? 2 : 4));
-                    else if (state_.cpsr & 0x200)
-                        slow_step();
                     else
                         execute(op, pc, thumb ? 2 : 4);
                 }
             }
-            void stop() override {
-                stopped_ = true;
-                if (in_slow_)
-                    slow_->stop();
-            }
+            void stop() override { stopped_ = true; }
             void step() override { run(1); }
-            void save_context(thread_context& ctx) override {
-                if (in_slow_)
-                    slow_->save_context(ctx);
-                else
-                    ctx = state_;
-            }
+            void save_context(thread_context& ctx) override { ctx = state_; }
             void load_context(const thread_context& ctx) override {
                 state_ = ctx;
-                if (in_slow_)
-                    slow_->load_context(ctx);
                 if (!tagged_)
                     clear_instruction_cache();
             }
             void set_asid(std::uint32_t asid) override {
                 asid_ = asid;
                 tagged_ = true;
-                if (slow_)
-                    slow_->set_asid(asid);
             }
             void clear_instruction_cache() override {
                 recent_.fill(nullptr);
                 pages_.clear();
-                if (slow_)
-                    slow_->clear_instruction_cache();
             }
-            void imb_range(address addr, std::size_t size) override { clear_instruction_cache(); }
-            void flush_tlb() override {
-                tlb_.flush();
-                if (slow_)
-                    slow_->flush_tlb();
-            }
-            void set_tlb_page(address addr, std::uint8_t* ptr, prot perm) override {
-                tlb_.add(addr, ptr, perm);
-                if (slow_)
-                    slow_->set_tlb_page(addr, ptr, perm);
-            }
-            void dirty_tlb_page(address addr) override {
-                tlb_.make_dirty(addr);
-                if (slow_)
-                    slow_->dirty_tlb_page(addr);
-            }
+            void imb_range(address, std::size_t) override { clear_instruction_cache(); }
+            void flush_tlb() override { tlb_.flush(); }
+            void set_tlb_page(address addr, std::uint8_t* ptr, prot perm) override { tlb_.add(addr, ptr, perm); }
+            void dirty_tlb_page(address addr) override { tlb_.make_dirty(addr); }
             bool should_clear_old_memory_map() const override { return false; }
             std::uint32_t get_num_instruction_executed() override { return retired_; }
             std::uint32_t get_pc() override { return get_reg(15); }
@@ -288,38 +237,14 @@ namespace eka2l1::arm {
             void set_lr(std::uint32_t v) override { set_reg(14, v); }
             void set_sp(std::uint32_t v) override { set_reg(13, v); }
             bool is_thumb_mode() override { return get_cpsr() & T; }
-            std::uint32_t get_reg(std::size_t i) override {
-                return in_slow_ ? slow_->get_reg(i) : state_.cpu_registers[i];
-            }
-            void set_reg(std::size_t i, std::uint32_t v) override {
-                if (in_slow_)
-                    slow_->set_reg(i, v);
-                else
-                    state_.cpu_registers[i] = v;
-            }
-            std::uint32_t get_cpsr() override { return in_slow_ ? slow_->get_cpsr() : state_.cpsr; }
-            void set_cpsr(std::uint32_t v) override {
-                if (in_slow_)
-                    slow_->set_cpsr(v);
-                else
-                    state_.cpsr = v;
-            }
-            std::uint32_t get_fpscr() override { return in_slow_ ? slow_->get_fpscr() : state_.fpscr; }
-            void set_fpscr(std::uint32_t v) override {
-                if (in_slow_)
-                    slow_->set_fpscr(v);
-                else
-                    state_.fpscr = v;
-            }
-            std::uint32_t get_vfp(std::size_t i) override {
-                return in_slow_ ? slow_->get_vfp(i) : state_.fpu_registers[i];
-            }
-            void set_vfp(std::size_t i, std::uint32_t v) override {
-                if (in_slow_)
-                    slow_->set_vfp(i, v);
-                else
-                    state_.fpu_registers[i] = v;
-            }
+            std::uint32_t get_reg(std::size_t i) override { return state_.cpu_registers[i]; }
+            void set_reg(std::size_t i, std::uint32_t v) override { state_.cpu_registers[i] = v; }
+            std::uint32_t get_cpsr() override { return state_.cpsr; }
+            void set_cpsr(std::uint32_t v) override { state_.cpsr = v; }
+            std::uint32_t get_fpscr() override { return state_.fpscr; }
+            void set_fpscr(std::uint32_t v) override { state_.fpscr = v; }
+            std::uint32_t get_vfp(std::size_t i) override { return state_.fpu_registers[i]; }
+            void set_vfp(std::size_t i, std::uint32_t v) override { state_.fpu_registers[i] = v; }
         };
 
         void interpreter::run_arm_page(std::uint32_t budget) {
@@ -1039,6 +964,9 @@ namespace eka2l1::arm {
                 }
                 break;
             }
+            case opcode::set_endian:
+                flags = (flags & ~0x200u) | (bits & 0x200u);
+                break;
             case opcode::count_leading_zeros:
                 regs[rd] = std::countl_zero(regs[rm]);
                 break;
@@ -1079,10 +1007,6 @@ namespace eka2l1::arm {
                 break;
             }
             case opcode::vfp_int_to_double: {
-                if (state_.fpscr & (7u << 16)) {
-                    slow_step();
-                    return;
-                }
                 const auto raw = state_.fpu_registers[2 * rm + ((bits >> 5) & 1)];
                 // Every signed and unsigned 32-bit integer is exactly representable in binary64.
                 const double value = bits & 128 ? double(static_cast<std::int32_t>(raw)) : double(raw);
@@ -1121,7 +1045,7 @@ namespace eka2l1::arm {
                 const auto count = multiple ? bits & 255 : wide ? 2u : 1u;
                 auto* words = state_.fpu_registers.data() + first;
                 const auto& entry = tlb_.entries[(addr >> 12) & r12l1::TLB_ENTRY_MASK];
-                if ((load ? entry.read_addr : entry.write_addr) == (addr & ~4095u) && (addr & 4095) + count * 4 <= 4096) {
+                if (!(flags & 0x200) && (load ? entry.read_addr : entry.write_addr) == (addr & ~4095u) && (addr & 4095) + count * 4 <= 4096) {
                     auto* host = entry.host_base + (addr & 4095);
                     if (load)
                         std::memcpy(words, host, 4 * count);
@@ -1129,10 +1053,11 @@ namespace eka2l1::arm {
                         std::memcpy(host, words, 4 * count);
                 } else {
                     for (unsigned i = 0; i < count; ++i) {
+                        const auto lane = (wide && (flags & 0x200)) ? i ^ 1u : i;
                         if (load)
-                            words[i] = memory<std::uint32_t>(addr + 4 * i, true);
+                            words[lane] = memory<std::uint32_t>(addr + 4 * i, true);
                         else
-                            memory<std::uint32_t>(addr + 4 * i, false, words[i]);
+                            memory<std::uint32_t>(addr + 4 * i, false, words[lane]);
                     }
                 }
                 if (multiple && (bits & (1u << 21)))
@@ -1146,19 +1071,19 @@ namespace eka2l1::arm {
                 const auto addr = regs[rn];
                 switch ((bits >> 21) & 3) {
                 case 0:
-                    regs[rd] = monitor_->exclusive_read32(this, addr);
+                    regs[rd] = data_order(monitor_->exclusive_read32(this, addr));
                     break;
                 case 1: {
                     const auto value = monitor_->exclusive_read64(this, addr);
-                    regs[rd] = static_cast<std::uint32_t>(value);
-                    regs[rd + 1] = static_cast<std::uint32_t>(value >> 32);
+                    regs[rd] = data_order(static_cast<std::uint32_t>(value));
+                    regs[rd + 1] = data_order(static_cast<std::uint32_t>(value >> 32));
                     break;
                 }
                 case 2:
                     regs[rd] = monitor_->exclusive_read8(this, addr);
                     break;
                 case 3:
-                    regs[rd] = monitor_->exclusive_read16(this, addr);
+                    regs[rd] = data_order(monitor_->exclusive_read16(this, addr));
                     break;
                 }
                 break;
@@ -1168,16 +1093,16 @@ namespace eka2l1::arm {
                 bool success;
                 switch ((bits >> 21) & 3) {
                 case 0:
-                    success = monitor_->exclusive_write32(this, addr, regs[rm]);
+                    success = monitor_->exclusive_write32(this, addr, data_order(regs[rm]));
                     break;
                 case 1:
-                    success = monitor_->exclusive_write64(this, addr, (std::uint64_t(regs[rm + 1]) << 32) | regs[rm]);
+                    success = monitor_->exclusive_write64(this, addr, (std::uint64_t(data_order(regs[rm + 1])) << 32) | data_order(regs[rm]));
                     break;
                 case 2:
                     success = monitor_->exclusive_write8(this, addr, static_cast<std::uint8_t>(regs[rm]));
                     break;
                 default:
-                    success = monitor_->exclusive_write16(this, addr, static_cast<std::uint16_t>(regs[rm]));
+                    success = monitor_->exclusive_write16(this, addr, data_order(static_cast<std::uint16_t>(regs[rm])));
                     break;
                 }
                 regs[rd] = !success;
@@ -1339,8 +1264,9 @@ namespace eka2l1::arm {
                 break;
             }
             case opcode::empty:
-            case opcode::slow:
-                slow_step();
+            case opcode::undefined:
+                stopped_ = true;
+                exception_handler(exception_type_undefined_inst, pc);
                 return;
             }
             regs[15] = next;

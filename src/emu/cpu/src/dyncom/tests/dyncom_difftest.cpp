@@ -2215,8 +2215,8 @@ std::uint32_t suite_vfp(backend_env &dc, backend_env &da, std::uint32_t base_see
     return failures;
 }
 
-bool check_thumb_memory_fault(bool store, bool retry, bool writeback) {
-    auto env = make_dyncom_env(true);
+bool check_thumb_memory_fault(bool store, bool retry, bool writeback, bool armv6) {
+    auto env = make_dyncom_env(true, armv6);
     program p;
     p.thumb = true;
     p.budget = 5;
@@ -2564,6 +2564,18 @@ int main(int argc, char **argv) {
         if (!run_pair("arm-signed-dsp", *dc, *da, dsp, base_seed, true, cov, true))
             ++failures;
     }
+    if (armv6) {
+        program endian;
+        endian.init[0] = PROG_DATA_PTR;
+        endian.init[1] = 0x12345678u;
+        for (auto bits : { 0xf1010200u, 0xe5801000u, 0xe5902000u, 0xf1010000u, 0xe5903000u })
+            push32(endian.code, bits);
+        for (unsigned budget = 1; budget <= endian.code.size() / 4; ++budget) {
+            endian.budget = budget;
+            if (!run_pair("setend-memory-order", *dc, *da, endian, base_seed, true, cov, true))
+                ++failures;
+        }
+    }
     program dual_transfer;
     dual_transfer.init[0] = PROG_DATA_PTR;
     dual_transfer.init[2] = 0x01234567u;
@@ -2624,7 +2636,7 @@ int main(int argc, char **argv) {
     for (bool store : { false, true })
         for (bool retry : { false, true })
             for (bool writeback : { false, true })
-                if (!check_thumb_memory_fault(store, retry, writeback))
+                if (!check_thumb_memory_fault(store, retry, writeback, armv6))
                     ++failures;
     const auto executed = thumb_block_instructions_for_test() - previous;
     std::printf("  compact Thumb instructions in boundary cases: %llu\n", static_cast<unsigned long long>(executed));

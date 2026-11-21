@@ -7,7 +7,7 @@
 namespace eka2l1::arm::armv6 {
     enum class opcode : std::uint8_t {
         empty,
-        slow,
+        undefined,
         data,
         transfer,
         multiple,
@@ -40,7 +40,8 @@ namespace eka2l1::arm::armv6 {
         reverse_bytes,
         extend,
         double_transfer,
-        breakpoint
+        breakpoint,
+        set_endian
     };
 
     struct instruction {
@@ -94,10 +95,10 @@ namespace eka2l1::arm::armv6 {
             std::uint32_t size;
             const auto status = TranslateThumbInstruction(0, half, &bits, &size);
             if (status == ThumbDecodeStatus::UNDEFINED || status == ThumbDecodeStatus::BRANCH)
-                return { half, opcode::slow, 14 };
+                return { half, opcode::undefined, 14 };
         }
         const auto cond = static_cast<std::uint8_t>(bits >> 28);
-        auto op = opcode::slow;
+        auto op = opcode::undefined;
         if (cond != 15) {
             if ((bits & 0x0ffffff0) == 0x012fff10 || (bits & 0x0ffffff0) == 0x012fff30)
                 op = opcode::exchange;
@@ -162,10 +163,12 @@ namespace eka2l1::arm::armv6 {
             op = opcode::branch;
         if ((bits & 0xfd70f000) == 0xf550f000 && (!(bits & (1u << 25)) || !(bits & 16)))
             op = opcode::hint;
+        if ((bits & ~0x200u) == 0xf1010000)
+            op = opcode::set_endian;
         if (bits == 0xf57ff01f)
             op = opcode::clear_exclusive;
         if (op == opcode::data && (bits & 0x0010f000) == 0x0010f000)
-            op = opcode::slow;
+            op = opcode::undefined;
         return { bits, op, cond };
     }
 
