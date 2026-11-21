@@ -5,6 +5,7 @@
 #include <bit>
 #include <cpu/12l1r/tlb.h>
 #include <cpu/armv6.h>
+#include <cpu/vfp.h>
 #include <cpu/dyncom/arm_dyncom.h>
 #include <cstring>
 #include <unordered_map>
@@ -817,6 +818,14 @@ namespace eka2l1::arm {
                 regs[rn] = static_cast<std::uint32_t>(value >> 32);
                 if (bits & (1u << 20))
                     flags = (flags & ~(N | Z)) | (regs[rn] & N) | (value ? 0 : Z);
+                break;
+            }
+            case opcode::vfp_arithmetic: {
+                vfp_register_view view { state_.fpu_registers };
+                const auto exceptions = bits & (1u << 8) ? vfp_double_cpdo(&view, bits, state_.fpscr)
+                    : vfp_single_cpdo(&view, bits, state_.fpscr, true);
+                if (exceptions)
+                    state_.fpscr = vfp_apply_exceptions(exceptions, bits, state_.fpscr);
                 break;
             }
             case opcode::vfp_move_double: {

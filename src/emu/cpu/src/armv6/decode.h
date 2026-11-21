@@ -30,7 +30,8 @@ namespace eka2l1::arm::armv6 {
         vfp_status,
         vfp_transfer,
         vfp_move_double,
-        vfp_int_to_double
+        vfp_int_to_double,
+        vfp_arithmetic
     };
 
     struct instruction {
@@ -67,6 +68,9 @@ namespace eka2l1::arm::armv6 {
                 op = opcode::vfp_move_double;
             else if ((bits & 0x0fbf0f50) == 0x0eb80b40)
                 op = opcode::vfp_int_to_double;
+            else if ((bits & 0x0f000e10) == 0x0e000a00 && (((bits >> 20) & 11) <= 3 ||
+                ((bits & 0x00b00040) == 0x00800000)))
+                op = opcode::vfp_arithmetic;
             else if ((bits & 0x0fe00f7f) == 0x0e000a10 && ((bits >> 12) & 15) != 15)
                 op = opcode::vfp_move;
             else if ((bits & 0x0fef0fff) == 0x0ee10a10 && ((bits & (1u << 20)) || ((bits >> 12) & 15) != 15))
