@@ -1483,7 +1483,8 @@ static inline bool vfp_single_host_fast(vfp_register_view *state, std::uint32_t 
 
 std::uint32_t vfp_single_cpdo(vfp_register_view *state, std::uint32_t inst, std::uint32_t fpscr, bool precise) {
     std::uint32_t fast_ret;
-    if (!precise && g_vfp_host_fast && vfp_single_host_fast(state, inst, fpscr, fast_ret))
+    // The native path may omit IXC once the guest has already set the sticky bit.
+    if ((!precise || (fpscr & FPSCR_IXC)) && g_vfp_host_fast && vfp_single_host_fast(state, inst, fpscr, fast_ret))
         return fast_ret;
 
     std::uint32_t op = inst & FOP_MASK;
