@@ -364,6 +364,8 @@ namespace eka2l1::arm {
                 using enum arm_code;
                 auto a = regs[op.a];
                 auto& d = regs[op.d];
+                if (op.cond < 14 && !passes(op.cond, flags))
+                    goto advance_arm;
                 switch (op.code) {
                 case other:
                     goto done;
@@ -390,10 +392,36 @@ namespace eka2l1::arm {
                         | (((a ^ b) & (a ^ r)) >> 31 ? V : 0);
                     break;
                 }
-                case branch:
-                    if (op.flags == 14 || passes(op.flags, flags))
-                        index += op.value - 1;
+                case ands_i:
+                    d = a & op.value;
+                    flags = (flags & ~(N | Z)) | (d & N) | (d ? 0 : Z);
+                    if (op.flags)
+                        flags = (flags & ~C) | ((op.value & N) ? C : 0);
                     break;
+                case call:
+                    regs[14] = base + 4 * index + 4;
+                    [[fallthrough]];
+                case branch:
+                    index += op.value - 1;
+                    break;
+                case blx:
+                case bx:
+                case ldr_pc_literal: {
+                    auto target = regs[op.b];
+                    if (op.code == ldr_pc_literal
+                        && !transfer.template operator()<false, false>(base + 4 * index + op.value, target))
+                        goto done;
+                    if (op.code == blx)
+                        regs[14] = base + 4 * index + 4;
+                    if (target & 1) {
+                        retired_ = budget - remaining + 1;
+                        state_.cpsr = flags | T;
+                        state_.set_pc(target & ~1u);
+                        return;
+                    }
+                    index = ((target - base) >> 2) - 1;
+                    break;
+                }
                 case ldr: {
                     const auto updated = a + op.value;
                     if (!transfer.template operator()<false, false>(updated, d))
@@ -451,7 +479,7 @@ namespace eka2l1::arm {
                 case ldm:
                 case stm: {
                     const bool store = op.code == stm;
-                    auto* p = ptr(a, 4 * op.shift, store);
+                    auto* p = ptr(a + static_cast<std::int8_t>(op.flags), 4 * op.shift, store);
                     if (!p)
                         goto done;
                     for (auto mask = op.value; mask; mask &= mask - 1, p += 4) {
@@ -464,6 +492,7 @@ namespace eka2l1::arm {
                     break;
                 }
                 }
+            advance_arm:
                 ++index;
                 --remaining;
             }

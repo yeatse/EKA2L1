@@ -68,8 +68,8 @@ namespace eka2l1::arm::armv6 {
                 op = opcode::vfp_move_double;
             else if ((bits & 0x0fbf0f50) == 0x0eb80b40)
                 op = opcode::vfp_int_to_double;
-            else if ((bits & 0x0f000e10) == 0x0e000a00 && (((bits >> 20) & 11) <= 3 ||
-                ((bits & 0x00b00040) == 0x00800000)))
+            else if ((bits & 0x0f000e10) == 0x0e000a00
+                && (((bits >> 20) & 11) <= 3 || ((bits & 0x00b00040) == 0x00800000)))
                 op = opcode::vfp_arithmetic;
             else if ((bits & 0x0fe00f7f) == 0x0e000a10 && ((bits >> 12) & 15) != 15)
                 op = opcode::vfp_move;
@@ -132,11 +132,16 @@ namespace eka2l1::arm::armv6 {
         ldr_post,
         str_post,
         ldm,
-        stm
+        stm,
+        call,
+        bx,
+        blx,
+        ldr_pc_literal,
+        ands_i
     };
     struct arm_op {
         arm_code code {};
-        std::uint8_t d {}, a {}, b {}, shift {}, flags {};
+        std::uint8_t d {}, a {}, b {}, shift {}, flags {}, cond {};
         std::uint32_t value {};
     };
     inline arm_op decode_arm_page(std::uint32_t bits) {
@@ -146,13 +151,22 @@ namespace eka2l1::arm::armv6 {
         op.b = bits & 15;
         op.d = (bits >> 12) & 15;
         op.shift = (bits >> 7) & 31;
-        if (ins.op == opcode::branch && ins.condition != 15 && !(bits & (1 << 24))) {
-            op.code = arm_code::branch;
-            op.flags = ins.condition;
+        op.cond = ins.condition;
+        if (ins.op == opcode::exchange && op.b != 15) {
+            op.code = bits & 32 ? arm_code::blx : arm_code::bx;
+            return op;
+        }
+        if ((bits & 0x0f7ff000) == 0x051ff000 && ins.condition != 15) {
+            op.code = arm_code::ldr_pc_literal;
+            op.value = bits & (1u << 23) ? 8 + (bits & 4095) : 8 - (bits & 4095);
+            return op;
+        }
+        if (ins.op == opcode::branch && ins.condition != 15) {
+            op.code = bits & (1u << 24) ? arm_code::call : arm_code::branch;
             op.value = 2 + (static_cast<std::int32_t>(bits << 8) >> 8);
             return op;
         }
-        if (ins.condition != 14 || op.a == 15 || op.d == 15)
+        if (ins.condition == 15 || op.a == 15 || op.d == 15)
             return op;
         const bool load = bits & (1 << 20);
         if (ins.op == opcode::data) {
@@ -162,17 +176,24 @@ namespace eka2l1::arm::armv6 {
                 return op;
             if (kind == 10 && (imm || !op.shift))
                 op.code = imm ? arm_code::cmp_i : arm_code::cmp_r;
-            else if (!load && kind == 4)
+            else if (load && kind == 0 && imm) {
+                op.code = arm_code::ands_i;
+                op.flags = (bits >> 8) & 15;
+            } else if (!load && kind == 4)
                 op.code = imm ? arm_code::add_i : arm_code::add_lsl;
             else if (!load && kind == 2 && imm)
                 op.code = arm_code::sub_i;
             else if (!load && kind == 13)
                 op.code = imm ? arm_code::mov_i : arm_code::mov_lsl;
             op.value = std::rotr(bits & 255u, static_cast<int>((bits >> 7) & 30));
-        } else if (ins.op == opcode::multiple && !(bits & (1 << 21)) && (bits & 0x01808000) == 0x00800000) {
+        } else if (ins.op == opcode::multiple && !(bits & (1 << 21)) && !(bits & 0x8000)) {
             op.code = load ? arm_code::ldm : arm_code::stm;
             op.value = bits & 65535;
             op.shift = std::popcount(op.value);
+            const bool up = bits & (1u << 23), pre = bits & (1u << 24);
+            op.flags = up ? pre * 4 : (op.shift - !pre) * 4;
+            if (!up)
+                op.flags = -op.flags;
         } else if (ins.op == opcode::transfer) {
             bool imm = !(bits & (1 << 25)), pre = bits & (1 << 24), byte = bits & (1 << 22);
             bool up = bits & (1 << 23), wb = bits & (1 << 21);
