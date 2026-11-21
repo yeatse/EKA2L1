@@ -571,6 +571,50 @@ namespace eka2l1::arm {
                 const unsigned rhs = op.rhs;
                 std::uint32_t result;
                 switch (op.kind) {
+                case load_pair:
+                case load_move: {
+                    if (!transfer.template operator()<std::uint32_t, false>(lhs + 4 * rhs, op.dst))
+                        goto done;
+                    if (remaining == 1)
+                        goto advance;
+                    const auto next = ops[++index];
+                    --remaining;
+                    if (op.kind == load_move) {
+                        auto value = regs[next.lhs];
+                        regs[next.dst] = value;
+                        z = value == 0;
+                        n = value >> 31;
+                    } else if (!transfer.template operator()<std::uint32_t, false>(regs[next.lhs] + 4 * next.rhs, next.dst))
+                        goto done;
+                    goto advance;
+                }
+                case shift_load_half: {
+                    const auto shifted = lhs << rhs;
+                    regs[op.dst] = shifted;
+                    n = shifted >> 31;
+                    z = shifted == 0;
+                    c = (lhs >> (32 - rhs)) & 1;
+                    if (remaining == 1)
+                        goto advance;
+                    const auto next = ops[++index];
+                    --remaining;
+                    if (!transfer.template operator()<std::uint16_t, false>(regs[next.lhs] + regs[next.rhs], next.dst))
+                        goto done;
+                    goto advance;
+                }
+                case store_add: {
+                    if (!transfer.template operator()<std::uint32_t, true>(lhs + 4 * rhs, op.dst))
+                        goto done;
+                    if (remaining == 1)
+                        goto advance;
+                    const auto next = ops[++index];
+                    --remaining;
+                    const auto sum = add_flags(regs[next.lhs], regs[next.rhs]);
+                    regs[next.dst] = sum;
+                    n = sum >> 31;
+                    z = sum == 0;
+                    goto advance;
+                }
                 case mov_lsl:
                     result = lhs;
                     if (remaining > 1) {

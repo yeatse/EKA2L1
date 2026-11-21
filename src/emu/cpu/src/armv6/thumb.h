@@ -63,7 +63,11 @@ namespace eka2l1::arm::thumb {
         mov_lsl,
         exchange,
         call_exchange,
-        call_arm
+        call_arm,
+        load_move,
+        load_pair,
+        shift_load_half,
+        store_add
     };
 
     struct op {
@@ -77,6 +81,14 @@ namespace eka2l1::arm::thumb {
         else if (first.kind == code::lsl && !first.rhs && second.kind == code::lsl && second.rhs
             && first.dst == second.lhs && first.dst == second.dst)
             first.kind = code::mov_lsl;
+        else if (first.kind == code::ldr && second.kind == code::lsl && !second.rhs)
+            first.kind = code::load_move;
+        else if (first.kind == code::ldr && second.kind == code::ldr)
+            first.kind = code::load_pair;
+        else if (first.kind == code::lsl && first.rhs && second.kind == code::ldrh_r)
+            first.kind = code::shift_load_half;
+        else if (first.kind == code::str && second.kind == code::add)
+            first.kind = code::store_add;
     }
 
     constexpr op decode(std::uint16_t h) {

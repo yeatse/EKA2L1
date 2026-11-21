@@ -2573,6 +2573,21 @@ int main(int argc, char **argv) {
             }
         }
     }
+    program memory_pairs;
+    memory_pairs.thumb = true;
+    memory_pairs.init[1] = PROG_DATA_PTR;
+    memory_pairs.init[2] = 2;
+    memory_pairs.init[13] = PROG_DATA_PTR;
+    for (const auto pair : { 0x98000013u, 0x98009b01u, 0x00525a8bu, 0x90001850u }) {
+        memory_pairs.code.clear();
+        for (const auto hw : { 0x2300u, pair >> 16, pair & 65535u, 0xe7feu })
+            push16(memory_pairs.code, hw);
+        for (unsigned budget = 1; budget <= 4; ++budget) {
+            memory_pairs.budget = budget;
+            if (!run_pair("thumb-memory-pairs", *dc, *da, memory_pairs, base_seed, true, cov, true))
+                ++failures;
+        }
+    }
     for (bool store : { false, true })
         for (bool retry : { false, true })
             for (bool writeback : { false, true })
