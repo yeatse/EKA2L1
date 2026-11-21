@@ -58,13 +58,23 @@ namespace eka2l1::arm::thumb {
         call_hi,
         call_lo,
         multi_store,
-        multi_load
+        multi_load,
+        cmp_branch,
+        mov_lsl
     };
 
     struct op {
         code kind;
         std::uint8_t dst, lhs, rhs;
     };
+
+    constexpr void fuse(op& first, op second) {
+        if ((first.kind == code::cmp || first.kind == code::cmp_high) && second.kind == code::branch_cond)
+            first.kind = code::cmp_branch;
+        else if (first.kind == code::lsl && !first.rhs && second.kind == code::lsl && second.rhs
+            && first.dst == second.lhs && first.dst == second.dst)
+            first.kind = code::mov_lsl;
+    }
 
     constexpr op decode(std::uint16_t h) {
         const auto d = static_cast<std::uint8_t>(h & 7);
@@ -129,6 +139,6 @@ namespace eka2l1::arm::thumb {
             return { code::branch_cond, static_cast<std::uint8_t>((h >> 8) & 15), 0, byte };
         if ((h >> 11) == 28)
             return { code::branch, 0, r, byte };
-        return { };
+        return {};
     }
 }

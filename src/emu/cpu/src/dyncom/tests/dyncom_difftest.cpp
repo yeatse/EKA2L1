@@ -2547,8 +2547,8 @@ int main(int argc, char **argv) {
     pairs.init[1] = 0xffffffff;
     pairs.init[2] = 3;
     // Stop immediately before, between, and after the two operations.
-    for (const std::uint16_t first : { 0x0800, 0x0840, 0x0040, 0x4348, 0x1a40, 0x1840, 0x4008 }) {
-        for (const std::uint16_t second : { 0x4008, 0x4048, 0x0802, 0x0840, 0x4348 }) {
+    for (const std::uint16_t first : { 0x0008, 0x4288, 0x0800, 0x0840, 0x0040, 0x4348, 0x1a40, 0x1840, 0x4008 }) {
+        for (const std::uint16_t second : { 0x0040, 0xdbfe, 0xd0fe, 0x4008, 0x4048, 0x0802, 0x0840, 0x4348 }) {
             pairs.code.clear();
             for (auto hw : { std::uint16_t(0x2300), first, second, std::uint16_t(0xe7fe) })
                 push16(pairs.code, hw);

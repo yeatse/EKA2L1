@@ -486,6 +486,8 @@ namespace eka2l1::arm {
                     std::uint16_t bits;
                     std::memcpy(&bits, entry.host_base + 2 * i, sizeof(bits));
                     slot.thumb_ops[i] = thumb::decode(bits);
+                    if (i)
+                        thumb::fuse(slot.thumb_ops[i - 1], slot.thumb_ops[i]);
                 }
             }
             auto& regs = state_.cpu_registers;
@@ -532,6 +534,52 @@ namespace eka2l1::arm {
                 const unsigned rhs = op.rhs;
                 std::uint32_t result;
                 switch (op.kind) {
+                case mov_lsl:
+                    result = lhs;
+                    if (remaining > 1) {
+                        const auto amount = ops[++index].rhs;
+                        c = (lhs >> (32 - amount)) & 1;
+                        result <<= amount;
+                        --remaining;
+                    }
+                    break;
+                case cmp_branch: {
+                    const auto right = regs[rhs];
+                    result = sub_flags(lhs, right);
+                    n = result >> 31;
+                    z = result == 0;
+                    if (remaining > 1) {
+                        const auto branch = ops[++index];
+                        bool take;
+                        switch (branch.dst >> 1) {
+                        case 0:
+                            take = z;
+                            break;
+                        case 1:
+                            take = c;
+                            break;
+                        case 2:
+                            take = n;
+                            break;
+                        case 3:
+                            take = v;
+                            break;
+                        case 4:
+                            take = lhs > right;
+                            break;
+                        case 5:
+                            take = static_cast<std::int32_t>(lhs) >= static_cast<std::int32_t>(right);
+                            break;
+                        default:
+                            take = static_cast<std::int32_t>(lhs) > static_cast<std::int32_t>(right);
+                            break;
+                        }
+                        if (take != bool(branch.dst & 1))
+                            index += 1 + static_cast<std::int8_t>(branch.rhs);
+                        --remaining;
+                    }
+                    goto advance;
+                }
                 case mov_i:
                     result = rhs;
                     break;
@@ -823,7 +871,7 @@ namespace eka2l1::arm {
             case opcode::vfp_arithmetic: {
                 vfp_register_view view { state_.fpu_registers };
                 const auto exceptions = bits & (1u << 8) ? vfp_double_cpdo(&view, bits, state_.fpscr)
-                    : vfp_single_cpdo(&view, bits, state_.fpscr, true);
+                                                         : vfp_single_cpdo(&view, bits, state_.fpscr, true);
                 if (exceptions)
                     state_.fpscr = vfp_apply_exceptions(exceptions, bits, state_.fpscr);
                 break;
