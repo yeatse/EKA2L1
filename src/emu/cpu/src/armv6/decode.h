@@ -198,7 +198,12 @@ namespace eka2l1::arm::armv6 {
         ldr_pc_literal,
         ands_i,
         cmp_branch,
-        str_pair
+        str_pair,
+        vmov_from,
+        vmov_to,
+        vmov_pair_from,
+        vmov_pair_to,
+        widen_integer
     };
     struct arm_op {
         arm_code code {};
@@ -214,6 +219,24 @@ namespace eka2l1::arm::armv6 {
         op.d = (bits >> 12) & 15;
         op.shift = (bits >> 7) & 31;
         op.cond = ins.condition;
+        switch (ins.op) {
+        case opcode::vfp_move:
+            op.code = bits & (1u << 20) ? arm_code::vmov_from : arm_code::vmov_to;
+            op.value = 2 * op.a + ((bits >> 7) & 1);
+            return op;
+        case opcode::vfp_move_double:
+            op.code = bits & (1u << 20) ? arm_code::vmov_pair_from : arm_code::vmov_pair_to;
+            op.value = 2 * op.b + ((bits & 32) ? 32 : 0);
+            return op;
+        case opcode::vfp_int_to_double:
+            op.code = arm_code::widen_integer;
+            op.b = 2 * op.b + ((bits >> 5) & 1);
+            op.value = 2 * op.d + ((bits & (1u << 22)) ? 32 : 0);
+            op.flags = bits & 128;
+            return op;
+        default:
+            break;
+        }
         if (ins.op == opcode::exchange && op.b != 15) {
             op.code = bits & 32 ? arm_code::blx : arm_code::bx;
             return op;

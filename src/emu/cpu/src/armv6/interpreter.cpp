@@ -73,6 +73,14 @@ namespace eka2l1::arm {
             }
         }
 
+        void convert_integer_to_double(std::array<std::uint32_t, 64>& bank, unsigned dst, unsigned src, bool sign) {
+            // Every 32-bit integer is exactly representable in binary64.
+            const double value = sign ? double(static_cast<std::int32_t>(bank[src])) : double(bank[src]);
+            const auto pair = std::bit_cast<std::uint64_t>(value);
+            bank[dst] = static_cast<std::uint32_t>(pair);
+            bank[dst + 1] = static_cast<std::uint32_t>(pair >> 32);
+        }
+
         class interpreter final : public core {
             struct code_page {
                 std::uint64_t key;
@@ -296,6 +304,23 @@ namespace eka2l1::arm {
                 if (op.cond < 14 && !passes(op.cond, flags))
                     goto advance_arm;
                 switch (op.code) {
+                case vmov_from:
+                    d = state_.fpu_registers[op.value];
+                    break;
+                case vmov_to:
+                    state_.fpu_registers[op.value] = d;
+                    break;
+                case vmov_pair_from:
+                    d = state_.fpu_registers[op.value];
+                    regs[op.a] = state_.fpu_registers[op.value + 1];
+                    break;
+                case vmov_pair_to:
+                    state_.fpu_registers[op.value] = d;
+                    state_.fpu_registers[op.value + 1] = a;
+                    break;
+                case arm_code::widen_integer:
+                    convert_integer_to_double(state_.fpu_registers, op.value, op.b, op.flags);
+                    break;
                 case other: {
                     const auto pc = base + 4 * index;
                     retired_ = budget - remaining + 1;
@@ -1007,13 +1032,8 @@ namespace eka2l1::arm {
                 break;
             }
             case opcode::vfp_int_to_double: {
-                const auto raw = state_.fpu_registers[2 * rm + ((bits >> 5) & 1)];
-                // Every signed and unsigned 32-bit integer is exactly representable in binary64.
-                const double value = bits & 128 ? double(static_cast<std::int32_t>(raw)) : double(raw);
-                const auto pair = std::bit_cast<std::uint64_t>(value);
-                const unsigned first = 2 * rd + ((bits & (1u << 22)) ? 32 : 0);
-                state_.fpu_registers[first] = static_cast<std::uint32_t>(pair);
-                state_.fpu_registers[first + 1] = static_cast<std::uint32_t>(pair >> 32);
+                convert_integer_to_double(state_.fpu_registers, 2 * rd + ((bits & (1u << 22)) ? 32 : 0),
+                    2 * rm + ((bits >> 5) & 1), bits & 128);
                 break;
             }
             case opcode::vfp_move: {
