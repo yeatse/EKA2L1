@@ -652,6 +652,20 @@ namespace eka2l1::arm {
                 case cmp_high:
                     result = sub_flags(lhs, regs[rhs]);
                     break;
+                case adc: {
+                    const auto right = regs[rhs];
+                    result = lhs + right + c;
+                    c = result < lhs || (c && result == lhs);
+                    v = (~(lhs ^ right) & (lhs ^ result)) >> 31;
+                    break;
+                }
+                case sbc: {
+                    const auto right = regs[rhs];
+                    result = lhs - right - !c;
+                    c = lhs > right || (c && lhs == right);
+                    v = ((lhs ^ right) & (lhs ^ result)) >> 31;
+                    break;
+                }
                 case neg:
                     result = sub_flags(0, regs[rhs]);
                     break;
@@ -697,6 +711,21 @@ namespace eka2l1::arm {
                     if (op.lhs & 4)
                         regs[14] -= 1u << 23;
                     goto advance;
+                case thumb::code::exchange:
+                case call_exchange:
+                case call_arm: {
+                    const auto target = op.kind == call_arm ? (regs[14] + (((op.lhs << 8) | rhs) << 1)) & ~3u : lhs;
+                    if (op.kind != thumb::code::exchange)
+                        regs[14] = (base + 2 * index + 2) | 1;
+                    if (target & 1) {
+                        index = ((target - base) >> 1) - 1;
+                        goto advance;
+                    }
+                    retired_ = budget - remaining + 1;
+                    commit();
+                    this->exchange(target);
+                    return;
+                }
                 case call_lo: {
                     const auto target = regs[14] + (((op.lhs << 8) | rhs) << 1);
                     regs[14] = (base + 2 * index + 2) | 1;
@@ -728,7 +757,7 @@ namespace eka2l1::arm {
                         --remaining;
                         retired_ = budget - remaining;
                         commit();
-                        exchange(target);
+                        this->exchange(target);
                         return;
                     }
                     goto advance;

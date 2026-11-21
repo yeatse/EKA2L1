@@ -60,7 +60,10 @@ namespace eka2l1::arm::thumb {
         multi_store,
         multi_load,
         cmp_branch,
-        mov_lsl
+        mov_lsl,
+        exchange,
+        call_exchange,
+        call_arm
     };
 
     struct op {
@@ -108,6 +111,10 @@ namespace eka2l1::arm::thumb {
             if (rs != 15 && rd != 15)
                 return { ops[(h >> 8) & 3], rd, rd, rs };
         }
+        if ((h & 0xff07) == 0x4700 && ((h >> 3) & 15) != 15)
+            return { h & 128 ? code::call_exchange : code::exchange, 0, static_cast<std::uint8_t>((h >> 3) & 15), 0 };
+        if ((h & 0xf801) == 0xe800)
+            return { code::call_arm, 0, r, byte };
         if ((h >> 11) == 9)
             return { code::ldr_pc, r, 0, byte };
         if ((h >> 12) == 5) {
