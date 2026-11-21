@@ -2423,6 +2423,34 @@ int main(int argc, char **argv) {
     const bool thumb_blocks = argc > 3 && std::string_view(argv[3]) == "thumb-block";
     const bool armv6 = argc > 3 && std::string_view(argv[3]) == "armv6";
     auto dc = make_dyncom_env(thumb_blocks, armv6);
+    if (armv6) {
+        program p;
+        p.init[0] = PROG_DATA_PTR;
+        p.init[1] = 0xaabbccdd;
+        p.budget = 2;
+        push32(p.code, 0xe1902f9f); // LDREX r2, [r0]
+        push32(p.code, 0xe1803f91); // STREX r3, r1, [r0]
+        bool correct_core = true;
+        dc->monitor->read_32bit = [&](core *c, address a, std::uint32_t *v) {
+            correct_core &= c == dc->cpu.get();
+            return c->read_32bit(a, v);
+        };
+        dc->monitor->write_32bit = [&](core *c, address a, std::uint32_t value, std::uint32_t expected) {
+            correct_core &= c == dc->cpu.get();
+            std::uint32_t old;
+            return c->read_32bit(a, &old) && old == expected && c->write_32bit(a, &value) ? 1 : 0;
+        };
+        install(*dc, p);
+        const auto state = execute(*dc, p);
+        std::uint32_t stored;
+        dc->cpu->read_32bit(PROG_DATA_PTR, &stored);
+        if (!correct_core || state.reg[3] != 0 || stored != p.init[1]) {
+            std::puts("[FAIL] exclusive access must use the scheduled core's address space");
+            ++failures;
+        }
+        dc->monitor->read_32bit = {};
+        dc->monitor->write_32bit = {};
+    }
     auto da = make_dynarmic_env();
     coverage cov;
 
@@ -2453,7 +2481,7 @@ int main(int argc, char **argv) {
                 ++failures;
         }
     }
-    auto span_core = make_dyncom_env(true);
+    auto span_core = make_dyncom_env(true, armv6);
     const auto previous = thumb_block_instructions_for_test();
     for (const unsigned offset : { 0u, 0xff6u }) {
         program span;
@@ -2529,7 +2557,7 @@ int main(int argc, char **argv) {
                     ++failures;
     const auto executed = thumb_block_instructions_for_test() - previous;
     std::printf("  compact Thumb instructions in boundary cases: %llu\n", static_cast<unsigned long long>(executed));
-    if (!executed) ++failures;
+    if (!armv6 && !executed) ++failures;
     failures += check_thumb_counted_word_loop(*dc, *da, cov);
     failures += check_vfp_mac_cancellation(*dc, *da);
     failures += check_undefined_instructions(*dc);
