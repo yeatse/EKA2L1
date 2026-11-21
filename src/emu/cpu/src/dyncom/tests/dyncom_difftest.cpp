@@ -2543,6 +2543,18 @@ int main(int argc, char **argv) {
                 ++failures;
         }
     }
+    program dsp;
+    dsp.init[3] = 0x8000ffff;
+    dsp.init[4] = 0x7ffffffe;
+    dsp.init[5] = 0x7fffffff;
+    for (auto bits : { 0xe16f2f14u, 0xe1042053u, 0xe1242053u, 0xe1442053u, 0xe1642053u,
+             0xe1620483u, 0xe16204c3u, 0xe16204e3u, 0xe10254a3u, 0xe12204e3u, 0xe12254c3u, 0xe14214e3u })
+        push32(dsp.code, bits);
+    for (unsigned budget = 1; budget <= dsp.code.size() / 4; ++budget) {
+        dsp.budget = budget;
+        if (!run_pair("arm-signed-dsp", *dc, *da, dsp, base_seed, true, cov, true))
+            ++failures;
+    }
     program pairs;
     pairs.thumb = true;
     pairs.init[0] = 0x80000001;

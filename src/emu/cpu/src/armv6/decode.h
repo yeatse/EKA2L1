@@ -32,7 +32,11 @@ namespace eka2l1::arm::armv6 {
         vfp_move_double,
         vfp_int_to_double,
         vfp_arithmetic,
-        vfp_multiple
+        vfp_multiple,
+        count_leading_zeros,
+        signed_multiply,
+        saturating_add_sub,
+        thread_id
     };
 
     struct instruction {
@@ -91,6 +95,14 @@ namespace eka2l1::arm::armv6 {
         if (cond != 15) {
             if ((bits & 0x0ffffff0) == 0x012fff10 || (bits & 0x0ffffff0) == 0x012fff30)
                 op = opcode::exchange;
+            else if ((bits & 0x0fff0ff0) == 0x016f0f10)
+                op = opcode::count_leading_zeros;
+            else if ((bits & 0x0f900ff0) == 0x01000050)
+                op = opcode::saturating_add_sub;
+            else if ((bits & 0x0f900090) == 0x01000080)
+                op = opcode::signed_multiply;
+            else if ((bits & 0x0fef0fff) == 0x0e0d0f50 && ((bits >> 12) & 15) != 15)
+                op = opcode::thread_id;
             else if ((bits & 0x0fe00fd0) == 0x0c400b10 && ((bits >> 12) & 15) != 15 && ((bits >> 16) & 15) != 15)
                 op = opcode::vfp_move_double;
             else if ((bits & 0x0fbf0f50) == 0x0eb80b40)

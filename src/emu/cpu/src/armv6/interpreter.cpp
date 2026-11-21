@@ -1,5 +1,6 @@
 // Copyright (c) 2026 EKA2L1 Team. Licensed under GPLv2 or later.
 #include "decode.h"
+#include "dsp.h"
 #include "thumb.h"
 #include <atomic>
 #include <bit>
@@ -895,6 +896,26 @@ namespace eka2l1::arm {
                 regs[rn] = static_cast<std::uint32_t>(value >> 32);
                 if (bits & (1u << 20))
                     flags = (flags & ~(N | Z)) | (regs[rn] & N) | (value ? 0 : Z);
+                break;
+            }
+            case opcode::count_leading_zeros:
+                regs[rd] = std::countl_zero(regs[rm]);
+                break;
+            case opcode::thread_id:
+                if (bits & (1u << 20))
+                    regs[rd] = state_.uprw;
+                else
+                    state_.uprw = regs[rd];
+                break;
+            case opcode::signed_multiply:
+                signed_multiply(bits, regs, flags);
+                break;
+            case opcode::saturating_add_sub: {
+                auto right = static_cast<std::int32_t>(regs[rn]);
+                if (bits & (1u << 22))
+                    right = saturate_signed(std::int64_t(right) * 2, flags);
+                const auto left = std::int64_t(static_cast<std::int32_t>(regs[rm]));
+                regs[rd] = saturate_signed(bits & (1u << 21) ? left - right : left + right, flags);
                 break;
             }
             case opcode::vfp_arithmetic: {
