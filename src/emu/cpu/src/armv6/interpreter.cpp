@@ -7,6 +7,7 @@
 #include <cpu/armv6.h>
 #include <cpu/dyncom/arm_dyncom.h>
 #include <cstring>
+#include <unordered_map>
 
 namespace eka2l1::arm {
     namespace {
@@ -72,14 +73,13 @@ namespace eka2l1::arm {
 
         class interpreter final : public core {
             struct code_page {
-                std::uint32_t address, asid;
-                bool thumb;
-                std::array<instruction, 2048> entries {};
-                std::array<arm_op, 1024> arm_ops {};
-                std::array<thumb::op, 2048> thumb_ops {};
-                bool decoded {};
+                std::uint64_t key;
+                std::unique_ptr<instruction[]> entries;
+                std::unique_ptr<arm_op[]> arm_ops;
+                std::unique_ptr<thumb::op[]> thumb_ops;
             };
-            std::array<std::unique_ptr<code_page>, 512> pages_;
+            std::unordered_map<std::uint64_t, code_page> pages_;
+            std::array<code_page*, 512> recent_ {};
             thread_context state_ {};
             r12l1::tlb tlb_ { 12 };
             exclusive_monitor* monitor_;
@@ -125,24 +125,36 @@ namespace eka2l1::arm {
                 return ((page * 0x9e3779b9u) >> 23) ^ ((asid_ * 31u + thumb) & 511);
             }
 
+            code_page& lookup_page(std::uint32_t page, bool thumb) {
+                const auto key = (std::uint64_t(asid_) << 21) | (page << 1) | unsigned(thumb);
+                auto& recent = recent_[page_slot(page, thumb)];
+                if (recent && recent->key == key)
+                    return *recent;
+                auto found = pages_.find(key);
+                if (found == pages_.end()) {
+                    if (pages_.size() == 512) {
+                        recent_.fill(nullptr);
+                        pages_.clear();
+                    }
+                    found = pages_.try_emplace(key).first;
+                    found->second.key = key;
+                }
+                recent = &found->second;
+                return *recent;
+            }
+
             instruction fetch(address pc, bool thumb) {
                 const auto page = pc >> 12;
-                auto& slot = pages_[page_slot(page, thumb)];
                 const auto index = (pc & 4095) >> (thumb ? 1 : 2);
-                if (slot && slot->address == page && slot->asid == asid_ && slot->thumb == thumb) {
-                    const auto op = slot->entries[index];
-                    if (op.op != opcode::empty)
-                        return op;
-                }
+                auto& cached = lookup_page(page, thumb);
+                if (cached.entries && cached.entries[index].op != opcode::empty)
+                    return cached.entries[index];
                 const auto word = access(pc & ~3u, 0u, read_code, false, true);
                 const auto op = decode(thumb && (pc & 2) ? word >> 16 : word, thumb);
-                if (!slot || slot->address != page || slot->asid != asid_ || slot->thumb != thumb) {
-                    slot = std::make_unique<code_page>();
-                    slot->address = page;
-                    slot->asid = asid_;
-                    slot->thumb = thumb;
-                }
-                slot->entries[index] = op;
+                auto& dest = lookup_page(page, thumb);
+                if (!dest.entries)
+                    dest.entries = std::make_unique<instruction[]>(thumb ? 2048 : 1024);
+                dest.entries[index] = op;
                 return op;
             }
 
@@ -243,8 +255,8 @@ namespace eka2l1::arm {
                     slow_->set_asid(asid);
             }
             void clear_instruction_cache() override {
-                for (auto& page : pages_)
-                    page.reset();
+                recent_.fill(nullptr);
+                pages_.clear();
                 if (slow_)
                     slow_->clear_instruction_cache();
             }
@@ -309,25 +321,19 @@ namespace eka2l1::arm {
 
         void interpreter::run_arm_page(std::uint32_t budget) {
             const auto start = state_.get_pc(), base = start & ~4095u;
-            auto& slot = pages_[page_slot(base >> 12, false)];
-            if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || slot->thumb || !slot->decoded) {
+            auto& slot = lookup_page(base >> 12, false);
+            if (!slot.arm_ops) {
                 auto& entry = tlb_.entries[(base >> 12) & r12l1::TLB_ENTRY_MASK];
                 if (entry.execute_addr != base)
                     return;
-                if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || slot->thumb) {
-                    slot = std::make_unique<code_page>();
-                    slot->address = base >> 12;
-                    slot->asid = asid_;
-                    slot->thumb = false;
-                }
+                slot.arm_ops = std::make_unique_for_overwrite<arm_op[]>(1024);
                 for (unsigned i = 0; i < 1024; ++i) {
                     std::uint32_t bits;
                     std::memcpy(&bits, entry.host_base + 4 * i, 4);
-                    slot->arm_ops[i] = decode_arm_page(bits);
+                    slot.arm_ops[i] = decode_arm_page(bits);
                 }
-                slot->decoded = true;
             }
-            const auto* ops = slot->arm_ops.data();
+            const auto* ops = slot.arm_ops.get();
             auto& regs = state_.cpu_registers;
             auto index = (start & 4095) >> 2;
             auto remaining = budget - retired_;
@@ -469,26 +475,20 @@ namespace eka2l1::arm {
         void interpreter::run_thumb_page(std::uint32_t budget) {
             const auto start = state_.get_pc();
             const auto base = start & ~4095u;
-            auto& slot = pages_[page_slot(base >> 12, true)];
-            if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || !slot->thumb || !slot->decoded) {
+            auto& slot = lookup_page(base >> 12, true);
+            if (!slot.thumb_ops) {
                 auto& entry = tlb_.entries[(base >> 12) & r12l1::TLB_ENTRY_MASK];
                 if (entry.execute_addr != base)
                     return;
-                if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || !slot->thumb) {
-                    slot = std::make_unique<code_page>();
-                    slot->address = base >> 12;
-                    slot->asid = asid_;
-                    slot->thumb = true;
-                }
-                for (unsigned i = 0; i < slot->thumb_ops.size(); ++i) {
+                slot.thumb_ops = std::make_unique_for_overwrite<thumb::op[]>(2048);
+                for (unsigned i = 0; i < 2048; ++i) {
                     std::uint16_t bits;
                     std::memcpy(&bits, entry.host_base + 2 * i, sizeof(bits));
-                    slot->thumb_ops[i] = thumb::decode(bits);
+                    slot.thumb_ops[i] = thumb::decode(bits);
                 }
-                slot->decoded = true;
             }
             auto& regs = state_.cpu_registers;
-            const auto* ops = slot->thumb_ops.data();
+            const auto* ops = slot.thumb_ops.get();
             unsigned index = (start & 4095) >> 1;
             bool n = state_.cpsr & N, z = state_.cpsr & Z, c = state_.cpsr & C, v = state_.cpsr & V;
             auto commit = [&] {
