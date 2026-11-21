@@ -15,6 +15,7 @@ struct SettingsView: View {
     @State private var extensiveLogging = false
     @State private var hideSystemApps = true
     @State private var useJIT = false
+    @State private var useThumbBlocks = false
     @State private var performanceMode = "balanced"
     @State private var availableLanguages: [EKA2L1LanguageItem] = []
     @State private var systemLanguageCode = -1
@@ -95,6 +96,15 @@ struct SettingsView: View {
                 if EKA2L1Bridge.shared.jitCompiledIn {
                     Toggle("settings.jit", isOn: $useJIT)
                 }
+                Toggle("settings.thumbBlocks", isOn: Binding(
+                    get: { useThumbBlocks },
+                    set: { enabled in
+                        if EKA2L1Bridge.shared.applyConfigSnapshot(["cpuBackend": enabled ? "thumb-block" : "dyncom"]) {
+                            useThumbBlocks = enabled
+                        }
+                    }
+                ))
+                .disabled(useJIT && EKA2L1Bridge.shared.jitAvailable)
                 HStack {
                     Text(verbatim: "MMC ID")
                     Spacer()
@@ -327,6 +337,7 @@ struct SettingsView: View {
         if let value = snapshot["jitEnabled"] as? NSNumber {
             useJIT = value.boolValue
         }
+        useThumbBlocks = (snapshot["cpuBackend"] as? String)?.lowercased() == "thumb-block"
         // Anything the bridge doesn't recognise runs as balanced.
         performanceMode = snapshot["performanceMode"] as? String == "high-performance" ? "high-performance" : "balanced"
         friendlyPhoneName = snapshot["deviceDisplayName"] as? String ?? ""

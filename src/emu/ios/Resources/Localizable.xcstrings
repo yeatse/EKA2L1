@@ -4205,6 +4205,22 @@
         }
       }
     },
+    "settings.thumbBlocks" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Experimental Thumb block interpreter"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实验性 Thumb 块解释器"
+          }
+        }
+      }
+    },
     "settings.title" : {
       "localizations" : {
         "en" : {
