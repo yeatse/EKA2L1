@@ -1,104 +1,16 @@
 // Copyright (c) 2026 EKA2L1 Team. Licensed under GPLv2 or later.
+#include "decode.h"
 #include "thumb.h"
 #include <atomic>
 #include <bit>
 #include <cpu/12l1r/tlb.h>
 #include <cpu/armv6.h>
 #include <cpu/dyncom/arm_dyncom.h>
-#include <cpu/dyncom/arm_dyncom_thumb.h>
 #include <cstring>
 
 namespace eka2l1::arm {
     namespace {
-        enum class opcode : std::uint8_t {
-            empty,
-            slow,
-            data,
-            transfer,
-            multiple,
-            branch,
-            exchange,
-            multiply,
-            half,
-            thumb_branch,
-            thumb_prefix,
-            thumb_call,
-            supervisor,
-            exclusive_read,
-            exclusive_write,
-            clear_exclusive,
-            hint,
-            read_status,
-            write_flags,
-            long_multiply
-        };
-
-        struct instruction {
-            std::uint32_t bits;
-            opcode op;
-            std::uint8_t condition;
-        };
-
-        instruction decode(std::uint32_t bits, bool thumb) {
-            if (thumb) {
-                const auto half = static_cast<std::uint16_t>(bits);
-                const auto group = half >> 11;
-                if ((half >> 12) == 13 && ((half >> 8) & 15) < 14)
-                    return { half, opcode::thumb_branch, static_cast<std::uint8_t>((half >> 8) & 15) };
-                if (group == 28)
-                    return { half, opcode::thumb_branch, 14 };
-                if (group == 30)
-                    return { half, opcode::thumb_prefix, 14 };
-                if (group == 31 || (group == 29 && !(half & 1)))
-                    return { half, opcode::thumb_call, 14 };
-                if ((half & 0xff87) == 0x4780)
-                    return { 0xe12fff30u | ((half >> 3) & 15), opcode::exchange, 14 };
-                std::uint32_t size;
-                const auto status = TranslateThumbInstruction(0, half, &bits, &size);
-                if (status == ThumbDecodeStatus::UNDEFINED || status == ThumbDecodeStatus::BRANCH)
-                    return { half, opcode::slow, 14 };
-            }
-            const auto cond = static_cast<std::uint8_t>(bits >> 28);
-            auto op = opcode::slow;
-            if (cond != 15) {
-                if ((bits & 0x0ffffff0) == 0x012fff10 || (bits & 0x0ffffff0) == 0x012fff30)
-                    op = opcode::exchange;
-                else if ((bits & 0x0f900fff) == 0x01900f9f && ((bits >> 12) & 15) != 15)
-                    op = opcode::exclusive_read;
-                else if ((bits & 0x0f900ff0) == 0x01800f90 && (bits & 15) != 15)
-                    op = opcode::exclusive_write;
-                else if ((bits & 0x0fbf0fff) == 0x010f0000 && !(bits & 0x00400000))
-                    op = opcode::read_status;
-                else if ((bits & 0x0ffff0f0) == 0x0128f000)
-                    op = opcode::write_flags;
-                else if ((bits & 0x0f8000f0) == 0x00800090)
-                    op = opcode::long_multiply;
-                else if ((bits & 0x0fc000f0) == 0x00000090)
-                    op = opcode::multiply;
-                else if ((bits & 0x0e000090) == 0x00000090 && (bits & 0x01200000) != 0x00200000 && (bits & 0x60)
-                    && ((bits & (1u << 20)) || (bits & 0x60) == 0x20))
-                    op = opcode::half;
-                else if ((bits & 0x0c000000) == 0 && ((bits >> 23 & 3) != 2 || (bits >> 20 & 1))
-                    && ((bits >> 25 & 1) || (bits & 0x90) != 0x90))
-                    op = opcode::data;
-                else if ((bits & 0x0c000000) == 0x04000000 && (bits & 0x02000010) != 0x02000010)
-                    op = opcode::transfer;
-                else if ((bits & 0x0e400000) == 0x08000000 && (bits & 0xffff))
-                    op = opcode::multiple;
-                else if ((bits & 0x0f000000) == 0x0f000000)
-                    op = opcode::supervisor;
-            }
-            if ((bits & 0x0e000000) == 0x0a000000)
-                op = opcode::branch;
-            if ((bits & 0xfd70f000) == 0xf550f000 && (!(bits & (1u << 25)) || !(bits & 16)))
-                op = opcode::hint;
-            if (bits == 0xf57ff01f)
-                op = opcode::clear_exclusive;
-            if (op == opcode::data && (bits & 0x0010f000) == 0x0010f000)
-                op = opcode::slow;
-            return { bits, op, cond };
-        }
-
+        using namespace armv6;
         constexpr std::uint32_t N = 1u << 31, Z = 1u << 30, C = 1u << 29, V = 1u << 28, T = 1u << 5;
 
         bool passes(unsigned cond, std::uint32_t flags) {
@@ -162,18 +74,19 @@ namespace eka2l1::arm {
             struct code_page {
                 std::uint32_t address, asid;
                 bool thumb;
-                std::array<instruction, 2048> entries { };
-                std::array<thumb::op, 2048> thumb_ops { };
-                bool decoded { };
+                std::array<instruction, 2048> entries {};
+                std::array<arm_op, 1024> arm_ops {};
+                std::array<thumb::op, 2048> thumb_ops {};
+                bool decoded {};
             };
-            std::array<std::unique_ptr<code_page>, 128> pages_;
-            thread_context state_ { };
+            std::array<std::unique_ptr<code_page>, 512> pages_;
+            thread_context state_ {};
             r12l1::tlb tlb_ { 12 };
             exclusive_monitor* monitor_;
             std::unique_ptr<dyncom_core> slow_;
-            std::uint32_t asid_ { }, retired_ { };
-            bool tagged_ { }, in_slow_ { };
-            std::atomic<bool> stopped_ { };
+            std::uint32_t asid_ {}, retired_ {};
+            bool tagged_ {}, in_slow_ {};
+            std::atomic<bool> stopped_ {};
 
             void exchange(std::uint32_t target) {
                 const bool thumb = target & 1;
@@ -208,9 +121,13 @@ namespace eka2l1::arm {
                     return access(addr, value, load ? read_32bit : write_32bit, !load);
             }
 
+            unsigned page_slot(std::uint32_t page, bool thumb) const {
+                return ((page * 0x9e3779b9u) >> 23) ^ ((asid_ * 31u + thumb) & 511);
+            }
+
             instruction fetch(address pc, bool thumb) {
                 const auto page = pc >> 12;
-                auto& slot = pages_[(page ^ asid_ ^ unsigned(thumb)) % pages_.size()];
+                auto& slot = pages_[page_slot(page, thumb)];
                 const auto index = (pc & 4095) >> (thumb ? 1 : 2);
                 if (slot && slot->address == page && slot->asid == asid_ && slot->thumb == thumb) {
                     const auto op = slot->entries[index];
@@ -229,6 +146,7 @@ namespace eka2l1::arm {
                 return op;
             }
 
+            void run_arm_page(std::uint32_t budget);
             void run_thumb_page(std::uint32_t budget);
 
             void slow_step() {
@@ -278,9 +196,13 @@ namespace eka2l1::arm {
                     const bool thumb = state_.cpsr & T;
                     const auto pc = state_.get_pc() & (thumb ? ~1u : ~3u);
                     state_.set_pc(pc);
-                    if (thumb && !(state_.cpsr & 0x200)) {
-                        run_thumb_page(retired_ + std::min(budget - retired_, 256u));
-                        if (retired_ == budget || stopped_ || state_.get_pc() != pc || !(state_.cpsr & T))
+                    if (!(state_.cpsr & 0x200)) {
+                        auto limit = retired_ + std::min(budget - retired_, 256u);
+                        if (thumb)
+                            run_thumb_page(limit);
+                        else
+                            run_arm_page(limit);
+                        if (retired_ == budget || stopped_ || state_.get_pc() != pc || bool(state_.cpsr & T) != thumb)
                             continue;
                     }
                     auto op = fetch(pc, thumb);
@@ -385,10 +307,169 @@ namespace eka2l1::arm {
             }
         };
 
+        void interpreter::run_arm_page(std::uint32_t budget) {
+            const auto start = state_.get_pc(), base = start & ~4095u;
+            auto& slot = pages_[page_slot(base >> 12, false)];
+            if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || slot->thumb || !slot->decoded) {
+                auto& entry = tlb_.entries[(base >> 12) & r12l1::TLB_ENTRY_MASK];
+                if (entry.execute_addr != base)
+                    return;
+                if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || slot->thumb) {
+                    slot = std::make_unique<code_page>();
+                    slot->address = base >> 12;
+                    slot->asid = asid_;
+                    slot->thumb = false;
+                }
+                for (unsigned i = 0; i < 1024; ++i) {
+                    std::uint32_t bits;
+                    std::memcpy(&bits, entry.host_base + 4 * i, 4);
+                    slot->arm_ops[i] = decode_arm_page(bits);
+                }
+                slot->decoded = true;
+            }
+            const auto* ops = slot->arm_ops.data();
+            auto& regs = state_.cpu_registers;
+            auto index = (start & 4095) >> 2;
+            auto remaining = budget - retired_;
+            auto flags = state_.cpsr;
+            auto ptr = [&](unsigned addr, unsigned size, bool write) -> std::uint8_t* {
+                auto& entry = tlb_.entries[(addr >> 12) & r12l1::TLB_ENTRY_MASK];
+                if ((write ? entry.write_addr : entry.read_addr) != (addr & ~4095u) || (addr & 4095) > 4096 - size)
+                    return nullptr;
+                return entry.host_base + (addr & 4095);
+            };
+            auto transfer = [&]<bool write, bool byte>(unsigned addr, std::uint32_t& value) {
+                auto* p = ptr(addr, byte ? 1 : 4, write);
+                if (!p)
+                    return false;
+                if constexpr (write && byte)
+                    *p = static_cast<std::uint8_t>(value);
+                else if constexpr (write)
+                    std::memcpy(p, &value, 4);
+                else if constexpr (byte)
+                    value = *p;
+                else
+                    std::memcpy(&value, p, 4);
+                return true;
+            };
+            while (index < 1024 && remaining) {
+                const auto op = ops[index];
+                using enum arm_code;
+                auto a = regs[op.a];
+                auto& d = regs[op.d];
+                switch (op.code) {
+                case other:
+                    goto done;
+                case add_i:
+                    d = a + op.value;
+                    break;
+                case sub_i:
+                    d = a - op.value;
+                    break;
+                case add_lsl:
+                    d = a + (regs[op.b] << op.shift);
+                    break;
+                case mov_i:
+                    d = op.value;
+                    break;
+                case mov_lsl:
+                    d = regs[op.b] << op.shift;
+                    break;
+                case cmp_i:
+                case cmp_r: {
+                    auto b = op.code == cmp_i ? op.value : regs[op.b];
+                    auto r = a - b;
+                    flags = (flags & 0x0fffffffu) | (r & N) | (r ? 0 : Z) | (a >= b ? C : 0)
+                        | (((a ^ b) & (a ^ r)) >> 31 ? V : 0);
+                    break;
+                }
+                case branch:
+                    if (op.flags == 14 || passes(op.flags, flags))
+                        index += op.value - 1;
+                    break;
+                case ldr: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<false, false>(updated, d))
+                        goto done;
+                    break;
+                }
+                case str: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<true, false>(updated, d))
+                        goto done;
+                    break;
+                }
+                case ldrb: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<false, true>(updated, d))
+                        goto done;
+                    break;
+                }
+                case strb: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<true, true>(updated, d))
+                        goto done;
+                    break;
+                }
+                case ldr_index: {
+                    const auto updated = a + (regs[op.b] << op.shift);
+                    if (!transfer.template operator()<false, false>(updated, d))
+                        goto done;
+                    if (op.flags)
+                        regs[op.a] = updated;
+                    break;
+                }
+                case str_index: {
+                    const auto updated = a + (regs[op.b] << op.shift);
+                    if (!transfer.template operator()<true, false>(updated, d))
+                        goto done;
+                    if (op.flags)
+                        regs[op.a] = updated;
+                    break;
+                }
+                case ldr_post: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<false, false>(a, d))
+                        goto done;
+                    regs[op.a] = updated;
+                    break;
+                }
+                case str_post: {
+                    const auto updated = a + op.value;
+                    if (!transfer.template operator()<true, false>(a, d))
+                        goto done;
+                    regs[op.a] = updated;
+                    break;
+                }
+                case ldm:
+                case stm: {
+                    const bool store = op.code == stm;
+                    auto* p = ptr(a, 4 * op.shift, store);
+                    if (!p)
+                        goto done;
+                    for (auto mask = op.value; mask; mask &= mask - 1, p += 4) {
+                        auto& r = regs[std::countr_zero(mask)];
+                        if (store)
+                            std::memcpy(p, &r, 4);
+                        else
+                            std::memcpy(&r, p, 4);
+                    }
+                    break;
+                }
+                }
+                ++index;
+                --remaining;
+            }
+        done:
+            retired_ = budget - remaining;
+            state_.cpsr = flags;
+            state_.set_pc(base + 4 * index);
+        }
+
         void interpreter::run_thumb_page(std::uint32_t budget) {
             const auto start = state_.get_pc();
             const auto base = start & ~4095u;
-            auto& slot = pages_[((base >> 12) ^ asid_ ^ 1) % pages_.size()];
+            auto& slot = pages_[page_slot(base >> 12, true)];
             if (!slot || slot->address != (base >> 12) || slot->asid != asid_ || !slot->thumb || !slot->decoded) {
                 auto& entry = tlb_.entries[(base >> 12) & r12l1::TLB_ENTRY_MASK];
                 if (entry.execute_addr != base)
