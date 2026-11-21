@@ -64,10 +64,10 @@ struct diff_env {
     }
 };
 
-std::unique_ptr<dyncom_core> make_core(diff_env &env) {
-    auto core = std::make_unique<dyncom_core>(&env.monitor, PAGE_BITS);
+template <typename Core>
+std::unique_ptr<Core> wire_core(diff_env &env, std::unique_ptr<Core> core) {
     std::uint8_t *base = env.mem.data();
-    dyncom_core *cp = core.get();
+    Core *cp = core.get();
 
     auto seed_tlb = [cp, base](std::uint32_t addr) {
         const std::uint32_t page = addr & ~PAGE_MASK;
@@ -155,7 +155,7 @@ struct cpu_state {
     }
 };
 
-cpu_state read_state(dyncom_core &c) {
+cpu_state read_state(core &c) {
     cpu_state s{};
     for (std::size_t i = 0; i < 16; i++) {
         s.reg[i] = c.get_reg(i);
@@ -164,7 +164,7 @@ cpu_state read_state(dyncom_core &c) {
     return s;
 }
 
-void write_state(dyncom_core &c, const cpu_state &s) {
+void write_state(core &c, const cpu_state &s) {
     for (std::size_t i = 0; i < 16; i++) {
         c.set_reg(i, s.reg[i]);
     }
@@ -2327,9 +2327,12 @@ int main(int argc, char **argv) {
                 "data-processing + load/store + ldm/stm + halfword, %u cases from seed %u\n",
         count, base_seed);
 
+    const bool armv6 = argc > 3 && std::string_view(argv[3]) == "armv6";
     diff_env env_a, env_b;
-    auto core_a = make_core(env_a);
-    auto core_b = make_core(env_b);
+    auto core_a = wire_core(env_a, std::make_unique<dyncom_core>(&env_a.monitor, PAGE_BITS));
+    auto core_b = wire_core(env_b, std::make_unique<dyncom_core>(&env_b.monitor, PAGE_BITS));
+    auto candidate = armv6 ? wire_core(env_b, make_armv6_interpreter(&env_b.monitor)) : nullptr;
+    core &integer_core = armv6 ? *candidate : static_cast<core &>(*core_b);
     std::vector<std::uint8_t> golden_mem(MEM_SIZE, 0);
 
     std::uint32_t failures = 0;
@@ -2374,18 +2377,23 @@ int main(int argc, char **argv) {
         }
 
         core_a->imb_range(0, 8);
-        core_b->imb_range(0, 8);
+        integer_core.imb_range(0, 8);
+
+        if (armv6 && (i & 1))
+            integer_core.set_tlb_page(0, env_b.mem.data(), prot_read_write_exec);
+        else if (armv6)
+            integer_core.dirty_tlb_page(0);
 
         write_state(*core_a, init);
-        write_state(*core_b, init);
+        write_state(integer_core, init);
 
         core_a->set_pc(0);
-        core_b->set_pc(0);
+        integer_core.set_pc(0);
         core_a->run(1);
-        core_b->run(1);
+        integer_core.run(1);
 
         const cpu_state got_a = read_state(*core_a);
-        const cpu_state got_b = read_state(*core_b);
+        const cpu_state got_b = read_state(integer_core);
         cpu_state golden;
         if (kind < 2) {
             golden = golden_data_processing(inst, init);
@@ -2432,7 +2440,6 @@ int main(int argc, char **argv) {
     std::printf("dyncom_difftest: phase 2 (dynarmic oracle, whole programs)\n");
 
     const bool thumb_blocks = argc > 3 && std::string_view(argv[3]) == "thumb-block";
-    const bool armv6 = argc > 3 && std::string_view(argv[3]) == "armv6";
     auto dc = make_dyncom_env(thumb_blocks, armv6);
     if (armv6) {
         program p;
@@ -2571,6 +2578,19 @@ int main(int argc, char **argv) {
                 if (!run_pair("thumb-pairs", *span_core, *da, pairs, base_seed, true, cov, true))
                     ++failures;
             }
+        }
+    }
+    for (auto base : { PROG_DATA_PTR, (PROG_DATA_PTR | 4095u) - 3 }) {
+        program stores;
+        stores.init[1] = base;
+        stores.init[2] = 0x12345678;
+        stores.init[3] = 0x87654321;
+        for (const auto word : { 0xe3a00000u, 0xe7a12180u, 0xe5813004u, 0xe1520003u, 0xcafffffeu, 0xeafffffeu })
+            push32(stores.code, word);
+        for (unsigned budget = 1; budget <= 6; ++budget) {
+            stores.budget = budget;
+            if (!run_pair("arm-adjacent-stores", *dc, *da, stores, base_seed, true, cov, true))
+                ++failures;
         }
     }
     program memory_pairs;

@@ -177,7 +177,9 @@ namespace eka2l1::arm::armv6 {
         bx,
         blx,
         ldr_pc_literal,
-        ands_i
+        ands_i,
+        cmp_branch,
+        str_pair
     };
     struct arm_op {
         arm_code code {};
@@ -258,6 +260,20 @@ namespace eka2l1::arm::armv6 {
             op.value = bits;
         }
         return op;
+    }
+
+    inline void fuse_arm(arm_op& first, const arm_op& second) {
+        if (first.cond != 14)
+            return;
+        if (first.code == arm_code::cmp_r && second.code == arm_code::branch && second.cond < 14) {
+            first.code = arm_code::cmp_branch;
+            first.value = second.value;
+            first.flags = second.cond;
+        } else if (first.code == arm_code::str_index && first.flags && second.code == arm_code::str &&
+            second.cond == 14 && second.value == 4 && first.a == second.a && second.d != first.a) {
+            first.code = arm_code::str_pair;
+            first.value = second.d;
+        }
     }
 
 }

@@ -334,6 +334,8 @@ namespace eka2l1::arm {
                     std::uint32_t bits;
                     std::memcpy(&bits, entry.host_base + 4 * i, 4);
                     slot.arm_ops[i] = decode_arm_page(bits);
+                    if (i)
+                        fuse_arm(slot.arm_ops[i - 1], slot.arm_ops[i]);
                 }
             }
             const auto* ops = slot.arm_ops.get();
@@ -392,12 +394,19 @@ namespace eka2l1::arm {
                 case mov_lsl:
                     d = regs[op.b] << op.shift;
                     break;
+                case cmp_branch:
                 case cmp_i:
                 case cmp_r: {
                     auto b = op.code == cmp_i ? op.value : regs[op.b];
                     auto r = a - b;
                     flags = (flags & 0x0fffffffu) | (r & N) | (r ? 0 : Z) | (a >= b ? C : 0)
                         | (((a ^ b) & (a ^ r)) >> 31 ? V : 0);
+                    if (op.code == cmp_branch && remaining > 1) {
+                        ++index;
+                        --remaining;
+                        if (passes(op.flags, flags))
+                            index += op.value - 1;
+                    }
                     break;
                 }
                 case ands_i:
@@ -460,6 +469,23 @@ namespace eka2l1::arm {
                         goto done;
                     if (op.flags)
                         regs[op.a] = updated;
+                    break;
+                }
+                case str_pair: {
+                    const auto updated = a + (regs[op.b] << op.shift);
+                    if (remaining > 1) {
+                        if (auto* dest = ptr(updated, 8, true)) {
+                            const std::uint32_t pair[] = { d, regs[op.value] };
+                            std::memcpy(dest, pair, sizeof(pair));
+                            regs[op.a] = updated;
+                            ++index;
+                            --remaining;
+                            break;
+                        }
+                    }
+                    if (!transfer.template operator()<true, false>(updated, d))
+                        goto done;
+                    regs[op.a] = updated;
                     break;
                 }
                 case str_index: {
