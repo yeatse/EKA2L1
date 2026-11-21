@@ -1004,6 +1004,41 @@ namespace eka2l1::arm {
                     flags = (flags & ~(N | Z)) | (regs[rn] & N) | (value ? 0 : Z);
                 break;
             }
+            case opcode::breakpoint:
+                exception_handler(exception_type_breakpoint, pc);
+                if (stopped_ || state_.get_pc() != pc)
+                    return;
+                break;
+            case opcode::reverse_bytes: {
+                const auto value = regs[rm];
+                if (!(bits & 128))
+                    regs[rd] = std::rotl(value & 0xff00ff00, 8) | std::rotr(value & 0x00ff00ff, 8);
+                else {
+                    const auto halves = ((value & 0x00ff00ff) << 8) | ((value & 0xff00ff00) >> 8);
+                    regs[rd] = bits & (1u << 22) ? static_cast<std::int16_t>(halves) : halves;
+                }
+                break;
+            }
+            case opcode::extend: {
+                const auto value = std::rotr(regs[rm], int((bits >> 10) & 3) * 8);
+                const auto base = rn == 15 ? 0u : regs[rn];
+                const bool sign = !(bits & (1u << 22));
+                auto byte = [sign](std::uint32_t v) -> std::uint32_t {
+                    return sign ? static_cast<std::int8_t>(v) : static_cast<std::uint8_t>(v);
+                };
+                switch ((bits >> 20) & 3) {
+                case 0:
+                    regs[rd] = ((base + byte(value)) & 65535) | (((base >> 16) + byte(value >> 16)) << 16);
+                    break;
+                case 2:
+                    regs[rd] = base + byte(value);
+                    break;
+                default:
+                    regs[rd] = base + (sign ? static_cast<std::int16_t>(value) : static_cast<std::uint16_t>(value));
+                    break;
+                }
+                break;
+            }
             case opcode::count_leading_zeros:
                 regs[rd] = std::countl_zero(regs[rm]);
                 break;
@@ -1230,9 +1265,10 @@ namespace eka2l1::arm {
                     nz(result);
                 break;
             }
+            case opcode::double_transfer:
             case opcode::transfer:
             case opcode::half: {
-                const bool half = op.op == opcode::half, load = bits & (1 << 20);
+                const bool half = op.op != opcode::transfer, load = bits & (1 << 20);
                 const bool pre = bits & (1 << 24), wb = !pre || (bits & (1 << 21));
                 std::uint32_t offset;
                 if (half)
@@ -1250,6 +1286,16 @@ namespace eka2l1::arm {
                 const auto value = reg(rd);
                 if (wb)
                     regs[rn] = updated;
+                if (op.op == opcode::double_transfer) {
+                    if (bits & 32) {
+                        memory<std::uint32_t>(addr, false, value);
+                        memory<std::uint32_t>(addr + 4, false, regs[rd + 1]);
+                    } else {
+                        regs[rd] = memory<std::uint32_t>(addr, true);
+                        regs[rd + 1] = memory<std::uint32_t>(addr + 4, true);
+                    }
+                    break;
+                }
                 std::uint32_t result;
                 if (half && (bits & 0x60) == 0x40)
                     result = static_cast<std::int8_t>(memory<std::uint8_t>(addr, true));

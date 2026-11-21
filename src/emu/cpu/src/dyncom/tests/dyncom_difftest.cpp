@@ -2555,11 +2555,24 @@ int main(int argc, char **argv) {
     dsp.init[4] = 0x7ffffffe;
     dsp.init[5] = 0x7fffffff;
     for (auto bits : { 0xe16f2f14u, 0xe1042053u, 0xe1242053u, 0xe1442053u, 0xe1642053u,
-             0xe1620483u, 0xe16204c3u, 0xe16204e3u, 0xe10254a3u, 0xe12204e3u, 0xe12254c3u, 0xe14214e3u })
+             0xe1620483u, 0xe16204c3u, 0xe16204e3u, 0xe10254a3u, 0xe12204e3u, 0xe12254c3u, 0xe14214e3u,
+             0xe6bf2f33u, 0xe6bf2fb3u, 0xe6ff2fb3u, 0xe6a02473u, 0xe6b02873u, 0xe6802c73u,
+             0xe6e02073u, 0xe6f02073u, 0xe6c02073u })
         push32(dsp.code, bits);
     for (unsigned budget = 1; budget <= dsp.code.size() / 4; ++budget) {
         dsp.budget = budget;
         if (!run_pair("arm-signed-dsp", *dc, *da, dsp, base_seed, true, cov, true))
+            ++failures;
+    }
+    program dual_transfer;
+    dual_transfer.init[0] = PROG_DATA_PTR;
+    dual_transfer.init[2] = 0x01234567u;
+    dual_transfer.init[3] = 0xfedcba98u;
+    for (auto bits : { 0xe1c020f0u, 0xe1c040d0u, 0xe1e020f8u, 0xe04060d8u })
+        push32(dual_transfer.code, bits);
+    for (unsigned budget = 1; budget <= dual_transfer.code.size() / 4; ++budget) {
+        dual_transfer.budget = budget;
+        if (!run_pair("arm-double-transfers", *dc, *da, dual_transfer, base_seed, true, cov, true))
             ++failures;
     }
     program pairs;

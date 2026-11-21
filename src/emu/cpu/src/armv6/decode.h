@@ -36,7 +36,11 @@ namespace eka2l1::arm::armv6 {
         count_leading_zeros,
         signed_multiply,
         saturating_add_sub,
-        thread_id
+        thread_id,
+        reverse_bytes,
+        extend,
+        double_transfer,
+        breakpoint
     };
 
     struct instruction {
@@ -75,6 +79,8 @@ namespace eka2l1::arm::armv6 {
         if (thumb) {
             const auto half = static_cast<std::uint16_t>(bits);
             const auto group = half >> 11;
+            if ((half & 0xff00) == 0xbe00)
+                return { half, opcode::breakpoint, 14 };
             if ((half >> 12) == 13 && ((half >> 8) & 15) < 14)
                 return { half, opcode::thumb_branch, static_cast<std::uint8_t>((half >> 8) & 15) };
             if (group == 28)
@@ -95,6 +101,16 @@ namespace eka2l1::arm::armv6 {
         if (cond != 15) {
             if ((bits & 0x0ffffff0) == 0x012fff10 || (bits & 0x0ffffff0) == 0x012fff30)
                 op = opcode::exchange;
+            else if ((bits & 0x0ff000f0) == 0x01200070)
+                op = opcode::breakpoint;
+            else if ((bits & 0x0fff0ff0) == 0x06bf0f30 || (bits & 0x0fbf0ff0) == 0x06bf0fb0)
+                op = opcode::reverse_bytes;
+            else if ((bits & 0x0f8003f0) == 0x06800070 && ((bits >> 20) & 3) != 1)
+                op = opcode::extend;
+            else if ((bits & 0x0e1000d0) == 0x000000d0 && (bits & 0x01200000) != 0x00200000
+                && !((bits >> 12) & 1) && ((bits >> 12) & 15) < 14
+                && ((bits & (1u << 22)) || (!(bits & 0xf00) && (bits & 15) != 15)))
+                op = opcode::double_transfer;
             else if ((bits & 0x0fff0ff0) == 0x016f0f10)
                 op = opcode::count_leading_zeros;
             else if ((bits & 0x0f900ff0) == 0x01000050)
