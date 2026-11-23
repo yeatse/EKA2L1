@@ -82,11 +82,13 @@ add_library(cpu
         include/cpu/arm_analyser_capstone.h
         include/cpu/arm_factory.h
         include/cpu/arm_interface.h
+        include/cpu/arm_replay_capture.h
         include/cpu/arm_utils.h
         src/arm_analyser_capstone.cpp
         src/arm_analyser.cpp
         src/ekalynx/interpreter.cpp
         src/arm_factory.cpp
+        src/arm_replay_capture.cpp
         src/arm_utils.cpp
         ${SOURCE_12L1R_PUBLIC}
         ${SOURCE_DYNCOM})

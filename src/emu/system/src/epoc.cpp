@@ -47,8 +47,12 @@
 #include <services/applist/applist.h>
 
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <atomic>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <string>
 
 #include <disasm/disasm.h>
@@ -72,6 +76,7 @@
 #include <vfs/vfs.h>
 
 #include <cpu/arm_factory.h>
+#include <cpu/arm_replay_capture.h>
 #include <cpu/arm_utils.h>
 
 #include <config/app_settings.h>
@@ -100,6 +105,74 @@ namespace eka2l1 {
     
     static const char *PATCH_FOLDER_PATH = ".//patch//";
 
+    namespace {
+        // Opt-in arm_replay capture. With EKA2L1_REPLAY_CAPTURE_DIR set, writing
+        // "<process name substring> <label> <count>" to <dir>/trigger samples scheduling quanta of
+        // that process until <count> snapshots exist; the trigger is then renamed to trigger.done.
+        class replay_capture {
+            std::string dir_;
+            std::string trigger_;
+            std::string process_;
+            std::string label_;
+            std::uint32_t remaining_ = 0;
+            std::uint32_t written_ = 0;
+            std::uint32_t poll_ = 0;
+            std::uint32_t seed_ = 0x2545f491;
+
+            void poll_trigger() {
+                std::ifstream file(dir_ + "/trigger");
+                std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+                if (text == trigger_)
+                    return;
+                trigger_ = text;
+                std::istringstream trigger(text);
+                std::uint32_t count = 0;
+                remaining_ = 0;
+                if (!(trigger >> process_ >> label_ >> count) || !count)
+                    return;
+                process_ = common::lowercase_string(process_);
+                remaining_ = count;
+                written_ = 0;
+                LOG_INFO(SYSTEM, "Replay capture armed: {} snapshots of {} as {}", count, process_, label_);
+            }
+
+        public:
+            replay_capture() {
+                if (const char *dir = std::getenv("EKA2L1_REPLAY_CAPTURE_DIR"))
+                    dir_ = dir;
+            }
+
+            void sample(arm::core *cpu, kernel::thread *thr) {
+                if (dir_.empty())
+                    return;
+                if ((++poll_ & 4095) == 0)
+                    poll_trigger();
+                if (!remaining_)
+                    return;
+                kernel::process *pr = thr->owning_process();
+                if (!pr || common::lowercase_string(pr->name()).find(process_) == std::string::npos)
+                    return;
+                seed_ = seed_ * 1664525 + 1013904223;
+                if (seed_ >> 29)
+                    return;
+                arm::core::thread_context context;
+                cpu->save_context(context);
+                const auto lookup = [pr](address base) {
+                    return static_cast<const std::uint8_t *>(pr->get_ptr_on_addr_space(base));
+                };
+                const auto path = fmt::format("{}/{}-{:03}.trace", dir_, label_, written_);
+                if (!arm::capture_replay_snapshot(context, lookup, 4096, path))
+                    return;
+                ++written_;
+                if (--remaining_ == 0) {
+                    std::rename((dir_ + "/trigger").c_str(), (dir_ + "/trigger.done").c_str());
+                    trigger_.clear();
+                    LOG_INFO(SYSTEM, "Replay capture finished: {} snapshots as {}", written_, label_);
+                }
+            }
+        };
+    }
+
     system_create_components::system_create_components()
         : graphics_(nullptr)
         , audio_(nullptr)
@@ -122,6 +195,7 @@ namespace eka2l1 {
 
         arm::core_instance cpu;
         arm::exclusive_monitor_instance exmonitor;
+        replay_capture replay_capture_;
 
         arm_emulator_type cpu_type;
 
@@ -793,6 +867,7 @@ namespace eka2l1 {
 
         if (to_run != nullptr) {
             if (!should_step) {
+                replay_capture_.sample(cpu.get(), to_run);
                 cpu->run(to_run->get_execution_budget());
             } else {
                 cpu->step();
