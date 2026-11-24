@@ -49,6 +49,21 @@ void CFbsTwelveBitDrawDevice::WriteRgbToAddress(TUint8 *aAddress, TRgb aColor, C
         aColor, aDrawMode)));
 }
 
+void CFbsTwelveBitDrawDevice::WriteLine(TInt aX, TInt aY, TInt aLength, TUint32 *aBuffer, CGraphicsContext::TDrawMode aDrawMode) {
+    if (aDrawMode != CGraphicsContext::EDrawModePEN) {
+        CFbsDrawDeviceByteBuffer::WriteLine(aX, aY, aLength, aBuffer, aDrawMode);
+        return;
+    }
+
+    if (aX + aLength > LongWidth())
+        PanicAtTheEndOfTheWorld();
+
+    TUint16 *dest = reinterpret_cast<TUint16 *>(GetPixelStartAddress(aX, aY));
+    const TUint16 *src = reinterpret_cast<const TUint16 *>(aBuffer);
+    for (TInt x = 0; x < aLength; ++x)
+        dest[x] = src[x] & 0x0FFF;
+}
+
 void CFbsTwelveBitDrawDevice::SetSize(TSize aSize) {
     iSize = aSize;
 
