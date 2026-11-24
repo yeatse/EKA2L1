@@ -30,7 +30,6 @@ public:
     virtual void WriteRgbToAddress(TUint8 *aAddress, TRgb aColor, CGraphicsContext::TDrawMode aDrawMode);
     virtual void WriteRgbToAddress(TUint8 *aAddress, TUint8 *aRawColor, CGraphicsContext::TDrawMode aDrawMode);
 
-    virtual void WriteLine(TInt aX, TInt aY, TInt aLength, TUint32 *aBuffer, CGraphicsContext::TDrawMode aDrawMode);
     virtual TRgb ReadPixel(TInt aX, TInt aY) const;
 };
 
