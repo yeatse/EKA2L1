@@ -3533,6 +3533,22 @@
         }
       }
     },
+    "settings.contactDeveloper" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contact Developer"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "联系开发者"
+          }
+        }
+      }
+    },
     "settings.cpuBackend" : {
       "localizations" : {
         "en" : {
@@ -3625,6 +3641,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "大规模日志记录"
+          }
+        }
+      }
+    },
+    "settings.feedbackSubject" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EKA2L1 iOS Feedback and Suggestions"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "EKA2L1 iOS 反馈及建议"
           }
         }
       }
@@ -3977,6 +4009,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "基于 GPLv3 授权"
+          }
+        }
+      }
+    },
+    "settings.mailUnavailable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn’t Open Mail"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法打开邮件应用"
           }
         }
       }
